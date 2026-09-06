@@ -34,7 +34,7 @@ Status 種別: `PROPOSED` / `AWAITING HUMAN APPROVAL` / `ACCEPTED` / `REJECTED` 
 ## ADR-0001: Simulation Core は Rust の engine-agnostic な headless crate とする
 
 - **Date**: 2026-09-06
-- **Status**: **AWAITING HUMAN APPROVAL**（Programming Language 選定のため）
+- **Status**: **ACCEPTED**（人間承認済み 2026-09-06。ADR-0005 で UE5 採用下でも再確認）
 
 ### Current State
 コードなし。言語未選定。
@@ -105,7 +105,7 @@ Simulation Core がレンダリングエンジンから完全に独立するこ�
 ## ADR-0002: Photorealistic Renderer の選定を Phase 0.5 スパイクまで意図的に保留する
 
 - **Date**: 2026-09-06
-- **Status**: **AWAITING HUMAN APPROVAL**（Game Engine 選定のため）
+- **Status**: **PARTIALLY SUPERSEDED by ADR-0004**（Godot / Web の除外は有効。UE5 vs Unity の保留は解除され UE5 に確定）
 
 ### Current State
 エンジン未選定。開発機に Unreal / Unity / Godot いずれもインストールされていない。
@@ -185,7 +185,7 @@ ADR-0001 が承認されている限り、**エンジン変更コストは Prese
 ## ADR-0003: Engineering View（Rust->WASM + Three.js）を恒久的なデバッグ基盤として構築する
 
 - **Date**: 2026-09-06
-- **Status**: PROPOSED（ADR-0001 承認後に ACCEPTED 化）
+- **Status**: ACCEPTED（ADR-0001 承認により確定 2026-09-06）
 
 ### Problem
 ADR-0002 でエンジン選定を保留する場合、Phase 1〜5 の間、シミュレーションを**目視確認する手段が必要**になる。
@@ -219,3 +219,204 @@ Photorealism は選定されたエンジン側でのみ追求する。
 ### Recommendation
 採用する。ただし **Engineering View への装飾的作業は明確に禁止**とし、
 機能追加はテレメトリ・検証目的に限定する。
+
+---
+
+## ADR-0004: Unreal Engine 5 を製品レンダラとして採用し、Code-First 運用を必須制約とする
+
+- **Date**: 2026-09-06
+- **Status**: **ACCEPTED**（人間承認済み: 2026-09-06）
+- **Supersedes**: ADR-0002 の「二者択一を保留する」部分
+
+### Current State
+人間より UE5 を製品レンダラとする意向が示された。あわせて
+「UE5 でエージェント実装は可能か」という問いが提起された。
+
+### Problem
+ADR-0002 で UE5 の最大の懸念として挙げたのは **M7: AI Coding 適合度** である。
+UE5 のワークフローは慣習的にエディタ GUI 中心であり、素直に使うと
+マテリアル・ライティング・レベル配置・カメラリグの大半が人間の手作業になり、
+人間が全アセット作業のボトルネックになる。
+
+### 調査結果 — UE5 のスクリプト可能範囲
+
+| 領域 | 手段 | 可否 |
+|------|------|------|
+| ゲームプレイ / 描画ロジック | C++ | 完全に可 |
+| マテリアル生成・ノード接続 | Python `unreal.MaterialEditingLibrary` | 可（冗長だが完全） |
+| Material Instance / パラメータ | Python `MaterialEditingLibrary` + `EditorAssetLibrary` | 可 |
+| アセットインポート (FBX/glTF/テクスチャ) | Python `AssetImportTask` / `AssetToolsHelpers` | 可 |
+| レベルへのアクタ配置・プロパティ設定 | Python `EditorActorSubsystem` / `LevelEditorSubsystem` | 可 |
+| ライティング (DirectionalLight / SkyLight / SkyAtmosphere / PostProcessVolume) | Python でプロパティ全設定 | 可 |
+| レンダラ設定 (Lumen / Nanite / VSM / DLSS / TSR) | `Config/DefaultEngine.ini` の `r.*` | 可（純テキスト） |
+| トラックメッシュ | C++ による手続き的生成（スプライン -> メッシュ） | 可。そもそも手作業でモデリングすべきでない |
+| **ヘッドレス実行** | `UnrealEditor-Cmd.exe <proj>.uproject -run=pythonscript -script=<file>` | 可（GUI 不要） |
+| スクリーンショット取得 / 性能計測 | `HighResShot`, `stat unit`, `stat gpu`, Automation, `-ExecCmds` | 可（視覚検証・性能検証を自動化できる） |
+| Blueprint ビジュアルスクリプティング | — | **使用しない**（全ロジックを C++ に置く） |
+
+**エージェントに実行できないもの**（ただしこれらはエンジン非依存の性質を持つ）
+1. 美的判断（「この光は中継映像に見えるか」）— どのエンジンでも人間の役割
+2. 3D モデリング / テクスチャ制作 — 素材調達の問題であり実装の問題ではない
+3. C++ のビルド待ち時間 — 実在するコスト
+
+### 結論
+「UE5 だからエージェント不可」ではなく **「UE5 を GUI 前提で使うとエージェント不可になる」** が正しい。
+本プロジェクトは最初から下記の運用制約を課すことでこれを回避する。
+
+### Decision — UE5 Code-First 運用制約（違反はレビューで HIGH）
+
+1. **Blueprint にロジックを書かない。** ロジックは C++ のみ。BP は必要最小限の薄いラッパのみ許可
+2. **エディタ GUI での手作業を「正」としない。** レベル構築・マテリアル・ライティングは
+   `tools/ue_python/*.py` のスクリプトを唯一の正とし、エディタでの変更はスクリプトへ還元する
+3. **レンダラ設定は `Config/DefaultEngine.ini` にテキストで持つ。** GUI の Project Settings で直接いじらない
+4. **トラックは手続き的生成。** `sim-track` のスプラインデータから C++ でメッシュを生成する
+5. **視覚検証は `HighResShot` による自動スクショ取得 + 人間レビュー**の 2 段構え
+6. **UE 側の C++ は薄く保つ。** ロジックは Rust Simulation Core にあるため、
+   UE C++ は「Snapshot を受け取って描画状態に反映する」だけに限定する（ビルド時間の抑制）
+
+### Migration Cost / Risk
+Greenfield のため Migration Cost = 0。
+残存リスクは (a) 8GB VRAM で目標画質に届くか (b) Code-First 運用が実務で回るか の 2 点。
+これは Phase 0.5 で**比較ではなく検証**として実施する（ADR-0002 の評価軸 M1〜M8 を UE5 単独で実施）。
+
+### Expected Benefit
+映像品質の最高到達点（Lumen HW-RT / Nanite / CineCamera / パーオブジェクト Motion Blur /
+自動車系マテリアル）を、エージェント実装の生産性を大きく損なわずに得る。
+
+### Fallback
+Phase 0.5 の検証で M4（VRAM <= 7.0 GB）または M7（Code-First 運用）が成立しないと判明した場合、
+**ADR-0001 により Simulation Core は無傷のまま Unity 6 HDRP へ切り替えられる。**
+この退避経路の存在が、UE5 を選ぶことのリスクを許容可能にしている。
+
+---
+
+## ADR-0005: UE5 採用下でも Simulation Core は Rust とする（ADR-0001 の再確認）
+
+- **Date**: 2026-09-06
+- **Status**: **ACCEPTED**
+
+### Problem
+UE5 を採用する場合、Simulation Core を C++20 にすれば FFI 境界が不要になる。
+ADR-0001 で Rust の唯一の Cons として挙げたのがこの点であり、再評価が必要になった。
+
+### 再評価
+
+**FFI 境界の実コストは当初想定より小さい。**
+本アーキテクチャの Presentation 境界は `WorldSnapshot` の一方向読み出しのみであり、
+必要な C-ABI は実質的に以下だけである。
+
+```c
+SimHandle* sim_create(const SimConfig*);
+void       sim_step(SimHandle*, double dt);
+void       sim_snapshot(SimHandle*, SnapshotBuffer* out);   // POD の平坦配列
+void       sim_destroy(SimHandle*);
+```
+
+これは **narrow / data-only / 低頻度更新** という FFI の理想形であり、
+オブジェクトグラフを往復させる chatty な境界とは性質が全く異なる。
+実装量は約 300 行で、以降ほとんど変更されない。
+
+### 一方で Rust 側の利点は UE5 採用によりむしろ増す
+
+1. **UE C++ を薄く保つ制約（ADR-0004-6）と整合する。** ロジックが Rust 側にあるほど
+   C++ ビルド待ちが減り、UE5 最大の生産性コストが緩和される
+2. **`cargo test` による高速な headless 検証**が UE から完全に独立して回る。
+   UE のビルド・起動を伴わずに Phase 1〜5 の全検証が可能
+3. **Engineering View (WASM) が Phase 1〜5 の唯一の可視化手段**となる。
+   Rust -> wasm32 は標準的だが、C++ -> Emscripten は同等の手間ではない
+4. **メモリ安全性の価値はコード規模とともに増大する。** 本 Core は数万行規模になり、
+   その大半を AI が実装し Opus が全件レビューする。UB / dangling ref / data race が
+   原理的に混入しないことは、レビュー面積の実質的な縮小を意味する
+5. **ADR-0004 の Fallback（Unity 6 への退避）を維持できる。** C++ 核でも技術的には可能だが、
+   Rust の方が退避コストが低い
+
+### Decision
+**Simulation Core は Rust とする。** `sim-ffi` crate で C-ABI を提供し、
+UE5 側は生成された C ヘッダ経由でリンクする。
+
+**`sim-ffi` は Phase 1B の時点で最小構成を実装し、UE5 との接続可能性を早期に実証する。**
+FFI 境界の検証を Phase 8 まで先送りして「後から繋がらない」事故を起こさない。
+
+---
+
+## ADR-0006: アセットは購入せず、Web 画像を参照して自作する（Blender headless + Python）
+
+- **Date**: 2026-09-06
+- **Status**: **ACCEPTED**（人間指示 2026-09-06「車やコースのモデルなどは web 上の画像などを参考にして作成してください」）
+- **Relates to**: PLAN.md Risk R9
+
+### Current State
+アセット調達方針は未定であった（R9 として「エンジン確定後に ADR 化」と保留していた）。
+
+### Decision
+**車両・トラック・トラックサイドのモデルは購入・ダウンロードではなく自作する。**
+実在のモータースポーツの写真・図面・オンボード映像を **参照資料** として用いる。
+
+### Toolchain — なぜ Blender headless + Python か
+
+| 対象 | 生成方法 | エージェント実行可否 |
+|------|---------|------------------|
+| **トラック路面・縁石・ランオフ・バリア・フェンス** | `sim-track` のスプラインデータから **UE5 C++ で手続き的生成** | ◎ 完全にコード |
+| **車両ボディ・ウイング・ホイール・ディスク・キャリパー** | **Blender Python API（`bpy`）でパラメトリック生成** -> glTF/FBX で UE5 へ | ◎ 完全にコード |
+| グランドスタンド・ピットビル・標識・タイヤウォール | Blender Python でパラメトリック生成 + インスタンシング | ◎ |
+| 植生・遠景 | UE5 の PCG / Foliage を Python 設定 | ◎ |
+| **マテリアル（カーペイント/カーボン/ガラス/ゴム）** | UE5 Python `MaterialEditingLibrary` | ◎ |
+
+Blender は `blender --background --python build_car.py -- --spec cars/gt3_a.json` の形で
+**GUI なしで実行できる**。ADR-0004 の Code-First 運用制約と完全に整合する。
+
+**導入**: `winget install BlenderFoundation.Blender.LTS.4.5`（LTS を使う。API 安定性のため）
+
+### Reference Workflow（Web 画像の使い方）
+
+1. 参照対象の**実測寸法**を収集する（ホイールベース、トレッド、全長・全幅・全高、
+   最低地上高、タイヤサイズ、ウイング幅、重量、重心高、空力係数）
+2. それを `assets/vehicles/<name>.spec.json` に**数値仕様**として記述する
+3. Blender Python がその spec からメッシュを生成する
+4. **同じ spec ファイルを `sim-vehicle` の物理パラメータにも使う**
+   -> 見た目と物理が同一の実寸法から導出され、乖離しない
+
+これは「絵に寄せてモデリングする」のではなく
+**「実車の工学的数値を正として、そこから見た目と物理を同時に導出する」**方式である。
+Q2（Realistic Vehicle Behaviour）と Q3（Photorealistic Visual Quality）を同じ根から出す。
+
+### IP Policy（遵守必須）
+
+**許可**: 実在車両の寸法・比率・空力形状・断面形状・素材構成・
+実在サーキットのコーナー構成の考え方・実際の中継のカメラ言語 を**参照すること**
+
+**禁止**: 実在チーム名 / 実在ドライバー名 / スポンサーロゴ / 特定チームのリバリー配色 /
+実在サーキットの名称 を、そのまま製品へ含めること
+
+-> **チーム・ドライバー・リバリー・サーキットはすべてオリジナルを作成する。**
+実車の寸法に忠実であることが写実性の本体であり、この方針で写実性は一切損なわれない。
+
+### Cons — 正直な品質上の限界
+
+| 項目 | 影響 |
+|------|------|
+| 自作メッシュの品質はスキャンベースの購入アセットに劣る | **極端なクローズアップ（オンボード / 静止したディテールショット）で差が出る** |
+| パラメトリック生成は有機的な曲面の作り込みが苦手 | ボディの微妙な面質感が単純になりがち |
+| 制作工数が発生する | Phase 10 の作業量が増える |
+
+**緩和**: 写実性への寄与度は **マテリアル・ライティング・反射 > メッシュ密度** である。
+観戦シミュレーターのショットの大半は放送距離（10〜100 m）であり、その距離では
+正しい寸法比 + 高品質マテリアル + 正しいライティングが支配的に効く。
+メッシュ密度が律速になるのはクローズアップのみ。
+そのため **Phase 10 の優先順位は マテリアル > ライティング > メッシュ密度** とする。
+
+### Migration Cost / Risk
+Greenfield のためコスト 0。将来「やはり購入アセットを使う」と判断した場合も、
+`spec.json` -> メッシュ の構造は維持したまま、生成器を差し替えるだけで済む。
+
+### Expected Benefit
+- アセットが 100% テキスト（spec + 生成スクリプト）から再生成可能になり、
+  git で完全にバージョン管理できる
+- 見た目と物理が同一の実寸法仕様から導出され、乖離しない
+- 人間の GUI モデリング作業がボトルネックにならない
+- IP リスクがない
+
+### Follow-up Tasks
+- Phase 0.5: Blender 導入、`tools/blender/` 生成スクリプト基盤、車両 1 台の生成 -> UE5 インポート実証
+- Phase 1A: `sim-track` データからの手続き的トラックメッシュ生成
+- Phase 10: マテリアル品質の作り込み（最優先）

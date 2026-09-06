@@ -28,21 +28,37 @@ Current Phase: **Phase 0 — Discovery / Architecture（完了間近）**
 - [x] Performance Budget 確定
 - [x] Target Architecture 設計
 - [x] PROJECT.md / ARCHITECTURE.md / PLAN.md / TODO.md / DECISIONS.md / TESTING.md 起草
-- [ ] **ADR-0001（言語）/ ADR-0002（エンジン保留）の人間承認** ← ブロッカー
+- [x] **ADR-0001（言語=Rust）/ ADR-0004（エンジン=UE5）の人間承認**（2026-09-06 取得）
+- [x] Rust toolchain 確認（rustc 1.95.0 導入済み）
 
-**Exit Criteria**: 人間が ADR-0001 / ADR-0002 を承認する。
+**Exit Criteria**: 達成。Phase 1A へ移行。
 
 ---
 
-## Phase 0.5 — Renderer Spike（Phase 1〜2 と並行）
+## Phase 0.5 — UE5 Feasibility Spike（Phase 1〜2 と並行）
 
-**Goal**: UE5 と Unity 6 HDRP を実測比較し、製品レンダラを確定する。
+エンジンは ADR-0004 により **Unreal Engine 5 に確定**。本フェーズは *比較* ではなく
+**採用済みエンジンの実現可能性検証**である。
 
-**Scope**: DECISIONS.md ADR-0002 の評価プロトコル M1〜M8 を両エンジンで実施。
-**Out of Scope**: 製品用アセットの作り込み、ゲームプレイ実装。
+**Goal**: UE5 の 2 つの残存リスクを、深くコミットする前に実測で潰す。
 
-**Exit Criteria**: 評価表が埋まり、人間がエンジンを承認する。
-**Deadline**: **Phase 3 完了時までに必ず決定する**（保留の恒久化を防ぐ）。
+| リスク | 検証項目 | 合格基準 |
+|--------|---------|---------|
+| **8GB VRAM で目標画質に届くか** | M1 画質 / M2 反射 / M3 GPU time / M4 VRAM / M5 モーション / M6 物理カメラ | GPU <= 14.0 ms, VRAM <= 7.0 GB @1080p DLSS Quality, 車両 24 台 |
+| **Code-First 運用が実務で回るか** | **M7**: 「車両 1 台を配置しマテリアルを設定しライティングを組む」を **Python スクリプトのみ**で実行 | 人間のエディタ GUI 作業ゼロで完了する |
+| FFI が繋がるか | M8: `sim-ffi` 経由で Rust core から Transform を受け取り描画 | 動作すること |
+
+| **自作アセットのパイプラインが回るか** | **M9**: `spec.json` -> Blender Python -> glTF -> UE5 インポート -> マテリアル適用 を**全自動**で通す | 人間の GUI 作業ゼロで車両 1 台が UE5 に立つ（ADR-0006） |
+
+**Scope**: UE5 インストール、Blender LTS 4.5 導入、`Config/DefaultEngine.ini` によるレンダラ設定、
+`tools/ue_python/` および `tools/blender/` のスクリプト群、
+最小シーン（直線 + 1 コーナー、車両 24 台、動的太陽、放送カメラ 1 台）
+
+**Out of Scope**: 製品用アセットの作り込み、ゲームプレイ実装、Unity との比較。
+
+**Exit Criteria**: M1〜M8 の実測結果が記録され、合格基準を満たす。
+**Deadline**: **Phase 3 完了時まで**。ここで不合格の場合は ADR-0004 の Fallback
+（Unity 6 HDRP へ退避。Simulation Core は無傷）を発動するか人間に判断を仰ぐ。
 
 ---
 
@@ -107,7 +123,7 @@ Classification、フィニッシュ、車車間衝突（基本）、簡易 Broad
 - 順位・Gap が常に整合
 - Simulation 予算 4.0 ms 以内
 - TESTING.md T-RACE-01〜10 全通過
-**Exit Criteria**: **ここで Phase 0.5 のエンジン決定を確定させる。**
+**Exit Criteria**: **ここで Phase 0.5 の UE5 実現可能性検証を締める。** 不合格なら Fallback を発動。
 
 ---
 
@@ -167,12 +183,12 @@ PBR マテリアル、カーペイント/クリアコート、カーボン、ガ
 | # | Risk | 影響 | 対策 |
 |---|------|------|------|
 | R1 | **8GB VRAM が Photorealism の上限を規定する** | 高 | 予算を PROJECT.md に明記。共有マスターマテリアル + livery マスク方式。1080p/DLSS を主目標に |
-| R2 | UE5 がエディタ作業必須で AI 実装が進まない | 高 | ADR-0002 の評価軸 M7 で事前に実測。Unity 6 を対等な候補として維持 |
+| R2 | UE5 がエディタ作業必須で AI 実装が進まない | 高 | ADR-0004 の Code-First 運用制約 6 項目を必須化。Phase 0.5 の M7 で実測。不合格時は Unity 6 へ退避（Core は無傷） |
 | R3 | Pacejka + 車輪回転の低速発散 | 高 | relaxation length、低速正則化、サブステップ。T-VEH-06 で常時検証 |
 | R4 | Phase 5 の攻防が「それっぽくならない」 | 高 | Engagement を多段化。Scenario Test で客観判定。Engineering View で内部状態を可視化 |
 | R5 | Rust ↔ エンジンの FFI が後で繋がらない | 中 | `sim-ffi` を Phase 1B の時点で最小構成で実証する |
 | R6 | Simulation Core と Presentation の境界が浸食される | 中 | crate 依存グラフで機械的に禁止。レビューで CRITICAL 判定 |
 | R7 | 実装者による無断の設計変更 | 中 | Sonnet Task に Allowed Files / Do Not Change を必ず明記。差分監査 |
 | R8 | ドキュメントとコードの乖離 | 中 | Phase 完了時に ARCHITECTURE.md を実装と突き合わせて更新 |
-| R9 | 高品質アセットの調達（写実性は資産品質に依存） | 中 | エンジン確定後に調達方針を ADR 化。Quixel/Fab 等の利用可否を確認 |
+| R9 | **自作アセットの品質上限**（ADR-0006 により購入せず自作）。特にクローズアップでメッシュ品質が律速 | 高 | 実車の工学的数値を `spec.json` に落として Blender Python でパラメトリック生成。Phase 10 の優先順位を マテリアル > ライティング > メッシュ密度 とする。観戦距離のショットを主戦場にする |
 | R10 | Engineering View が肥大化して工数を食う | 低 | 装飾的作業を明確に禁止（ADR-0003） |
