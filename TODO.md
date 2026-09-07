@@ -1,6 +1,6 @@
 # TODO.md — 現在実行するタスク
 
-Last updated: 2026-09-06
+Last updated: 2026-09-07
 Current Phase: **Phase 1A — Track Foundation**
 
 ---
@@ -31,16 +31,16 @@ Current Phase: **Phase 1A — Track Foundation**
 | Task | 内容 | 担当 | 状態 |
 |------|------|------|------|
 | TASK-1A-1 | `sim-math`: 数学基盤と決定的 RNG | Opus 5 | ✅ **完了・APPROVED** |
-| TASK-1A-2 | `sim-track`: Track Coordinate System | **Sonnet 5** | ⬅ **NEXT** |
-| TASK-1A-3 | トラック定義データのロード（serde）+ テストトラック 1 本 | Sonnet 5 | 未着手 |
+| TASK-1A-2 | `sim-track`: Track Coordinate System | Sonnet 5 | ✅ **完了・APPROVED** |
+| TASK-1A-3 | トラック定義の JSON ロード + オリジナル・サーキット 1 本 | **Sonnet 5** | ⬅ **NEXT** |
 | TASK-1A-4 | `sim-wasm` + `view-engineering` 最小ビューア | Sonnet 5 | 未着手 |
 
 ### Phase 0.5（並行）
 
 | Task | 内容 | 担当 | 状態 |
 |------|------|------|------|
-| TASK-05-1 | UE5 導入 + `Config/DefaultEngine.ini` レンダラ設定 | 人間 + Sonnet | 未着手 |
-| TASK-05-2 | Blender LTS 4.5 導入 + `tools/blender/` 生成基盤 | Sonnet 5 | 未着手 |
+| TASK-05-1 | `Config/DefaultEngine.ini` レンダラ設定（UE **5.8** 導入済み） | Sonnet 5 | 仕様作成中 |
+| TASK-05-2 | `tools/blender/` 生成基盤 | Sonnet 5 | ⛔ **Blender LTS 4.5 の導入待ち**（ADR-0006 追記） |
 | TASK-05-3 | M1〜M9 実測（PLAN.md Phase 0.5） | Opus + 人間 | 未着手 |
 
 ---
@@ -123,9 +123,108 @@ Perception / Spatial query 予算 0.5 ms の **2.0%** にすぎない。
 
 ---
 
+# TASK-1A-2 — 完了報告 / レビュー記録
+
+**実装**: Sonnet 5 ／ **監査**: Opus 5（全項目を独立に再実行して検証）
+
+### Test Results（Opus による再実行）
+```
+cargo test --release
+  sim-math : vec_quat 12 / spline 14 / rng_util 11 / doc-test 1 = 38 passed（退行なし）
+  sim-track: track 16 passed
+  ------------------------------------------------------------
+  合計 55 passed / 0 failed
+cargo clippy --all-targets -- -D warnings : 0
+cargo build --release                     : 0 warnings
+cargo fmt --check                         : clean
+unsafe                                    : 0 行
+git diff --stat crates/sim-math           : 空（凍結遵守）
+依存                                       : sim-math + dev-dep approx のみ
+```
+
+### Performance（実測 / 全長 5 026 m・制御点 400）
+
+| 項目 | 基準 | 実測 | 判定 |
+|------|------|------|------|
+| `Track::build` | < 100 ms | 4.04 ms | ✅ |
+| `Track::frame_at` | < 100 ns | 36 ns | ✅ |
+| `Track::world_to_track`（hint 有） | < 1 µs | 579 ns | ✅ |
+| フレームテーブル | < 2 MB @ 5 km | 1.207 MB | ✅ |
+
+### 第 1 ラウンドの指摘と対応
+
+**MEDIUM-1 — `frame_at` が非直交な基底を返していた（修正済み）**
+
+`tangent` / `lateral` / `normal` を個別に lerp して個別に正規化していたため、
+フレーム間の変換が複合回転になる場合（バンク角が `s` に沿って変化する、
+標高変化により曲線がねじれる）に直交性が崩れていた。
+
+| ケース | 修正前 \|N·T\| | 修正後 |
+|--------|--------------|--------|
+| 平坦な円 | 0 | 0 |
+| 標高変化あり | 4.7e-6 | 1.1e-16 |
+| バンク一定 | 2.8e-17 | 1.4e-17 |
+| バンク変化 | **1.8e-5** | 1.4e-17 |
+
+`TrackFrame` は正規直交基底として文書化されており、`sim-vehicle` の
+タイヤ力の縦横分解や `sim-line` の corridor 計算がこれを前提とする。
+静かに歪んだ基底は、後段で遥かに診断困難な系統誤差になる。
+Gram-Schmidt による直交化 + `normal = tangent.cross(lateral)` で構造的に保証した。
+`frame_normal` の保存は不要になったため削除（メモリ 144 → 120 B/frame）。
+
+**MEDIUM-2 — 仕様値の緩和とテスト網羅の縮小（修正済み）**
+
+T-TRK-01 の 1e-6 m を複雑形状のみ 2e-5 m へ緩和し、かつ `t` を ±2 m しか
+通していなかった。緩和の根拠として挙げられた「knot の曲率不連続」は
+Opus の検証により**否定された**（直線→円弧の結合で 1.1e-9、
+小半径 R=15 m + t=6 m でも 8.5e-8、制御点密度 16→256 掃引でも ~9e-10 で平坦）。
+真因は MEDIUM-1 であり、誤差は `ds ≈ |L·T| × t` でほぼ完全に説明できた。
+
+MEDIUM-1 修正後、**緩和なしで 1e-6 m を両トラックで達成**:
+circle `max_ds` = 1.02e-9 m ／ complex `max_ds` = 3.46e-7 m。
+複雑形状の `t` も `{-6,-5,-2,0,2,5,6}` へ拡張（コース幅一杯を網羅）。
+
+**LOW-1 — `camber` が幾何に未適用（doc 追記済み）**
+仕様どおりの挙動だが、下流が「適用済み」と誤解しないよう doc comment を追加。
+
+**LOW-2 — メモリ試算の定数が陳腐化（Opus が直接修正）**
+`frame_normal` 削除後も `4*Vec3 = 144 B/frame` のままだった。
+実体は `3*Vec3 = 120 B/frame`。テスト内の定数とコメントのみのため、
+エージェント往復のコストに見合わないと判断し Opus が直接修正した。
+過大見積もり方向であり誤検知は生じていなかった。
+
+### Deviations from Spec
+
+1. **曲率符号の perp_dot 引数順（Sonnet が指摘 → Opus 承認・仕様を訂正）**
+   Opus の当初仕様 `tangent.xz().perp_dot(diff)` は**左旋回に対し負を返す誤り**だった。
+   本規約の `lateral = up.cross(tangent)` は標準的な CCW 左法線とは逆手系のため符号が反転する。
+   検算: 左旋回・tangent=+X で `diff ≈ (0,0,-ε)`、
+   `tangent.perp_dot(diff) = -ε`（誤）／ `diff.perp_dot(tangent) = +ε`（正）。
+   Sonnet は Frenet フレームの手計算と数値検証の 2 通りで裏付けたうえで報告しており、
+   **設計変更プロトコルの模範的な運用**である。TODO.md の仕様を訂正済み。
+2. **`runoff` の補間は最近傍**（列挙型は線形補間できない）。仕様が沈黙していたため承認し、規則として明文化。
+3. **`frame_normal` の保存を廃止**（MEDIUM-1 の修正に伴う必然的な帰結。
+   `tangent.cross(lateral)` は保存値と数学的に同一であることを確認済み）。
+
+### Architecture Compliance
+- ✅ Rendering / UI / Camera への依存ゼロ
+- ✅ Waypoint index を持たない（連続量 `s` のみ）
+- ✅ ラップ処理は `wrap_s` / `signed_delta_s` に一本化
+- ✅ `detect_lap_crossing` がテレポート時に `Suspect` を返し、ラップ暴走を構造的に防止
+- ✅ `crates/sim-math` の凍結を完全遵守
+
+### Process Note
+仕様に明記された受け入れ数値の緩和は、テスト作者の裁量ではなく設計判断である。
+納品後の Deviations ではなく、事前の `PROPOSED DESIGN CHANGE` として提出すること。
+曲率符号の扱い（Deviation 1）は完全に正しい運用だった。同じ基準を全項目へ適用する。
+
+### Decision: **APPROVED**（commit `4fc4c48`）
+
+---
+
 # NEXT SONNET TASK
 
-## TASK-1A-2 — `sim-track`: Track Coordinate System
+## TASK-1A-3 — トラック定義の JSON ロード + オリジナル・サーキット 1 本
 
 ---
 
@@ -149,7 +248,7 @@ Opus 5 によって承認された Architecture と Implementation Specification
 
 #### NO UNAUTHORIZED DESIGN CHANGES
 
-設計上の問題を発見した場合、**先にコードを変更してはいけません。** 以下の形式で報告してください。
+設計上の問題を発見した場合、**先にコードを変更してはいけません。** 以下の形式で報告し、承認を待つこと。
 
 ```
 PROPOSED DESIGN CHANGE
@@ -166,11 +265,12 @@ Migration Impact:
 Alternative:
 ```
 
-Opus 5 の承認を得るまで、その変更を実装してはいけません。
+**仕様に明記された受け入れ数値（許容誤差・性能基準）の緩和は、テスト作者の裁量ではなく設計判断である。**
+納品後の Deviations ではなく、事前に上記の形式で提出すること。
 
 #### BLOCKER RULE
 
-仕様どおり実装するために Scope 外の変更が必要になった場合、勝手に変更せず以下として報告してください。
+Scope 外の変更が必要になった場合、勝手に変更せず報告して判断を待つこと。
 
 ```
 BLOCKED BY ARCHITECTURE
@@ -185,424 +285,257 @@ Recommended Next Step:
 #### NO UNAUTHORIZED REFACTORING
 
 タスク対象外の Refactoring は禁止です。
-特に **`crates/sim-math` は一切変更してはいけません**（TASK-1A-1 で APPROVED 済み）。
-`sim-math` に変更が必要だと判断した場合は `BLOCKED BY ARCHITECTURE` として報告すること。
+**`crates/sim-math` 配下は凍結中。一切変更してはいけません。**
+`crates/sim-track/src/coord.rs` `track.rs` `lap.rs` も **APPROVED 済み**であり、
+本タスクでの変更は下記「Allowed Files」に挙げた範囲に限ります。
 
 ---
 
 ### Goal
 
-**トラック局所座標系を確立する。** 以降のすべてのレースロジック
-（順位・ラップカウント・車間・ライン・AI 判断）はワールド座標ではなく
-この座標系の上で行われる。ARCHITECTURE.md §3 が本タスクの仕様の根拠である。
+トラック定義を**ファイルから読めるようにし**、以降の全 Phase が使う
+**オリジナルのテスト用サーキットを 1 本**確定させる。
+
+このデータは Simulation だけでなく、**Blender によるトラックメッシュ生成（ADR-0006）**と
+**UE5 側の手続き的生成（ADR-0004）**からも読まれる。したがって形式は
+Rust / Python / JavaScript のいずれからも追加ライブラリなしで読める **JSON** とする。
+（RON は Python から標準では読めないため採用しない。これは決定事項であり変更禁止。）
 
 ### Allowed Files
 
 ```
-Cargo.toml                              (members に crates/sim-track を追加するのみ)
-crates/sim-track/Cargo.toml             (新規)
-crates/sim-track/src/lib.rs
-crates/sim-track/src/coord.rs
-crates/sim-track/src/surface.rs
-crates/sim-track/src/definition.rs
-crates/sim-track/src/track.rs
-crates/sim-track/src/lap.rs
-crates/sim-track/tests/*.rs
+crates/sim-track/Cargo.toml            (serde 依存の追加のみ)
+crates/sim-track/src/lib.rs            (io モジュールの公開のみ)
+crates/sim-track/src/definition.rs     (derive / serde 属性の追加のみ)
+crates/sim-track/src/surface.rs        (derive / serde 属性の追加のみ)
+crates/sim-track/src/io.rs             (新規)
+crates/sim-track/tests/io.rs           (新規)
+assets/tracks/aoyama_ring.track.json   (新規)
+assets/tracks/README.md                (新規)
 ```
 
 ### Do Not Change
-- `crates/sim-math/**` — **一切変更禁止**
-- `PROJECT.md` `ARCHITECTURE.md` `PLAN.md` `TODO.md` `DECISIONS.md` `TESTING.md`
-- 他の `crates/*` の新規作成（`sim-line` 等は後続タスク）
-- `tools/` `assets/` `view-engineering/`
+
+- `crates/sim-math` 配下
+- `crates/sim-track/src/coord.rs` `track.rs` `lap.rs`
+- `crates/sim-track/tests/track.rs`（既存 16 テストは退行させないこと）
+- `definition.rs` / `surface.rs` の**既存の型・フィールド・既定値・数値表**
+  （追加してよいのは `#[derive(...)]` と `#[cfg_attr(...)]` 属性のみ）
+- ルート直下の 6 つの `.md`
+- ワークスペースの `Cargo.toml`、`tools/`、`view-engineering/`、他の crate
 
 ### Dependencies（これ以外を追加しない）
 
 ```toml
 [dependencies]
 sim-math = { path = "../sim-math" }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+
+[features]
+default = ["serde"]
+serde = ["dep:serde", "dep:serde_json"]
 
 [dev-dependencies]
 approx = "0.5"
 ```
 
-`serde` は **このタスクでは追加しない**（ファイルロードは TASK-1A-3 の担当）。
-本タスクはメモリ上の `TrackDefinition` から `Track` を構築するところまでを扱う。
+**serde は必ず optional かつ feature 越しにすること。**
+`--no-default-features` で依存ゼロの core が残る構成を維持する
+（WASM / FFI 向けにバイナリを絞れるようにするため）。
+`io` モジュール全体と全ての `derive(Serialize, Deserialize)` を
+`#[cfg(feature = "serde")]` / `#[cfg_attr(feature = "serde", ...)]` でガードすること。
 
 ---
 
 ### Required Changes
 
-#### 1. `coord.rs` — トラック局所座標
+#### 1. `definition.rs` / `surface.rs` — 属性の追加のみ
+
+`CrossSection` / `TrackDefinition` / `SurfaceKind` に
+`#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]` を付与する。
+
+- `SurfaceKind` は `#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]`
+  とし、JSON 上では `"asphalt"` `"kerb"` `"grass"` `"gravel"` `"pit_lane"` と表記する
+- `CrossSection` の各フィールドに `#[cfg_attr(feature = "serde", serde(default))]` を付け、
+  JSON で省略された項目は `Default` の値になるようにする
+  （断面が一様な区間で JSON を短く保てる）
+- **既存のフィールド名・型・既定値・`SurfaceProperties` の数値表は一切変更しないこと**
+
+#### 2. `io.rs` — ロード / セーブ
 
 ```rust
-/// トラック上の位置。レースロジックの唯一の正。
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct TrackCoord {
-    /// センターライン沿いの弧長 [m]。`0 <= s < track.length()`
-    pub s: f64,
-    /// 横方向オフセット [m]。**左が正・右が負**
-    pub t: f64,
-}
-
-impl TrackCoord {
-    pub fn new(s: f64, t: f64) -> Self;
-}
-
-/// `s` における路面の幾何フレーム。
-#[derive(Clone, Copy, Debug)]
-pub struct TrackFrame {
-    /// センターライン上のワールド位置。
-    pub position: Vec3,
-    /// 進行方向の単位ベクトル。
-    pub tangent: Vec3,
-    /// 路面法線（バンク・カンバーを含む）。
-    pub normal: Vec3,
-    /// 路面内で進行方向に直交する単位ベクトル。**左向き**。
-    pub lateral: Vec3,
-    /// 曲率 `1/R` [1/m]。**符号付き**（左カーブが正）。
-    pub curvature: f64,
-    /// バンク角 [rad]。左端が持ち上がる向きを正とする。
-    pub banking: f64,
-    /// カンバー角 [rad]。センターラインから両端が下がる向きを正とする。
-    pub camber: f64,
-    /// 標高 [m]（`position.y` と同値。利便のため保持）。
-    pub elevation: f64,
-    /// センターラインから左端までの距離 [m]（正）。
-    pub width_left: f64,
-    /// センターラインから右端までの距離 [m]（正）。
-    pub width_right: f64,
+/// トラック定義ファイルの入出力エラー。
+#[derive(Debug)]
+pub enum TrackIoError {
+    /// ファイル入出力に失敗した。
+    Io(std::io::Error),
+    /// JSON の構文または型が不正。
+    Parse(serde_json::Error),
+    /// JSON としては読めたが、トラックとして不正。
+    Invalid(crate::definition::TrackError),
+    /// スキーマバージョンが未対応。
+    UnsupportedVersion {
+        /// ファイルに書かれていたバージョン。
+        found: u32,
+        /// このビルドが対応するバージョン。
+        supported: u32,
+    },
 }
 ```
 
-**幾何規約（変更禁止・テストで固定すること）**
-
-```
-up            = Vec3::Y
-lateral_flat  = up.cross(tangent).normalize()      // tangent=+X のとき -Z（= 左）
-normal_flat   = tangent.cross(lateral_flat)        // 平坦時に +Y になる
-lateral       = lateral_flat を tangent 軸まわりに banking だけ回した結果
-normal        = normal_flat  を tangent 軸まわりに banking だけ回した結果
-```
-
-**曲率の符号**: `curvature = sign * spline.curvature_at(s)` とし、
-`sign` は水平面での旋回方向から決める。
-`sign = +1` if `d(tangent)/ds .xz().perp_dot(tangent.xz()) > 0`（左旋回）、else `-1`。
-`sim-math` の `curvature_at` は符号なしの大きさを返すため、ここで符号を付与する。
-曲率がほぼ 0 の直線区間では `sign` を `+1` として構わない（値が 0 なので影響しない）。
-
-> **訂正履歴（Opus / 2026-09-07）**: 本仕様は当初 `tangent.xz().perp_dot(diff)` と
-> 記載していたが、これは**引数の順序が逆で、左旋回に対し負を返す誤りだった**。
-> 本規約では `lateral = up.cross(tangent)` としており（tangent=+X で `-Z` = 左）、
-> これは標準的な CCW/+90 度の「左法線」規約とは逆の向きであるため符号が反転する。
-> 検算: tangent=+X の左旋回では `d(tangent)/ds ≈ (0,0,-ε)`。
-> `tangent.xz().perp_dot(diff.xz()) = 1*(-ε) - 0*0 = -ε < 0`（誤）。
-> `diff.xz().perp_dot(tangent.xz()) = 0*0 - (-ε)*1 = +ε > 0`（正）。
-> TASK-1A-2 実装時に Sonnet 5 がこれを検出し報告した。上記が訂正後の正しい式である。
-
-#### 2. `surface.rs` — 路面種別
+`Display` と `std::error::Error`（`source()` を含む）を実装すること。
 
 ```rust
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum SurfaceKind {
-    Asphalt,
-    Kerb,
-    Grass,
-    Gravel,
-    PitLane,
-}
+/// ファイル形式のスキーマバージョン。破壊的変更のたびに上げる。
+pub const TRACK_SCHEMA_VERSION: u32 = 1;
 
-/// 路面の物理特性。`sim-vehicle` が参照する。
-#[derive(Clone, Copy, Debug)]
-pub struct SurfaceProperties {
-    /// グリップ係数の倍率。Asphalt を 1.0 とする。
-    pub grip_multiplier: f64,
-    /// 転がり抵抗係数。
-    pub rolling_resistance: f64,
-    /// 路面の粗さ [m]。サスペンションの励振に使う（本タスクでは値の保持のみ）。
-    pub roughness: f64,
-    /// この路面がコース内（track limits 内）とみなされるか。
-    pub within_limits: bool,
-}
-
-impl SurfaceKind {
-    /// 既定の物理特性。将来 TyreSystem / WeatherSystem が上書きする。
-    pub fn properties(self) -> SurfaceProperties;
-}
-```
-
-既定値（この数値をそのまま実装すること）:
-
-| Kind | grip_multiplier | rolling_resistance | roughness | within_limits |
-|------|-----------------|--------------------|-----------|---------------|
-| Asphalt | 1.00 | 0.012 | 0.002 | true |
-| Kerb | 0.90 | 0.020 | 0.030 | true |
-| Grass | 0.45 | 0.090 | 0.020 | false |
-| Gravel | 0.35 | 0.250 | 0.040 | false |
-| PitLane | 0.95 | 0.013 | 0.002 | true |
-
-#### 3. `definition.rs` — トラック定義（入力データ）
-
-```rust
-/// 制御点ごとの断面定義。`centerline` と同じ長さでなければならない。
-#[derive(Clone, Copy, Debug)]
-pub struct CrossSection {
-    pub width_left: f64,     // > 0
-    pub width_right: f64,    // > 0
-    pub banking: f64,        // [rad]
-    pub camber: f64,         // [rad]
-    /// 左端の外側に続く縁石の幅 [m]。0 なら縁石なし。
-    pub kerb_left: f64,
-    /// 右端の外側に続く縁石の幅 [m]。0 なら縁石なし。
-    pub kerb_right: f64,
-    /// 縁石の外側の路面。
-    pub runoff: SurfaceKind,
-}
-
-impl Default for CrossSection {
-    /// width 6.0 / 6.0、バンク・カンバー 0、縁石 1.5 m、runoff = Grass。
-    fn default() -> Self;
-}
-
-/// トラックの入力定義。TASK-1A-3 でファイルからロードできるようにする。
+/// ファイルの最上位構造。`TrackDefinition` にバージョンとメタ情報を添えたもの。
 #[derive(Clone, Debug)]
-pub struct TrackDefinition {
-    pub name: String,
-    /// センターラインの制御点。`y` が標高。
-    pub centerline: Vec<Vec3>,
-    /// 各制御点の断面。`centerline` と同数。
-    pub sections: Vec<CrossSection>,
-    /// 常に `true`（サーキット）。`false` はヒルクライム等の将来拡張用。
-    pub closed: bool,
-    /// セクター境界。全長に対する割合 `(0, 1)` の昇順。
-    /// 要素数 2 で 3 セクター（モータースポーツの標準）。
-    pub sector_splits: Vec<f64>,
-    /// スタート/フィニッシュラインの位置。全長に対する割合 `[0, 1)`。
-    /// 既定は 0.0（= 制御点 0）。
-    pub start_finish: f64,
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct TrackFile {
+    /// スキーマバージョン。読み込み時に検証する。
+    pub schema_version: u32,
+    /// 任意の説明文。シミュレーションからは参照しない。
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub description: String,
+    /// トラック定義本体。
+    pub track: TrackDefinition,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum TrackError {
-    Spline(sim_math::SplineError),
-    /// `sections` の要素数が `centerline` と一致しない。
-    SectionCountMismatch { centerline: usize, sections: usize },
-    /// コース幅が 0 以下。
-    NonPositiveWidth { index: usize },
-    /// セクター境界が昇順でない、または範囲外。
-    InvalidSectorSplits,
-    /// `start_finish` が `[0, 1)` の範囲外。
-    InvalidStartFinish,
-}
-```
-`TrackError` は `Display` と `std::error::Error` を実装すること。
+/// JSON 文字列から読む。スキーマバージョンと構築可能性を検証する。
+pub fn track_from_json_str(s: &str) -> Result<TrackDefinition, TrackIoError>;
 
-#### 4. `track.rs` — 本体
+/// JSON ファイルから読む。
+pub fn track_from_json_file(path: impl AsRef<std::path::Path>) -> Result<TrackDefinition, TrackIoError>;
 
-```rust
-pub struct Track { /* 非公開 */ }
+/// 読み込んだうえで `Track::build` まで行う。
+pub fn load_track(path: impl AsRef<std::path::Path>) -> Result<crate::track::Track, TrackIoError>;
 
-impl Track {
-    /// フレームテーブルのサンプル間隔 [m]。
-    pub const FRAME_SPACING_M: f64 = 0.5;
-
-    /// 定義から構築する。フレームテーブルを事前計算する。
-    pub fn build(def: &TrackDefinition) -> Result<Track, TrackError>;
-
-    pub fn name(&self) -> &str;
-    /// 全長 [m]。
-    pub fn length(&self) -> f64;
-    pub fn is_closed(&self) -> bool;
-
-    /// `s` における幾何フレーム。事前計算テーブルの線形補間で O(1)。
-    pub fn frame_at(&self, s: f64) -> TrackFrame;
-
-    /// トラック座標 -> ワールド座標。
-    /// `position(s) + lateral(s) * t`（バンクにより t に応じて標高も変わる）。
-    pub fn track_to_world(&self, c: TrackCoord) -> Vec3;
-
-    /// ワールド座標 -> トラック座標。
-    /// `hint` に前 tick の `s` を渡すこと（毎 tick 全車で呼ばれる）。
-    pub fn world_to_track(&self, p: Vec3, hint: Option<f64>) -> TrackCoord;
-
-    /// `s` を `[0, length)` へ正規化する。ラップ処理は必ずこれを通す。
-    pub fn wrap_s(&self, s: f64) -> f64;
-    /// 符号付き最短距離 `(-L/2, L/2]`。車間・前後判定は必ずこれを使う。
-    pub fn signed_delta_s(&self, from_s: f64, to_s: f64) -> f64;
-
-    /// 与えられたトラック座標の路面種別。
-    pub fn surface_at(&self, c: TrackCoord) -> SurfaceKind;
-    /// track limits 内か（縁石は内側とみなす）。
-    pub fn is_within_limits(&self, c: TrackCoord) -> bool;
-
-    /// `s` が属するセクター番号（0 始まり）。
-    pub fn sector_of(&self, s: f64) -> usize;
-    /// セクター境界の `s` 値（昇順、要素数 = セクター数 - 1）。
-    pub fn sector_boundaries(&self) -> &[f64];
-    /// スタート/フィニッシュラインの `s`。
-    pub fn start_finish_s(&self) -> f64;
-}
+/// 定義を JSON 文字列へ書き出す（整形あり）。ラウンドトリップ検証と
+/// ツール側（Blender / UE5）へのエクスポートに使う。
+pub fn track_to_json_string(def: &TrackDefinition, description: &str) -> Result<String, TrackIoError>;
 ```
 
-**`surface_at` の判定順序**（この順序で実装すること）:
-```
-let f = frame_at(c.s);
-if c.t >= 0.0 {                                  // 左側
-    if c.t <= f.width_left            -> Asphalt
-    else if c.t <= f.width_left + kerb_left -> Kerb
-    else                              -> runoff
-} else {                                         // 右側
-    同様に width_right / kerb_right を使う
-}
-```
-`kerb_left` / `kerb_right` / `runoff` も `s` に沿って補間・保持すること
-（`TrackFrame` には含めず、`Track` 内部のテーブルに持つ）。
-数値である `kerb_left` / `kerb_right` は線形補間する。
-`runoff` は列挙型で線形補間できないため、**最近傍の制御点の値を採る**
-（区間内で `f < 0.5` なら手前、そうでなければ次の制御点）。
+`track_from_json_str` は次の順序で処理すること:
 
-**`frame_at` の実装要件**
-- 構築時に `FRAME_SPACING_M` 間隔で `ceil(length / 0.5) + 1` 個のフレームを事前計算する
-- 参照時は隣接 2 フレームの線形補間
-- 閉曲線では末尾フレームと先頭フレームの間も正しく補間すること
-- **補間後に正規直交化（Gram-Schmidt）すること。個別に正規化するだけでは不十分。**
-  `tangent` / `lateral` / `normal` を各々 lerp して各々 normalize すると、
-  隣接フレーム間の変換が単一の平面回転でない場合（バンク角が `s` に沿って変化する、
-  標高変化により曲線がねじれる）に **直交性が崩れる**。
-  `TrackFrame` は正規直交基底であることを downstream（`sim-vehicle` の
-  サスペンション・スリップ角・力の分解、`sim-line` の corridor 計算）が前提とするため、
-  これは許容できない。手順:
-  ```
-  tangent = lerp(T_i, T_j, f).normalize()
-  lateral = lerp(L_i, L_j, f)
-  lateral = (lateral - tangent * lateral.dot(tangent)).normalize()   // Gram-Schmidt
-  normal  = tangent.cross(lateral)                                   // 直交性は構成上保証される
-  ```
+1. `serde_json` でパース（失敗 → `Parse`）
+2. `schema_version != TRACK_SCHEMA_VERSION` なら `UnsupportedVersion`
+3. `Track::build` を試行し、失敗したら `Invalid` を返す
+   （**読み込み時点で構築可能性を検証する。** 不正なデータを後段へ流さない）
+4. 成功したら `TrackDefinition` を返す
 
-**断面パラメータ（幅・バンク・カンバー・縁石）の `s` への写像**
-- 制御点 `i` の `s` は `ArcLengthSpline::control_point_s(i)` で得る（TASK-1A-1 で追加済み）
-- 制御点間は線形補間する
-- 閉曲線では最後の制御点から制御点 0 へラップして補間する
+#### 3. `assets/tracks/aoyama_ring.track.json` — オリジナル・サーキット
 
-#### 5. `lap.rs` — ラップ跨ぎ検出（純粋関数）
+**実在サーキットを模してはならない**（ADR-0006 の IP Policy）。
+名称・レイアウトともオリジナルとすること。ファイル名の `aoyama_ring` はそのまま使う。
 
-ラップ *カウント* の意味付けは `sim-race` の責務である。
-ここでは幾何的な **跨ぎ検出プリミティブ** のみを提供する。
+満たすべき要件:
 
-```rust
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LapCrossing {
-    /// 跨いでいない。
-    None,
-    /// 正方向にスタート/フィニッシュラインを跨いだ。
-    Forward,
-    /// 逆走で跨いだ。
-    Backward,
-    /// 1 tick の移動量が `max_ds` を超えた。テレポート / リセットの疑い。
-    /// **この場合ラップを加算してはならない。**
-    Suspect,
-}
+| 項目 | 要求 |
+|------|------|
+| 全長 | **3 800 〜 4 600 m** |
+| 形状 | 閉ループ。自己交差しないこと |
+| 直線 | 最長ストレート **700 m 以上**（スリップストリーム検証用） |
+| 高速コーナー | 半径 **120 m 以上**を 2 箇所以上 |
+| 中速コーナー | 半径 40〜80 m を 3 箇所以上 |
+| 低速コーナー | 半径 **15〜25 m** のヘアピンを 1 箇所以上 |
+| 複合コーナー | S 字または連続コーナーを 1 箇所以上 |
+| 高低差 | 最大 **20 m 以上**（登り・下りの両方を含む） |
+| バンク | 高速コーナー 1 箇所に **0.05 〜 0.12 rad** |
+| コース幅 | 12 〜 16 m（`width_left + width_right`）。ストレートは広く、ヘアピンは狭く |
+| 縁石 | 全コーナーの内外に 1.0 〜 2.0 m |
+| runoff | 高速コーナーの外側は `gravel`、それ以外は `grass` |
+| 制御点間隔 | **8 〜 20 m**。コーナーは密に、ストレートは疎に |
+| セクター | `sector_splits` で 3 分割。各セクターが概ね等しい所要時間になる配置 |
 
-/// `prev_s` から `new_s` への移動でスタート/フィニッシュラインを跨いだか判定する。
-///
-/// `max_ds` は 1 tick で移動しうる最大距離 [m]（例: 60 Hz で 110 m/s なら 1.83 m。
-/// 余裕を見て 5.0 m 程度を渡す）。これを超える移動は `Suspect` とし、
-/// ラップカウントの暴走を構造的に防ぐ。
-pub fn detect_lap_crossing(
-    track: &Track,
-    prev_s: f64,
-    new_s: f64,
-    max_ds: f64,
-) -> LapCrossing;
-```
+`assets/tracks/README.md` に次を記載すること:
 
-判定は `track.signed_delta_s(prev_s, new_s)` を用いること。
-`prev_s` と `new_s` のそれぞれについて `start_finish_s` からの相対位置を見て、
-相対位置が減少から増加へ変わった（= ラインを越えた）ことを検出する。
+- ファイル形式とスキーマバージョン
+- 各フィールドの意味と単位
+- 座標規約（右手系・Y up・`+t` は左）
+- **このトラックがオリジナルであり実在サーキットを模していないこと**
+- 新しいトラックを追加する手順
 
-#### 6. `lib.rs`
-各モジュールを `pub mod` で公開し、主要型を `pub use` で再エクスポート。
-`#![deny(unsafe_code)]` と `#![warn(missing_docs)]` を設定すること。
+#### 4. `lib.rs`
+
+`#[cfg(feature = "serde")] pub mod io;` を追加し、主要項目を再エクスポートする。
 
 ---
 
 ### Required Tests
 
-`crates/sim-track/tests/` に実装する。TESTING.md T-TRK-01〜06 に対応する。
+`crates/sim-track/tests/io.rs` に実装する。
 
-| Test | 対応 | 内容 / Acceptance |
-|------|------|------------------|
-| `track_coord_roundtrip` | T-TRK-01 | `world_to_track(track_to_world(c)) == c`。コース幅内の `t` を含む格子点で誤差 < 1e-6 m |
-| `track_s_is_monotonic_and_continuous` | T-TRK-02 | `s` に沿って `position` が連続。0.5 m 刻みで跳びなし |
-| `track_curvature_continuity` | T-TRK-03 | 隣接サンプル間の曲率差が閾値内。符号が旋回方向と一致すること（左カーブで正） |
-| `track_width_is_positive` | T-TRK-04 | 全 `s` で `width_left + width_right > 6.0`（車 2 台分） |
-| `track_arclength_accuracy` | T-TRK-05 | 円形トラックで全長が `2*PI*R` に対し誤差 < 0.1% |
-| `track_lap_crossing` | T-TRK-06 | 正方向・逆方向・非跨ぎ・テレポートの 4 ケース。**誤検出・見逃しゼロ** |
-| `track_frame_geometry_conventions` | — | 平坦区間で `normal == +Y`、`lateral` が左向き。バンク時に左端の標高が上がる |
-| `track_surface_classification` | — | センター / 縁石 / runoff の境界値で正しく分類。`is_within_limits` が縁石を内側と判定 |
-| `track_sectors` | — | `sector_of` が境界値で正しい。セクター数 = `sector_splits.len() + 1` |
-| `track_world_to_track_hint_consistency` | — | `hint` の有無で結果が一致する |
-| `track_build_rejects_invalid_definitions` | — | `SectionCountMismatch` / `NonPositiveWidth` / `InvalidSectorSplits` / `InvalidStartFinish` が返る |
-| `track_banked_corner_elevation` | — | バンク角 0.1 rad の区間で、`t = +5 m` の点が `t = -5 m` の点より高い |
+| Test | 内容 / Acceptance |
+|------|------------------|
+| `json_roundtrip` | `TrackDefinition -> JSON -> TrackDefinition` で全フィールドが一致。さらに両者から `Track::build` した結果の `length` と任意 200 点の `frame_at` が一致（誤差 < 1e-9） |
+| `load_asset_track` | `assets/tracks/aoyama_ring.track.json` が読め、`Track::build` が成功する |
+| `asset_track_meets_layout_requirements` | 上表の全要件を**数値で検証**する（全長・最長ストレート・各半径帯の存在・高低差・バンク・コース幅・縁石・制御点間隔・セクター数）。曲率は `frame_at(s).curvature` から判定すること |
+| `asset_track_has_no_self_intersection` | 十分離れた `s` の組（`signed_delta_s` の絶対値が 50 m 超）でセンターライン同士がコース幅の合計以上離れていること |
+| `asset_track_is_drivable` | 全 `s` で `is_within_limits(TrackCoord::new(s, 0.0))` が真。コース幅が全域で正 |
+| `rejects_unsupported_schema_version` | `schema_version` を変えると `UnsupportedVersion` |
+| `rejects_malformed_json` | 構文エラーで `Parse` |
+| `rejects_invalid_track_data` | 幅 0 やセクター境界不正で `Invalid`（`Track::build` の検証が効いていること） |
+| `missing_optional_fields_use_defaults` | `CrossSection` の項目を省略した JSON が `Default` の値で読める |
 
-テスト用トラックはテストコード内で構築すること（アセットファイルは TASK-1A-3）。
-最低限、(a) 半径 100 m の円、(b) 直線 + 高速コーナー + ヘアピン + 高低差 + バンクを含む
-オリジナル形状、の 2 種類を用意すること。
+アセットへのパスは `env!("CARGO_MANIFEST_DIR")` からの相対で解決すること
+（カレントディレクトリに依存しないこと）。
 
 ### Acceptance Criteria
 
 1. `cargo build --release` が **警告ゼロ**
-2. `cargo test --release` が全通過（`sim-math` の既存 38 テストも退行なし）
-3. `cargo clippy --all-targets -- -D warnings` が通る
-4. `cargo fmt --check` が通る
-5. `unsafe` コードが 0 行
-6. 依存は `sim-math` と dev-dependency の `approx` のみ
-7. 公開 API が本仕様の **シグネチャと完全一致**
-8. すべての公開項目に doc comment
-9. **`crates/sim-math/**` の差分が 0**（`git diff --stat` で確認すること）
+2. `cargo build -p sim-track --no-default-features` が **警告ゼロで通る**（出力を報告に貼ること）
+3. `cargo test --release` が全通過（**既存 55 テストの退行なし**）
+4. `cargo clippy --all-targets -- -D warnings` が通る
+5. `cargo fmt --check` が通る
+6. `unsafe` 0 行
+7. `git diff --stat crates/sim-math` が空
+8. `crates/sim-track/src/coord.rs` `track.rs` `lap.rs` と `tests/track.rs` の差分が空
+9. `definition.rs` / `surface.rs` の差分が **属性行の追加のみ**であること
+   （`git diff` を報告に貼り、既存フィールドが無変更であることを示す）
+10. 公開 API が本仕様のシグネチャと完全一致
+11. すべての公開項目に doc comment
 
 ### Performance Criteria
 
 | 項目 | 基準 |
 |------|------|
-| `Track::frame_at` | < 100 ns/call |
-| `Track::world_to_track`（hint 有） | **< 1 µs/call**（24 台 × 60 Hz で予算比 5% 以内） |
-| `Track::build`（全長 5 km） | < 100 ms |
-| フレームテーブルのメモリ | 全長 5 km で < 2 MB |
-
-計測は `#[test]` 内の時間計測で概算確認する。ベンチマークハーネスは作らない。
+| `load_track`（4 km のアセット） | < 50 ms |
+| JSON ファイルサイズ | < 200 KB |
 
 ### Out of Scope
 
-- ファイルからのトラックロード（TASK-1A-3）
 - Racing Line / Corridor / SpeedProfile（`sim-line`、Phase 2）
 - 車両・物理・AI
-- トラックメッシュ生成（UE5 側、Phase 0.5 以降）
-- ピットレーン（`TrackDefinition` に構造だけ予約し、実装しない）
-- 路面のラバーイン / マーブル / 濡れ（Phase 7）
+- トラックメッシュ生成（Blender / UE5 側。TASK-05-2 以降）
+- ピットレーン（構造の予約のみ。データも実装も不要）
+- 複数トラックの追加（1 本でよい）
 
 ### Known Risks
 
 | Risk | 対策 |
 |------|------|
-| 曲率の符号規約を取り違える | `track_curvature_continuity` で左カーブ = 正を明示検証 |
-| バンク適用時の `lateral` / `normal` の回転方向を誤る | `track_banked_corner_elevation` で左端が上がることを検証 |
-| 断面パラメータの `s` 写像が閉曲線のラップでずれる | 制御点 0 付近を跨ぐ補間をテストで確認 |
-| `frame_at` の線形補間で法線が非単位長になる | 補間後に再正規化。テストで単位長を確認 |
-| ラップ検出がテレポートで暴走する | `Suspect` を返す設計。`track_lap_crossing` で検証 |
+| 制御点を手で並べると自己交差やカスプが生じる | `asset_track_has_no_self_intersection` で検証。最終成果物は JSON そのものであり、生成スクリプトではない |
+| 半径要件を満たしているか目視では分からない | `frame_at(s).curvature` から数値で判定するテストを必ず書く |
+| `serde(default)` の付け忘れで JSON が冗長になる | `missing_optional_fields_use_defaults` で検証 |
+| feature ガード漏れで `--no-default-features` が壊れる | Acceptance Criteria 2 で必ず確認する |
 
 ### 完了時の報告フォーマット
 
 ```
-TASK-1A-2 COMPLETE
+TASK-1A-3 COMPLETE
 
 Implemented Files:
-Test Results:          (cargo test の実出力を貼ること)
+Test Results:              (cargo test の実出力)
+no-default-features build: (cargo build -p sim-track --no-default-features の実出力)
 Clippy / fmt Results:
-sim-math diff:         (git diff --stat crates/sim-math を貼ること。0 でなければ理由)
-Deviations from Spec:  (なければ "None")
-Design Concerns Found: (PROPOSED DESIGN CHANGE 形式。なければ "None")
-Performance Notes:     (実測値を記載)
+Frozen-file diffs:         (git diff --stat で sim-math / coord.rs / track.rs / lap.rs / tests/track.rs が空であること)
+definition.rs & surface.rs diff: (git diff を貼り、属性追加のみであることを示す)
+Track layout verification: (全長・最長ストレート・各半径・高低差・バンク・幅 の実測値)
+Deviations from Spec:      (なければ "None")
+Design Concerns Found:     (なければ "None")
+Performance Notes:
 ```
 
-**実装完了後、Opus 5 のレビューを受けること。APPROVED まで次タスクへ進まない。**
+**git commit はしないこと。** 作業ツリーに残し、Opus 5 のレビューを受けること。
