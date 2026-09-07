@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "name": "GT Proto A",
+  "class": "gt3",
+
+  "dimensions": {
+    "length": 4.72,
+    "width": 2.05,
+    "height": 1.18,
+    "wheelbase": 2.75,
+    "track_front": 1.68,
+    "track_rear": 1.64,
+    "front_overhang": 0.98,
+    "rear_overhang": 0.99,
+    "ride_height_front": 0.075,
+    "ride_height_rear": 0.085
+  },
+
+  "mass": {
+    "total_kg": 1245.0,
+    "distribution_front": 0.45,
+    "cg_height": 0.42,
+    "unsprung_kg_per_wheel": 42.0
+  },
+
+  "tyre": {
+    "front": { "radius": 0.345, "width": 0.30, "rim_diameter_in": 18 },
+    "rear":  { "radius": 0.355, "width": 0.31, "rim_diameter_in": 18 }
+  },
+
+  "engine": {
+    "idle_rpm": 1200, "max_rpm": 7500, "limiter_rpm": 7600,
+    "torque_curve": [[1000, 380], [3000, 520], [5000, 560], [6500, 530], [7500, 470]]
+  },
+  "drivetrain": {
+    "layout": "rwd",
+    "gear_ratios": [3.15, 2.19, 1.63, 1.29, 1.03, 0.84],
+    "final_drive": 3.44,
+    "reverse_ratio": 3.00,
+    "shift_time_s": 0.06,
+    "lsd_power_ratio": 0.45, "lsd_coast_ratio": 0.25
+  },
+  "aero": {
+    "frontal_area": 1.95, "cd": 0.62,
+    "cl_front": 1.05, "cl_rear": 1.55,
+    "cop_front_x": 1.20, "cop_rear_x": -1.35
+  },
+  "brakes": {
+    "max_torque_front": 3600.0, "max_torque_rear": 2100.0,
+    "bias_front": 0.62,
+    "disc_radius_front": 0.190, "disc_radius_rear": 0.180
+  },
+  "suspension": {
+    "spring_rate_front": 145000.0, "spring_rate_rear": 160000.0,
+    "damper_bump_front": 6500.0, "damper_rebound_front": 9500.0,
+    "damper_bump_rear": 7000.0,  "damper_rebound_rear": 10500.0,
+    "arb_front": 32000.0, "arb_rear": 24000.0,
+    "travel_up": 0.055, "travel_down": 0.070
+  },
+
+  "visual": {
+    "body_profile": {
+      "nose_height": 0.62, "roof_height": 1.17, "roof_start_x": 0.45, "roof_end_x": -0.75,
+      "cabin_width": 1.42, "sill_height": 0.34,
+      "front_splitter_depth": 0.22, "diffuser_height": 0.18
+    },
+    "rear_wing": {
+      "enabled": true, "span": 1.74, "chord": 0.28,
+      "height_above_body": 0.34, "offset_x": -2.05, "angle": 0.14
+    },
+    "wheel": { "spoke_count": 10, "spoke_width": 0.035, "dish_depth": 0.06 },
+    "brake_disc": { "drilled": true, "vane_count": 36 },
+    "livery": { "base_color": [0.05, 0.18, 0.42], "accent_color": [0.92, 0.62, 0.05] }
+  }
+}

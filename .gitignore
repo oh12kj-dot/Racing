@@ -3,3 +3,9 @@
 node_modules/
 dist/
 .DS_Store
+__pycache__/
+*.pyc
+
+# TASK-05-2: Blender-generated vehicle assets are reproducible from
+# assets/vehicles/*.spec.json + tools/blender/*.py — do not commit them.
+/build/
