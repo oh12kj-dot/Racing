@@ -287,9 +287,18 @@ normal        = normal_flat  を tangent 軸まわりに banking だけ回した
 
 **曲率の符号**: `curvature = sign * spline.curvature_at(s)` とし、
 `sign` は水平面での旋回方向から決める。
-`sign = +1` if `tangent.xz().perp_dot(d(tangent)/ds .xz()) > 0`（左旋回）、else `-1`。
+`sign = +1` if `d(tangent)/ds .xz().perp_dot(tangent.xz()) > 0`（左旋回）、else `-1`。
 `sim-math` の `curvature_at` は符号なしの大きさを返すため、ここで符号を付与する。
 曲率がほぼ 0 の直線区間では `sign` を `+1` として構わない（値が 0 なので影響しない）。
+
+> **訂正履歴（Opus / 2026-09-07）**: 本仕様は当初 `tangent.xz().perp_dot(diff)` と
+> 記載していたが、これは**引数の順序が逆で、左旋回に対し負を返す誤りだった**。
+> 本規約では `lateral = up.cross(tangent)` としており（tangent=+X で `-Z` = 左）、
+> これは標準的な CCW/+90 度の「左法線」規約とは逆の向きであるため符号が反転する。
+> 検算: tangent=+X の左旋回では `d(tangent)/ds ≈ (0,0,-ε)`。
+> `tangent.xz().perp_dot(diff.xz()) = 1*(-ε) - 0*0 = -ε < 0`（誤）。
+> `diff.xz().perp_dot(tangent.xz()) = 0*0 - (-ε)*1 = +ε > 0`（正）。
+> TASK-1A-2 実装時に Sonnet 5 がこれを検出し報告した。上記が訂正後の正しい式である。
 
 #### 2. `surface.rs` — 路面種別
 
@@ -448,11 +457,27 @@ if c.t >= 0.0 {                                  // 左側
 ```
 `kerb_left` / `kerb_right` / `runoff` も `s` に沿って補間・保持すること
 （`TrackFrame` には含めず、`Track` 内部のテーブルに持つ）。
+数値である `kerb_left` / `kerb_right` は線形補間する。
+`runoff` は列挙型で線形補間できないため、**最近傍の制御点の値を採る**
+（区間内で `f < 0.5` なら手前、そうでなければ次の制御点）。
 
 **`frame_at` の実装要件**
 - 構築時に `FRAME_SPACING_M` 間隔で `ceil(length / 0.5) + 1` 個のフレームを事前計算する
-- 参照時は隣接 2 フレームの線形補間。`tangent` `normal` `lateral` は補間後に再正規化する
+- 参照時は隣接 2 フレームの線形補間
 - 閉曲線では末尾フレームと先頭フレームの間も正しく補間すること
+- **補間後に正規直交化（Gram-Schmidt）すること。個別に正規化するだけでは不十分。**
+  `tangent` / `lateral` / `normal` を各々 lerp して各々 normalize すると、
+  隣接フレーム間の変換が単一の平面回転でない場合（バンク角が `s` に沿って変化する、
+  標高変化により曲線がねじれる）に **直交性が崩れる**。
+  `TrackFrame` は正規直交基底であることを downstream（`sim-vehicle` の
+  サスペンション・スリップ角・力の分解、`sim-line` の corridor 計算）が前提とするため、
+  これは許容できない。手順:
+  ```
+  tangent = lerp(T_i, T_j, f).normalize()
+  lateral = lerp(L_i, L_j, f)
+  lateral = (lateral - tangent * lateral.dot(tangent)).normalize()   // Gram-Schmidt
+  normal  = tangent.cross(lateral)                                   // 直交性は構成上保証される
+  ```
 
 **断面パラメータ（幅・バンク・カンバー・縁石）の `s` への写像**
 - 制御点 `i` の `s` は `ArcLengthSpline::control_point_s(i)` で得る（TASK-1A-1 で追加済み）
