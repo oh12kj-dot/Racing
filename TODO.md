@@ -40,7 +40,7 @@ Current Phase: **Phase 1A — Track Foundation**
 | Task | 内容 | 担当 | 状態 |
 |------|------|------|------|
 | TASK-05-1 | UE5 Code-First 構築 + M1〜M9 実測 | Sonnet 5 | 📄 仕様済 `docs/phase-0.5-tasks.md` |
-| TASK-05-2 | Blender 車両生成パイプライン | Sonnet 5 | 📄 仕様済 `docs/phase-0.5-tasks.md`（並行着手可） |
+| TASK-05-2 | Blender 車両生成パイプライン | Sonnet 5 | ✅ **完了・APPROVED** `2ec80c9`（M9 達成） |
 
 ---
 

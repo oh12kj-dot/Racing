@@ -49,6 +49,8 @@ Last updated: 2026-09-07（TASK-1A-3 完了時点）
 | TASK-1A-1 | `sim-math`（数学基盤・決定的 RNG） | ✅ APPROVED | `85f6c6f` |
 | TASK-1A-2 | `sim-track`（トラック局所座標系） | ✅ APPROVED | `4fc4c48` |
 | TASK-1A-3 | トラック JSON ロード + Aoyama Ring | ✅ APPROVED | `cf3d7dd` |
+| Phase 1B 仕様 | `sim-vehicle` 実装仕様 | ✅ 作成済 | `60c1577` |
+| TASK-05-2 | Blender 車両生成パイプライン（**M9 達成**） | ✅ APPROVED | `2ec80c9` |
 | Phase 0.5 仕様 | TASK-05-1 / 05-2 の実装仕様 | ✅ 作成済 | `4f3fd6c` |
 
 ### 検証コマンド（再開時に必ず実行して健全性を確認すること）
@@ -129,7 +131,7 @@ Severity は `CRITICAL / HIGH / MEDIUM / LOW`。
 | WASM | `wasm32-unknown-unknown` ターゲット導入済み / `wasm-pack` 0.15.0 導入済み。**`sim-math` と `sim-track` は wasm32 でビルド確認済み** |
 | Unreal Engine | **5.8** — `C:\Program Files\Epic Games\UE_5.8` |
 | UE ヘッドレス | `C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe` |
-| Blender | **5.2.1 LTS**（Microsoft Store / MSIX 版）— 起動方法は下記 |
+| Blender | **5.2.1 LTS**（Microsoft Store / MSIX 版）— 起動方法は下記。**車両生成パイプライン稼働中** |
 
 ### Blender の起動方法（厳守）
 
@@ -144,6 +146,11 @@ Severity は `CRITICAL / HIGH / MEDIUM / LOW`。
 - したがって Blender スクリプトは **必ず JSON サマリファイルを書き出す**こと。
   呼び出し側は「終了コード」と「サマリファイルの内容」の両方で成否を判定する
 - 動作確認済み: `bpy` 利用 / `--` 以降の引数受け渡し / メッシュ生成 / **glTF(GLB) エクスポート**
+- **稼働中のパイプライン**: `python tools/blender/generate.py --spec assets/vehicles/gt_proto_a.spec.json`
+  （2.7 s で 71 k 三角形の GLB を生成。テストは `python tools/blender/tests/test_pipeline.py`）
+- **glTF の軸変換**: `glTF.X = Blender.X` / `glTF.Y = Blender.Z` / `glTF.Z = -Blender.Y`。
+  実座標 (x_fwd, y_up, z_right) を置くには Blender へ `(x_fwd, -z_right, y_up)` で渡す。
+  **推測せず、エクスポートした GLB を読み直して確認すること**（左右反転を実際に踏んだ）
 
 詳細は `DECISIONS.md` の「ADR-0006 追記」を参照。
 
@@ -165,7 +172,7 @@ Severity は `CRITICAL / HIGH / MEDIUM / LOW`。
 | Task | 内容 |
 |------|------|
 | TASK-05-1 | UE5 プロジェクトの Code-First 構築 + M1〜M9 実測 — **仕様は `docs/phase-0.5-tasks.md`** |
-| TASK-05-2 | Blender 車両生成パイプライン — **仕様は `docs/phase-0.5-tasks.md`**（先に着手可） |
+| ~~TASK-05-2~~ | ~~Blender 車両生成パイプライン~~ **完了**（`2ec80c9`。M9 達成） |
 | Phase 1B | `sim-vehicle`（サスペンション + Pacejka タイヤ + パワートレイン + 空力）— **仕様は `docs/phase-1b-vehicle.md`** |
 
 Phase 1A 完了の判定基準は `TESTING.md` の T-TRK-01〜06 と `PLAN.md` Phase 1A の Acceptance。
