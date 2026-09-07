@@ -2,6 +2,8 @@
 
 /// 路面の種別。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum SurfaceKind {
     /// 舗装路面。
     Asphalt,

@@ -9,6 +9,8 @@ use std::fmt;
 
 /// 制御点ごとの断面定義。`centerline` と同じ長さでなければならない。
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(default))]
 pub struct CrossSection {
     /// センターラインから左端までの距離 [m]。`> 0`。
     pub width_left: f64,
@@ -43,10 +45,12 @@ impl Default for CrossSection {
 
 /// トラックの入力定義。TASK-1A-3 でファイルからロードできるようにする。
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TrackDefinition {
     /// トラック名。
     pub name: String,
     /// センターラインの制御点。`y` が標高。
+    #[cfg_attr(feature = "serde", serde(with = "crate::io::vec3_seq"))]
     pub centerline: Vec<Vec3>,
     /// 各制御点の断面。`centerline` と同数。
     pub sections: Vec<CrossSection>,

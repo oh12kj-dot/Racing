@@ -22,12 +22,19 @@
 
 pub mod coord;
 pub mod definition;
+#[cfg(feature = "serde")]
+pub mod io;
 pub mod lap;
 pub mod surface;
 pub mod track;
 
 pub use coord::{TrackCoord, TrackFrame};
 pub use definition::{CrossSection, TrackDefinition, TrackError};
+#[cfg(feature = "serde")]
+pub use io::{
+    load_track, track_from_json_file, track_from_json_str, track_to_json_string, TrackFile,
+    TrackIoError, TRACK_SCHEMA_VERSION,
+};
 pub use lap::{detect_lap_crossing, LapCrossing};
 pub use surface::{SurfaceKind, SurfaceProperties};
 pub use track::Track;
