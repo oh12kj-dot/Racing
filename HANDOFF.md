@@ -31,6 +31,7 @@ Last updated: 2026-09-07（TASK-1A-3 完了時点）
 | 6 | `PLAN.md` | Phase 0〜12 のロードマップと Risk Register |
 | 7 | `TESTING.md` | Test Strategy と受け入れ基準 T-TRK / T-VEH / T-AI / T-RACE |
 | 8 | `docs/phase-0.5-tasks.md` | TASK-05-1 / TASK-05-2 の実装仕様（UE5 / Blender） |
+| 9 | `docs/phase-1b-vehicle.md` | Phase 1B `sim-vehicle` の実装仕様（車両物理） |
 
 **Documentation Rule**: コードと文書が矛盾したら、どちらかを推測で正としない。
 実装 / Git History / Runtime Behaviour / Tests から裏付けを取る。
@@ -125,6 +126,7 @@ Severity は `CRITICAL / HIGH / MEDIUM / LOW`。
 | CPU / RAM | AMD Ryzen 7 5700X (8C/16T) / 32 GB |
 | OS / Shell | Windows 11 / PowerShell 5.1 + Git Bash |
 | Rust | 1.95.0（stable, `rust-toolchain.toml` で固定） |
+| WASM | `wasm32-unknown-unknown` ターゲット導入済み / `wasm-pack` 0.15.0 導入済み。**`sim-math` と `sim-track` は wasm32 でビルド確認済み** |
 | Unreal Engine | **5.8** — `C:\Program Files\Epic Games\UE_5.8` |
 | UE ヘッドレス | `C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe` |
 | Blender | **5.2.1 LTS**（Microsoft Store / MSIX 版）— 起動方法は下記 |
@@ -164,7 +166,7 @@ Severity は `CRITICAL / HIGH / MEDIUM / LOW`。
 |------|------|
 | TASK-05-1 | UE5 プロジェクトの Code-First 構築 + M1〜M9 実測 — **仕様は `docs/phase-0.5-tasks.md`** |
 | TASK-05-2 | Blender 車両生成パイプライン — **仕様は `docs/phase-0.5-tasks.md`**（先に着手可） |
-| Phase 1B | `sim-vehicle`（サスペンション + Pacejka タイヤ + パワートレイン + 空力） |
+| Phase 1B | `sim-vehicle`（サスペンション + Pacejka タイヤ + パワートレイン + 空力）— **仕様は `docs/phase-1b-vehicle.md`** |
 
 Phase 1A 完了の判定基準は `TESTING.md` の T-TRK-01〜06 と `PLAN.md` Phase 1A の Acceptance。
 
