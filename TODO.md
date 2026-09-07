@@ -32,16 +32,15 @@ Current Phase: **Phase 1A — Track Foundation**
 |------|------|------|------|
 | TASK-1A-1 | `sim-math`: 数学基盤と決定的 RNG | Opus 5 | ✅ **完了・APPROVED** |
 | TASK-1A-2 | `sim-track`: Track Coordinate System | Sonnet 5 | ✅ **完了・APPROVED** |
-| TASK-1A-3 | トラック定義の JSON ロード + オリジナル・サーキット 1 本 | **Sonnet 5** | ⬅ **NEXT** |
-| TASK-1A-4 | `sim-wasm` + `view-engineering` 最小ビューア | Sonnet 5 | 未着手 |
+| TASK-1A-3 | トラック定義の JSON ロード + Aoyama Ring | Sonnet 5 + Opus 5 | ✅ **完了・APPROVED** |
+| TASK-1A-4 | Engineering View（トラック可視化） | **Sonnet 5** | ⬅ **NEXT** |
 
 ### Phase 0.5（並行）
 
 | Task | 内容 | 担当 | 状態 |
 |------|------|------|------|
-| TASK-05-1 | `Config/DefaultEngine.ini` レンダラ設定（UE **5.8** 導入済み） | Sonnet 5 | 仕様作成中 |
-| TASK-05-2 | `tools/blender/` 生成基盤 | Sonnet 5 | 仕様作成中（Blender 5.2.1 LTS 動作確認済み） |
-| TASK-05-3 | M1〜M9 実測（PLAN.md Phase 0.5） | Opus + 人間 | 未着手 |
+| TASK-05-1 | UE5 Code-First 構築 + M1〜M9 実測 | Sonnet 5 | 📄 仕様済 `docs/phase-0.5-tasks.md` |
+| TASK-05-2 | Blender 車両生成パイプライン | Sonnet 5 | 📄 仕様済 `docs/phase-0.5-tasks.md`（並行着手可） |
 
 ---
 
@@ -222,9 +221,100 @@ circle `max_ds` = 1.02e-9 m ／ complex `max_ds` = 3.46e-7 m。
 
 ---
 
+# TASK-1A-3 — 完了報告 / レビュー記録
+
+**実装**: Sonnet 5（Rust 側: `io.rs` + serde 属性）→ セッション上限で中断 →
+**Opus 5 が引き継いで完成**（サーキット生成・テスト・README・レビュー）。
+実装者交代の経緯を明示しておく。Sonnet の担当範囲にスコープ違反はなかった。
+
+### Test Results（Opus による実行）
+```
+cargo test --release
+  sim-math : vec_quat 12 / spline 14 / rng_util 11 / doc-test 1 = 38
+  sim-track: track 16 / io 12                                   = 28
+  ----------------------------------------------------------------
+  合計 66 passed / 0 failed
+cargo build -p sim-track --no-default-features : OK（依存は sim-math のみ）
+cargo clippy --all-targets -- -D warnings      : 0
+cargo build --release                          : 0 warnings
+cargo fmt --check                              : clean
+unsafe                                         : 0 行
+凍結ファイルの差分                                : 0
+```
+
+### Aoyama Ring — 実測値（すべてテストで機械検証）
+
+| 項目 | 要求 | 実測 |
+|------|------|------|
+| 全長 | 3 800〜4 600 m | **4 139 m** |
+| 最長ストレート | >= 700 m | **742 m** |
+| 高速コーナー | R >= 120 m を 2 本以上 | **4 本**（130 / 150 / 185 / 140 m） |
+| 中速コーナー | R 40〜80 m を 3 本以上 | **5 本**（62 / 58 / 52 / 79 / 45 m） |
+| ヘアピン | R 15〜25 m を 1 本以上 | **1 本**（20.6 m・旋回 150 度） |
+| S 字 | 1 箇所以上 | **1 箇所**（コーナー間 66 m） |
+| 高低差 | >= 20 m | **23.5 m** |
+| バンク | 0.05〜0.12 rad | **0.100 rad**（外側が高いことも検証） |
+| コース幅 | 12〜16 m | **12.0〜16.0 m** |
+| 縁石 | 全コーナー | **10/10** |
+| 制御点間隔 | 8〜20 m | **9.36〜18.15 m**（329 点） |
+| ファイルサイズ | < 200 KB | **79.6 KB** |
+| `load_track` | < 50 ms | **6.98 ms** |
+
+コーナー半径は設計値ではなく `Track::frame_at(s).curvature` の実測から検証している。
+
+### 実装中に判明した重要な知見
+
+**1. 制御点密度の不連続が曲率スパイクを生む（修正済み）**
+
+円弧を 10 m 間隔・直線を 18 m 間隔で置いたところ、半径 130 m のコーナーの出口に
+**R=101 m 相当の 1 サンプル分のスパイク**が出た。密度が急変すると centripetal
+Catmull-Rom の接線推定が跳ねるため。直線側の間隔を継ぎ目で 10 m・中央で 18 m へ
+滑らかに変化させて解消した（実測でスパイク消滅、中央値が設計値と一致）。
+
+**これは見た目の問題ではない。** Phase 2 の Speed Profile は曲率から限界速度を
+計算するため、偽のスパイクはコーナー出口での偽の減速になる。
+`assets/tracks/README.md` に規約として明記した。
+
+**2. コーナー半径を「最小値」で測ってはいけない**
+
+継ぎ目のスパイクを拾うため。**中央値**を使う（ドライバーが体験する半径はそちら）。
+テストはこの方針で書いてある。
+
+**3. `serde_json` の f64 は 1 ULP ずれて往復する（実測）**
+
+```
+22.96100594190540178 -> "22.961005941905402" -> 22.96100594190539823
+```
+トラックデータでは 1e-14 m で物理的に無意味だが、
+**「保存→再読込でビット一致する」と仮定してはならない。**
+アセット JSON が唯一の正であり実行時に再生成しないため、
+PROJECT.md §7 の決定性契約（同一バイナリ・同一シードでビット一致）には影響しない。
+`json_roundtrip` テストは許容誤差比較にし、理由をコメントで残してある。
+
+### Deviations from Spec
+
+1. **`io.rs` に private module `vec3_seq` を追加**（Sonnet の判断・承認）
+   `sim_math::Vec3` は凍結 crate の型で `Serialize` を実装しておらず、孤児規則により
+   `sim-track` 側で直接 `impl` もできない。`#[serde(with = ...)]` で回避したのは適切。
+2. **バンク角を負値（-0.100 rad）とした**（Opus の判断）
+   仕様表は大きさのみを規定していた。T7 は左旋回であり、物理的に正しい
+   「外側（右）が持ち上がる」を満たすには本規約では負が正しい。
+   テストは大きさと**符号の物理的整合**の両方を検証する。
+3. **コーナー数が 10 本**（仕様の最小要件を上回る）。要件違反ではない。
+
+### Known Limitations
+- `load_track` は `Track::build` を 2 回実行する（検証時 + 構築時）。
+  Opus の仕様どおりの構造。7 ms で予算 50 ms 内のため放置。最適化するなら仕様側を変える
+- `runoff` は断面あたり 1 値のため左右で別々に指定できない。
+  高速コーナーは左右とも `gravel` になっている。必要になったら型を拡張する
+
+### Decision: **APPROVED**（commit `cf3d7dd`）
+
+---
+
 # NEXT SONNET TASK
 
-## TASK-1A-3 — トラック定義の JSON ロード + オリジナル・サーキット 1 本
+## TASK-1A-4 — Engineering View（トラック可視化）
 
 ---
 
@@ -265,7 +355,7 @@ Migration Impact:
 Alternative:
 ```
 
-**仕様に明記された受け入れ数値（許容誤差・性能基準）の緩和は、テスト作者の裁量ではなく設計判断である。**
+**仕様に明記された受け入れ数値の緩和は、テスト作者の裁量ではなく設計変更である。**
 納品後の Deviations ではなく、事前に上記の形式で提出すること。
 
 #### BLOCKER RULE
@@ -284,255 +374,197 @@ Recommended Next Step:
 
 #### NO UNAUTHORIZED REFACTORING
 
-タスク対象外の Refactoring は禁止です。
-**`crates/sim-math` 配下は凍結中。一切変更してはいけません。**
-`crates/sim-track/src/coord.rs` `track.rs` `lap.rs` も **APPROVED 済み**であり、
-本タスクでの変更は下記「Allowed Files」に挙げた範囲に限ります。
+**凍結中（一切変更禁止）**: `crates/sim-math/**`、`crates/sim-track/**`、
+ルート直下の `.md` 各種、`docs/`、`assets/tracks/aoyama_ring.track.json`。
 
 ---
 
 ### Goal
 
-トラック定義を**ファイルから読めるようにし**、以降の全 Phase が使う
-**オリジナルのテスト用サーキットを 1 本**確定させる。
+**トラックを目で見て検証できるようにする。**
 
-このデータは Simulation だけでなく、**Blender によるトラックメッシュ生成（ADR-0006）**と
-**UE5 側の手続き的生成（ADR-0004）**からも読まれる。したがって形式は
-Rust / Python / JavaScript のいずれからも追加ライブラリなしで読める **JSON** とする。
-（RON は Python から標準では読めないため採用しない。これは決定事項であり変更禁止。）
+Phase 2 以降の Driver AI・車両挙動を人間が評価するには、
+テレメトリを可視化する計測器が要る。まずその土台をトラック表示として作る。
+
+> **これは製品レンダラではない**（DECISIONS.md ADR-0003）。
+> **見た目の品質向上に工数を使ってはならない。** 装飾・演出・マテリアルの作り込みは禁止。
+> 追加してよい機能は、検証とデバッグに直接寄与するものだけ。
+> Photorealism は UE5 側でのみ追求する。
+
+### 前提（すでに導入済み）
+
+- `wasm32-unknown-unknown` ターゲット: **導入済み**
+- Node.js v24: 導入済み
+- **`wasm-pack` は未導入。** 最初に `cargo install wasm-pack` を実行すること
+  （時間がかかる。失敗する場合は `wasm-bindgen-cli` でも可。使った方を報告に明記）
 
 ### Allowed Files
 
 ```
-crates/sim-track/Cargo.toml            (serde 依存の追加のみ)
-crates/sim-track/src/lib.rs            (io モジュールの公開のみ)
-crates/sim-track/src/definition.rs     (derive / serde 属性の追加のみ)
-crates/sim-track/src/surface.rs        (derive / serde 属性の追加のみ)
-crates/sim-track/src/io.rs             (新規)
-crates/sim-track/tests/io.rs           (新規)
-assets/tracks/aoyama_ring.track.json   (新規)
-assets/tracks/README.md                (新規)
+Cargo.toml                          (members に crates/sim-wasm を追加するのみ)
+crates/sim-wasm/Cargo.toml
+crates/sim-wasm/src/lib.rs
+view-engineering/index.html
+view-engineering/src/main.js
+view-engineering/src/track_mesh.js
+view-engineering/src/overlay.js
+view-engineering/README.md
+view-engineering/package.json
+.gitignore                          (pkg/ と node_modules/ の除外を追記)
 ```
 
-### Do Not Change
+### Dependencies
 
-- `crates/sim-math` 配下
-- `crates/sim-track/src/coord.rs` `track.rs` `lap.rs`
-- `crates/sim-track/tests/track.rs`（既存 16 テストは退行させないこと）
-- `definition.rs` / `surface.rs` の**既存の型・フィールド・既定値・数値表**
-  （追加してよいのは `#[derive(...)]` と `#[cfg_attr(...)]` 属性のみ）
-- ルート直下の 6 つの `.md`
-- ワークスペースの `Cargo.toml`、`tools/`、`view-engineering/`、他の crate
-
-### Dependencies（これ以外を追加しない）
-
+`crates/sim-wasm`:
 ```toml
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
-sim-math = { path = "../sim-math" }
-serde = { version = "1", features = ["derive"], optional = true }
-serde_json = { version = "1", optional = true }
-
-[features]
-default = ["serde"]
-serde = ["dep:serde", "dep:serde_json"]
-
-[dev-dependencies]
-approx = "0.5"
+sim-math  = { path = "../sim-math" }
+sim-track = { path = "../sim-track" }
+wasm-bindgen = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
 ```
 
-**serde は必ず optional かつ feature 越しにすること。**
-`--no-default-features` で依存ゼロの core が残る構成を維持する
-（WASM / FFI 向けにバイナリを絞れるようにするため）。
-`io` モジュール全体と全ての `derive(Serialize, Deserialize)` を
-`#[cfg(feature = "serde")]` / `#[cfg_attr(feature = "serde", ...)]` でガードすること。
-
----
+`view-engineering` は **three のみ**（CDN でもローカルでも可）。
+ビルドツール（webpack / vite 等）を導入しないこと。素の ES module で動かす。
 
 ### Required Changes
 
-#### 1. `definition.rs` / `surface.rs` — 属性の追加のみ
+#### 1. `crates/sim-wasm` — WASM 境界
 
-`CrossSection` / `TrackDefinition` / `SurfaceKind` に
-`#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]` を付与する。
-
-- `SurfaceKind` は `#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]`
-  とし、JSON 上では `"asphalt"` `"kerb"` `"grass"` `"gravel"` `"pit_lane"` と表記する
-- `CrossSection` の各フィールドに `#[cfg_attr(feature = "serde", serde(default))]` を付け、
-  JSON で省略された項目は `Default` の値になるようにする
-  （断面が一様な区間で JSON を短く保てる）
-- **既存のフィールド名・型・既定値・`SurfaceProperties` の数値表は一切変更しないこと**
-
-#### 2. `io.rs` — ロード / セーブ
+**この crate の責務は「Simulation Core の状態を JS へ読み出させる」ことだけ。**
+ロジックを一切持たない。Presentation が Simulation を書き換える経路を作らない。
 
 ```rust
-/// トラック定義ファイルの入出力エラー。
-#[derive(Debug)]
-pub enum TrackIoError {
-    /// ファイル入出力に失敗した。
-    Io(std::io::Error),
-    /// JSON の構文または型が不正。
-    Parse(serde_json::Error),
-    /// JSON としては読めたが、トラックとして不正。
-    Invalid(crate::definition::TrackError),
-    /// スキーマバージョンが未対応。
-    UnsupportedVersion {
-        /// ファイルに書かれていたバージョン。
-        found: u32,
-        /// このビルドが対応するバージョン。
-        supported: u32,
-    },
+/// トラックを WASM 側で保持し、JS から幾何を読み出すためのハンドル。
+#[wasm_bindgen]
+pub struct WasmTrack { /* 非公開に sim_track::Track を持つ */ }
+
+#[wasm_bindgen]
+impl WasmTrack {
+    /// トラック定義 JSON から構築する。失敗時は JsError。
+    #[wasm_bindgen(constructor)]
+    pub fn new(track_json: &str) -> Result<WasmTrack, JsError>;
+
+    pub fn name(&self) -> String;
+    pub fn length(&self) -> f64;
+    pub fn sector_boundaries(&self) -> Vec<f64>;
+    pub fn start_finish_s(&self) -> f64;
+
+    /// `step_m` 間隔でサンプリングした帯状メッシュ用の頂点配列。
+    /// 返すのは `Float64Array` 相当の平坦配列（`[x,y,z, x,y,z, ...]`）。
+    /// `lateral_offset` に `t` を渡すと、その横位置に沿った線を返す
+    /// （0 でセンターライン、+width_left で左端、-width_right で右端）。
+    pub fn sample_line(&self, lateral_offset_ratio: f64, step_m: f64) -> Vec<f64>;
+
+    /// 路面ポリゴン用。左端と右端を交互に並べた三角形ストリップ用頂点列。
+    pub fn sample_surface(&self, step_m: f64) -> Vec<f64>;
+
+    /// 各サンプル点の曲率 [1/m]。`sample_surface` と同じ `step_m` で対応する。
+    pub fn sample_curvature(&self, step_m: f64) -> Vec<f64>;
+
+    /// 各サンプル点のバンク角 [rad]。
+    pub fn sample_banking(&self, step_m: f64) -> Vec<f64>;
+
+    /// ワールド座標からトラック座標を求める。`[s, t]` を返す。
+    pub fn world_to_track(&self, x: f64, y: f64, z: f64) -> Vec<f64>;
 }
 ```
 
-`Display` と `std::error::Error`（`source()` を含む）を実装すること。
+`lateral_offset_ratio` は `-1.0` で右端、`0.0` でセンター、`+1.0` で左端とする
+（コース幅が `s` によって変わるため、絶対値ではなく比で指定する）。
 
-```rust
-/// ファイル形式のスキーマバージョン。破壊的変更のたびに上げる。
-pub const TRACK_SCHEMA_VERSION: u32 = 1;
+#### 2. `view-engineering` — ビューア
 
-/// ファイルの最上位構造。`TrackDefinition` にバージョンとメタ情報を添えたもの。
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct TrackFile {
-    /// スキーマバージョン。読み込み時に検証する。
-    pub schema_version: u32,
-    /// 任意の説明文。シミュレーションからは参照しない。
-    #[cfg_attr(feature = "serde", serde(default))]
-    pub description: String,
-    /// トラック定義本体。
-    pub track: TrackDefinition,
-}
+**表示すべきもの（すべて検証目的）**
 
-/// JSON 文字列から読む。スキーマバージョンと構築可能性を検証する。
-pub fn track_from_json_str(s: &str) -> Result<TrackDefinition, TrackIoError>;
-
-/// JSON ファイルから読む。
-pub fn track_from_json_file(path: impl AsRef<std::path::Path>) -> Result<TrackDefinition, TrackIoError>;
-
-/// 読み込んだうえで `Track::build` まで行う。
-pub fn load_track(path: impl AsRef<std::path::Path>) -> Result<crate::track::Track, TrackIoError>;
-
-/// 定義を JSON 文字列へ書き出す（整形あり）。ラウンドトリップ検証と
-/// ツール側（Blender / UE5）へのエクスポートに使う。
-pub fn track_to_json_string(def: &TrackDefinition, description: &str) -> Result<String, TrackIoError>;
-```
-
-`track_from_json_str` は次の順序で処理すること:
-
-1. `serde_json` でパース（失敗 → `Parse`）
-2. `schema_version != TRACK_SCHEMA_VERSION` なら `UnsupportedVersion`
-3. `Track::build` を試行し、失敗したら `Invalid` を返す
-   （**読み込み時点で構築可能性を検証する。** 不正なデータを後段へ流さない）
-4. 成功したら `TrackDefinition` を返す
-
-#### 3. `assets/tracks/aoyama_ring.track.json` — オリジナル・サーキット
-
-**実在サーキットを模してはならない**（ADR-0006 の IP Policy）。
-名称・レイアウトともオリジナルとすること。ファイル名の `aoyama_ring` はそのまま使う。
-
-満たすべき要件:
-
-| 項目 | 要求 |
+| 表示 | 目的 |
 |------|------|
-| 全長 | **3 800 〜 4 600 m** |
-| 形状 | 閉ループ。自己交差しないこと |
-| 直線 | 最長ストレート **700 m 以上**（スリップストリーム検証用） |
-| 高速コーナー | 半径 **120 m 以上**を 2 箇所以上 |
-| 中速コーナー | 半径 40〜80 m を 3 箇所以上 |
-| 低速コーナー | 半径 **15〜25 m** のヘアピンを 1 箇所以上 |
-| 複合コーナー | S 字または連続コーナーを 1 箇所以上 |
-| 高低差 | 最大 **20 m 以上**（登り・下りの両方を含む） |
-| バンク | 高速コーナー 1 箇所に **0.05 〜 0.12 rad** |
-| コース幅 | 12 〜 16 m（`width_left + width_right`）。ストレートは広く、ヘアピンは狭く |
-| 縁石 | 全コーナーの内外に 1.0 〜 2.0 m |
-| runoff | 高速コーナーの外側は `gravel`、それ以外は `grass` |
-| 制御点間隔 | **8 〜 20 m**。コーナーは密に、ストレートは疎に |
-| セクター | `sector_splits` で 3 分割。各セクターが概ね等しい所要時間になる配置 |
+| 路面ポリゴン | 形状の確認 |
+| センターライン | `s` の基準の確認 |
+| 左右のコース端（corridor 境界） | 幅の確認 |
+| **曲率のカラーマップ**（路面を曲率で着色） | **スパイクや不連続を目視で発見する。最重要** |
+| 標高（3D 表示） | 高低差の確認 |
+| バンク区間のハイライト | バンクが意図した場所にあるか |
+| セクター境界とスタート/フィニッシュ線 | タイミングの基準の確認 |
+| 100 m ごとの `s` の目盛り | 位置の確認 |
+| マウスホバーで `s` / `t` / 曲率 / バンク / 幅 を数値表示 | **数値での確認** |
 
-`assets/tracks/README.md` に次を記載すること:
+**操作**: オービット / パン / ズームのみ。凝ったカメラ演出は不要。
 
-- ファイル形式とスキーマバージョン
-- 各フィールドの意味と単位
-- 座標規約（右手系・Y up・`+t` は左）
-- **このトラックがオリジナルであり実在サーキットを模していないこと**
-- 新しいトラックを追加する手順
+**禁止**: 影・反射・ポストエフェクト・スカイボックス・マテリアルの作り込み・
+アニメーション・UI の装飾。これらは製品レンダラ（UE5）の責務であり、
+ここでやると ADR-0003 に違反する。
 
-#### 4. `lib.rs`
-
-`#[cfg(feature = "serde")] pub mod io;` を追加し、主要項目を再エクスポートする。
-
----
+`view-engineering/README.md` に「これはデバッグ用計測器であり製品レンダラではない」
+ことと、起動方法を明記すること。
 
 ### Required Tests
 
-`crates/sim-track/tests/io.rs` に実装する。
+WASM 境界は自動テストが難しいため、**Rust 側のロジックを rlib としてテストする**。
 
-| Test | 内容 / Acceptance |
-|------|------------------|
-| `json_roundtrip` | `TrackDefinition -> JSON -> TrackDefinition` で全フィールドが一致。さらに両者から `Track::build` した結果の `length` と任意 200 点の `frame_at` が一致（誤差 < 1e-9） |
-| `load_asset_track` | `assets/tracks/aoyama_ring.track.json` が読め、`Track::build` が成功する |
-| `asset_track_meets_layout_requirements` | 上表の全要件を**数値で検証**する（全長・最長ストレート・各半径帯の存在・高低差・バンク・コース幅・縁石・制御点間隔・セクター数）。曲率は `frame_at(s).curvature` から判定すること |
-| `asset_track_has_no_self_intersection` | 十分離れた `s` の組（`signed_delta_s` の絶対値が 50 m 超）でセンターライン同士がコース幅の合計以上離れていること |
-| `asset_track_is_drivable` | 全 `s` で `is_within_limits(TrackCoord::new(s, 0.0))` が真。コース幅が全域で正 |
-| `rejects_unsupported_schema_version` | `schema_version` を変えると `UnsupportedVersion` |
-| `rejects_malformed_json` | 構文エラーで `Parse` |
-| `rejects_invalid_track_data` | 幅 0 やセクター境界不正で `Invalid`（`Track::build` の検証が効いていること） |
-| `missing_optional_fields_use_defaults` | `CrossSection` の項目を省略した JSON が `Default` の値で読める |
+| Test | 内容 |
+|------|------|
+| `wasm_track_builds_from_asset` | 同梱 JSON 文字列から `WasmTrack` が構築でき、`length()` が `Track::length()` と一致 |
+| `sample_surface_is_consistent` | 頂点数が `2 * ceil(length/step) + 2`。全頂点が有限。左右の点の距離が `width_left + width_right` と一致（誤差 < 1e-6） |
+| `sample_line_offsets` | `ratio = 0` がセンターライン、`+1` が左端、`-1` が右端と一致 |
+| `sample_curvature_matches_track` | `Track::frame_at(s).curvature` と一致 |
+| `world_to_track_roundtrip` | `sample_line` で得た点を `world_to_track` に戻すと `t` がほぼ 0 |
+| `invalid_json_returns_error` | 壊れた JSON で `Err` |
 
-アセットへのパスは `env!("CARGO_MANIFEST_DIR")` からの相対で解決すること
-（カレントディレクトリに依存しないこと）。
+`cargo test -p sim-wasm` でネイティブ実行できるよう、テストは `#[cfg(test)]` で
+`wasm_bindgen` に依存しない形にすること。
 
 ### Acceptance Criteria
 
-1. `cargo build --release` が **警告ゼロ**
-2. `cargo build -p sim-track --no-default-features` が **警告ゼロで通る**（出力を報告に貼ること）
-3. `cargo test --release` が全通過（**既存 55 テストの退行なし**）
+1. `cargo build --release` 警告ゼロ
+2. `cargo build -p sim-wasm --target wasm32-unknown-unknown` が通る
+3. `cargo test --release` 全通過（**既存 66 テストの退行なし**）
 4. `cargo clippy --all-targets -- -D warnings` が通る
 5. `cargo fmt --check` が通る
-6. `unsafe` 0 行
-7. `git diff --stat crates/sim-math` が空
-8. `crates/sim-track/src/coord.rs` `track.rs` `lap.rs` と `tests/track.rs` の差分が空
-9. `definition.rs` / `surface.rs` の差分が **属性行の追加のみ**であること
-   （`git diff` を報告に貼り、既存フィールドが無変更であることを示す）
-10. 公開 API が本仕様のシグネチャと完全一致
-11. すべての公開項目に doc comment
+6. `unsafe` 0 行（`wasm_bindgen` のマクロ展開を除く）
+7. **ブラウザで Aoyama Ring が表示され、曲率カラーマップが見える**
+   （スクリーンショットを撮って報告に添付するか、保存パスを明記すること）
+8. 凍結ファイルの差分がゼロ
+9. `view-engineering/` に **ビルドツールを導入していない**こと
 
 ### Performance Criteria
 
 | 項目 | 基準 |
 |------|------|
-| `load_track`（4 km のアセット） | < 50 ms |
-| JSON ファイルサイズ | < 200 KB |
+| `sample_surface(1.0)`（4 km） | < 50 ms |
+| ビューアの表示 | 60 fps（トラック静止表示） |
 
 ### Out of Scope
 
-- Racing Line / Corridor / SpeedProfile（`sim-line`、Phase 2）
-- 車両・物理・AI
-- トラックメッシュ生成（Blender / UE5 側。TASK-05-2 以降）
-- ピットレーン（構造の予約のみ。データも実装も不要）
-- 複数トラックの追加（1 本でよい）
+- 車両の表示（車両がまだ存在しない。Phase 1B 以降）
+- リプレイ・タイムライン
+- 見た目の品質向上（**明確に禁止**）
+- UE5 側の作業
 
 ### Known Risks
 
 | Risk | 対策 |
 |------|------|
-| 制御点を手で並べると自己交差やカスプが生じる | `asset_track_has_no_self_intersection` で検証。最終成果物は JSON そのものであり、生成スクリプトではない |
-| 半径要件を満たしているか目視では分からない | `frame_at(s).curvature` から数値で判定するテストを必ず書く |
-| `serde(default)` の付け忘れで JSON が冗長になる | `missing_optional_fields_use_defaults` で検証 |
-| feature ガード漏れで `--no-default-features` が壊れる | Acceptance Criteria 2 で必ず確認する |
+| `wasm-pack` のインストールに失敗する | `wasm-bindgen-cli` へフォールバック。使った方を報告に明記 |
+| Engineering View が肥大化する | 上の「禁止」リストを厳守。装飾的な変更は行わない |
+| `Vec<f64>` の受け渡しが遅い | まず素直に実装し、実測が基準を超えたら報告する |
 
 ### 完了時の報告フォーマット
 
 ```
-TASK-1A-3 COMPLETE
+TASK-1A-4 COMPLETE
 
 Implemented Files:
+Toolchain used:            (wasm-pack か wasm-bindgen-cli か)
 Test Results:              (cargo test の実出力)
-no-default-features build: (cargo build -p sim-track --no-default-features の実出力)
+wasm32 build:              (実出力)
 Clippy / fmt Results:
-Frozen-file diffs:         (git diff --stat で sim-math / coord.rs / track.rs / lap.rs / tests/track.rs が空であること)
-definition.rs & surface.rs diff: (git diff を貼り、属性追加のみであることを示す)
-Track layout verification: (全長・最長ストレート・各半径・高低差・バンク・幅 の実測値)
+Frozen-file diffs:         (git diff --stat。空であること)
+Screenshot:                (保存パス、または添付)
 Deviations from Spec:      (なければ "None")
 Design Concerns Found:     (なければ "None")
 Performance Notes:
