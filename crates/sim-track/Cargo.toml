@@ -1,0 +1,13 @@
+[package]
+name = "sim-track"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Track geometry and track-local coordinate system for the race simulation core."
+
+[dependencies]
+sim-math = { path = "../sim-math" }
+
+[dev-dependencies]
+approx = "0.5"

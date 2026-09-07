@@ -32,3 +32,11 @@ version = "0.1.0"
 dependencies = [
  "approx",
 ]
+
+[[package]]
+name = "sim-track"
+version = "0.1.0"
+dependencies = [
+ "approx",
+ "sim-math",
+]
