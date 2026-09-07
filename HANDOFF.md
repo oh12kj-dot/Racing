@@ -29,6 +29,7 @@ Last updated: 2026-09-07
 | 5 | `DECISIONS.md` | ADR-0000〜0006。なぜこの技術選定なのか |
 | 6 | `PLAN.md` | Phase 0〜12 のロードマップと Risk Register |
 | 7 | `TESTING.md` | Test Strategy と受け入れ基準 T-TRK / T-VEH / T-AI / T-RACE |
+| 8 | `docs/phase-0.5-tasks.md` | TASK-05-1 / TASK-05-2 の実装仕様（UE5 / Blender） |
 
 **Documentation Rule**: コードと文書が矛盾したら、どちらかを推測で正としない。
 実装 / Git History / Runtime Behaviour / Tests から裏付けを取る。
@@ -161,9 +162,8 @@ Severity は `CRITICAL / HIGH / MEDIUM / LOW`。
 | Task | 内容 |
 |------|------|
 | TASK-1A-4 | `sim-wasm` + `view-engineering`（Three.js テレメトリビューア。**デバッグ専用・製品レンダラではない**） |
-| TASK-05-1 | UE5 の `Config/DefaultEngine.ini` レンダラ設定 |
-| TASK-05-2 | `tools/blender/` 生成基盤（上記の Blender 規約に従うこと） |
-| TASK-05-3 | Phase 0.5 の M1〜M9 実測（`PLAN.md` 参照） |
+| TASK-05-1 | UE5 プロジェクトの Code-First 構築 + M1〜M9 実測 — **仕様は `docs/phase-0.5-tasks.md`** |
+| TASK-05-2 | Blender 車両生成パイプライン — **仕様は `docs/phase-0.5-tasks.md`**（先に着手可） |
 | Phase 1B | `sim-vehicle`（サスペンション + Pacejka タイヤ + パワートレイン + 空力） |
 
 Phase 1A 完了の判定基準は `TESTING.md` の T-TRK-01〜06 と `PLAN.md` Phase 1A の Acceptance。
