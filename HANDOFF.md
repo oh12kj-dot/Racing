@@ -1,89 +1,271 @@
 # HANDOFF.md — 引き継ぎ資料
 
-Last updated: 2026-09-07（TASK-1A-3 完了時点）
-このファイルは **セッションを跨いで作業を再開するための単一の入口**である。
-新しいセッション / 別の AI は **まずこれを読むこと。**
+Last updated: 2026-09-08 / HEAD `097a881`
+**このファイル 1 本で作業を再開できるように書いてある。**
+他の文書は「必要になったときだけ」開けばよい（どこに何があるかは §2 に記載）。
 
 ---
 
 ## 0. 30 秒で把握する
 
-- **何を作っているか**: Realistic Race Spectator Simulator。プレイヤーは運転せず**観戦**する。
-  目標は「実際のモータースポーツ中継に見え、よく見ると各 AI が本当にレースをしている」こと
-- **今どこか**: **Phase 1A（Track Foundation）**。TASK-1A-1 / 1A-2 / 1A-3 が完了・APPROVED
-- **次に何をするか**: **TASK-1A-4**（`sim-wasm` + Engineering View）。
-  完全な実装仕様は `TODO.md` の `# NEXT SONNET TASK` セクションにある。
-  Phase 0.5（UE5 / Blender）は `docs/phase-0.5-tasks.md` にあり、並行して着手できる
-- **役割**: Opus 5 = Architect / Reviewer / Quality Gate。Sonnet 5 = Implementation Engineer。
-  重大な技術変更は人間の承認が必要
+| | |
+|---|---|
+| **何を作っているか** | Realistic Race Spectator Simulator。プレイヤーは運転せず**観戦**する。「実際のモータースポーツ中継に見え、よく見ると各 AI が本当にレースをしている」ことが目標 |
+| **今どこか** | **Phase 1A（Track Foundation）**。1A-1 / 1A-2 / 1A-3 完了。Phase 0.5 の TASK-05-2（Blender）も完了 |
+| **次に何をするか** | **TASK-1A-4（Engineering View）**。仕様は `TODO.md` の `# NEXT SONNET TASK` に全文がある |
+| **役割** | Opus 5 = Architect / Reviewer / Quality Gate。Sonnet 5 = Implementation Engineer。重大な技術変更は人間承認が必要 |
+| **健全性確認** | `cargo test --release` → **66 passed / 0 failed** |
+
+### 最初にやること
+
+```bash
+cd /c/AI/App_Dev/Racing
+cargo test --release      # 66 passed が期待値。下回ったら先に原因を特定する
+```
+
+これが通れば、リポジトリは既知の健全な状態にある。
 
 ---
 
-## 1. ドキュメントの読む順番
+## 1. 現在の到達点
 
-| # | File | 役割 |
-|---|------|------|
-| 1 | **`HANDOFF.md`**（本書） | 再開の入口。現在地と作業手順 |
-| 2 | `PROJECT.md` | 目的・品質目標・性能予算・不可侵原則 |
-| 3 | `ARCHITECTURE.md` | 現在の Architecture。**§3 §4 §6 §12 は必読** |
-| 4 | `TODO.md` | 現在のタスクと**次の実装仕様の全文** |
-| 5 | `DECISIONS.md` | ADR-0000〜0006。なぜこの技術選定なのか |
-| 6 | `PLAN.md` | Phase 0〜12 のロードマップと Risk Register |
-| 7 | `TESTING.md` | Test Strategy と受け入れ基準 T-TRK / T-VEH / T-AI / T-RACE |
-| 8 | `docs/phase-0.5-tasks.md` | TASK-05-1 / TASK-05-2 の実装仕様（UE5 / Blender） |
-| 9 | `docs/phase-1b-vehicle.md` | Phase 1B `sim-vehicle` の実装仕様（車両物理） |
+| Task | 内容 | 状態 | Commit |
+|------|------|------|--------|
+| Phase 0 | Discovery / Architecture / 文書一式 | ✅ | `9c13af8` |
+| ADR-0001〜0006 | Rust / UE5 / 自作アセットの決定 | ✅ 人間承認済 | `856d0bd` |
+| TASK-1A-1 | `sim-math`（数学基盤・決定的 RNG） | ✅ APPROVED | `85f6c6f` |
+| TASK-1A-2 | `sim-track`（トラック局所座標系） | ✅ APPROVED | `4fc4c48` |
+| TASK-1A-3 | トラック JSON ロード + Aoyama Ring | ✅ APPROVED | `cf3d7dd` |
+| TASK-05-2 | Blender 車両生成パイプライン（**M9 達成**） | ✅ APPROVED | `2ec80c9` |
+| Phase 1B 仕様 | `sim-vehicle` 実装仕様 | ✅ 作成済 | `60c1577` |
+| **TASK-1A-4** | **Engineering View** | ⬅ **次。仕様済** | — |
+| TASK-05-1 | UE5 Code-First 構築 + M1〜M9 実測 | 📄 仕様済 | — |
+| Phase 1B | `sim-vehicle` 実装 | 📄 仕様済 | — |
+
+### ファイル構成（全体。これがすべて）
+
+```
+PROJECT.md ARCHITECTURE.md PLAN.md TODO.md DECISIONS.md TESTING.md HANDOFF.md
+docs/phase-0.5-tasks.md      TASK-05-1(UE5) / TASK-05-2(Blender) の実装仕様
+docs/phase-1b-vehicle.md     Phase 1B (sim-vehicle) の実装仕様
+crates/sim-math/             Vec2/Vec3, Quat, CubicSpline, ArcLengthSpline, Rng, util
+crates/sim-track/            TrackCoord, TrackFrame, Track, SurfaceKind, io(JSON), lap
+assets/tracks/               aoyama_ring.track.json（オリジナル 4 139 m サーキット）
+assets/vehicles/             gt_proto_a.spec.json（見た目と物理の共通仕様）
+tools/blender/               車両メッシュ生成パイプライン（稼働中）
+build/                       生成物。gitignore 済み。コミットしない
+```
+
+Rust 約 5 200 行 / Python 約 1 400 行。
+
+---
+
+## 2. 他の文書に何が書いてあるか（必要なときだけ開く）
+
+| File | 開くべきとき |
+|------|------------|
+| `TODO.md` | **次のタスクを実装するとき**（NEXT SONNET TASK に全文仕様）／過去のレビュー記録を見たいとき |
+| `docs/phase-0.5-tasks.md` | UE5（TASK-05-1）に着手するとき |
+| `docs/phase-1b-vehicle.md` | 車両物理（Phase 1B）に着手するとき |
+| `PROJECT.md` | 性能予算・決定性契約の数値を確認したいとき |
+| `ARCHITECTURE.md` | 新しい crate を足す／モジュール境界を判断するとき |
+| `DECISIONS.md` | 「なぜこの技術なのか」を問われたとき（ADR-0000〜0006） |
+| `PLAN.md` | Phase の全体像・Risk Register を見たいとき |
+| `TESTING.md` | 受け入れ基準 T-TRK / T-VEH / T-AI / T-RACE の一覧 |
+| `assets/tracks/README.md` | トラックデータ形式を扱うとき |
+| `tools/blender/README.md` | Blender パイプラインを触るとき |
 
 **Documentation Rule**: コードと文書が矛盾したら、どちらかを推測で正としない。
 実装 / Git History / Runtime Behaviour / Tests から裏付けを取る。
 
 ---
 
-## 2. 現在の状態
+## 3. 絶対に破ってはいけない原則
 
-### 完了済み
+違反はレビューで **CRITICAL** 判定。
 
-| Task | 内容 | 状態 | Commit |
-|------|------|------|--------|
-| Phase 0 | Discovery / Architecture / 6 文書 | ✅ | `9c13af8` |
-| ADR-0004/0005/0006 | UE5 / Rust / 自作アセットの決定 | ✅ 人間承認済 | `856d0bd` |
-| TASK-1A-1 | `sim-math`（数学基盤・決定的 RNG） | ✅ APPROVED | `85f6c6f` |
-| TASK-1A-2 | `sim-track`（トラック局所座標系） | ✅ APPROVED | `4fc4c48` |
-| TASK-1A-3 | トラック JSON ロード + Aoyama Ring | ✅ APPROVED | `cf3d7dd` |
-| Phase 1B 仕様 | `sim-vehicle` 実装仕様 | ✅ 作成済 | `60c1577` |
-| TASK-05-2 | Blender 車両生成パイプライン（**M9 達成**） | ✅ APPROVED | `2ec80c9` |
-| Phase 0.5 仕様 | TASK-05-1 / 05-2 の実装仕様 | ✅ 作成済 | `4f3fd6c` |
-
-### 検証コマンド（再開時に必ず実行して健全性を確認すること）
-
-```bash
-cd /c/AI/App_Dev/Racing
-cargo test --release      # 66 passed / 0 failed が期待値
-cargo clippy --all-targets -- -D warnings   # 0
-cargo build --release     # warnings 0
-cargo fmt --check         # clean
-```
-
-期待値: **66 tests**（sim-math 37 + sim-track 28 + doc-test 1）。
-`cargo build -p sim-track --no-default-features` も通ること（依存が sim-math のみになる）。
-これを下回る / 失敗する場合は、先に原因を特定すること。新機能より退行の解消が優先。
-
-### 実装済みの crate
-
-```
-crates/sim-math/   Vec2/Vec3, Quat(YXZ), CubicSpline, ArcLengthSpline, Rng, util
-                   依存ゼロ / unsafe ゼロ / #![deny(unsafe_code)]
-crates/sim-track/  TrackCoord{s,t}, TrackFrame, SurfaceKind, TrackDefinition,
-                   Track(build/frame_at/track_to_world/world_to_track/...),
-                   detect_lap_crossing, io(JSON ロード。feature "serde")
-                   依存は sim-math（+ optional serde/serde_json）
-assets/tracks/     aoyama_ring.track.json — オリジナル 4 139 m サーキット
-```
-
-**`crates/sim-math` は APPROVED 済みで凍結中。** 変更が必要なら `BLOCKED BY ARCHITECTURE` として起票する。
+1. **AI が Vehicle の Transform / Position / Velocity を直接書き換えてはならない。**
+   AI が出せるのは `steering / throttle / brake / gear / clutch / drs` のみ。
+   最終的な挙動は物理システムだけが決める
+2. **Lap Time を乱数生成して順位を決めてはならない。** 結果は Tick の積み重ねから創発させる
+3. **乱数は「結果」ではなく「原因」に作用させる**
+   （reaction / decision / confidence / risk / mistake / precision / consistency）
+4. **Simulation Core は Rendering / UI / Camera を知らない。** crate 依存グラフで機械的に強制する
+5. **固定タイムステップのみ。** 可変 dt を Simulation Core に入れない
+6. **グローバル乱数・時刻依存乱数は禁止。** すべて `Rng` の明示的な派生で
+7. **トラック上の位置は Waypoint index ではなく連続量 `s`（弧長 [m]）**
+8. **ラップ処理は `wrap_s` / `signed_delta_s` に一本化。** 各所で自前の剰余計算をしない
+9. **順位は `(laps_completed, s)` の辞書順のみで決まる。** ワールド距離で並べない
+10. 巨大な `GameManager` / `RaceManager` へ責務を集中させない
 
 ---
 
-## 3. 作業の進め方（この契約を守ること）
+## 4. 座標系と単位の規約（変更禁止）
+
+```
+右手系 / +Y が上 / 単位はすべて SI (m, kg, s, N, rad) / 角度はラジアン
+車両ローカル: +X 前方, +Y 上, +Z 右
+トラック局所: TrackCoord { s: 弧長[m], t: 横オフセット[m] }  ← +t が左
+曲率: 左カーブが正
+バンク: 正で左端が持ち上がる（左旋回では外側=右を上げるので負にする）
+```
+
+**`lateral = up.cross(tangent)`** が左を向く。これは標準的な CCW 左法線とは逆手系なので、
+曲率符号の判定は `diff.perp_dot(tangent)`（引数順を逆にすると符号が反転する。実際に踏んだ）。
+
+浮動小数は状態と積算をすべて `f64`。fast-math 最適化は禁止（`Cargo.toml` の release profile で
+`codegen-units = 1` / `lto = "thin"` を設定済み。変更するなら ADR を起票すること）。
+
+---
+
+## 5. 実装済み API（ソースを読まずに済むように）
+
+> 以下は HEAD `097a881` 時点のスナップショット。**正はソース**だが、
+> 通常はこれで足りる。詳細な doc comment は各 `.rs` にある。
+
+### `sim-math`（依存ゼロ / unsafe ゼロ / wasm32 ビルド確認済み）
+
+```rust
+// vec.rs
+struct Vec2 { x, y }   struct Vec3 { x, y, z }
+  定数: ZERO, X, Y, Z(Vec3のみ), UP(=Y)
+  new splat dot cross(Vec3) perp_dot(Vec2) perp(Vec2)
+  length length_squared normalize try_normalize->Option distance distance_squared
+  lerp project_onto reject_from angle_between signed_angle_to(Vec2)
+  xz()->Vec2  horizontal()->Vec3  to_xz()->Vec3(Vec2)  is_finite
+  演算子: + - * / 単項- と各Assign版、f64 * Vec も可
+
+// quat.rs — オイラー順序は YXZ (Ry(yaw)*Rx(pitch)*Rz(roll))
+struct Quat { x, y, z, w }
+  IDENTITY new from_axis_angle from_euler_yxz to_euler_yxz(ジンバルロックでroll=0に固定)
+  conjugate inverse norm norm_squared normalize dot rotate_vec3 to_mat3 slerp is_finite
+  演算子: Quat * Quat（合成。(a*b) は b を適用してから a）、Quat * Vec3（= rotate_vec3）
+
+// spline.rs — centripetal Catmull-Rom。真の C1（大域uをノットスパン比例配分）
+struct CubicSpline
+  new(points, closed)->Result<_, SplineError>   ※4点未満/重複点/非有限でErr
+  is_closed segment_count segment_start_u eval derivative second_derivative tangent curvature
+struct ArcLengthSpline               // 弧長 s [m] でアクセスする再パラメータ化
+  DEFAULT_SAMPLES_PER_SEGMENT=64  HINT_SEARCH_RADIUS_M=5.0
+  new with_default_samples total_length is_closed samples_per_segment spline()
+  control_point_s(i) control_point_count      // 制御点 -> s の対応
+  wrap_s signed_delta_s                        // ★ラップ処理の唯一の正
+  u_from_s s_from_u position_at tangent_at curvature_at
+  pose_at(s)->(位置,接線)                      // 位置と接線が両方要るときはこれ
+  closest_s(p, hint)->f64                      // hint有 420ns / 無 3.8us
+                                               // 窓端で全走査へ自動フォールバック（近似ではなく厳密）
+
+// rng.rs — xoshiro256** + SplitMix64。グローバル状態なし
+struct Rng
+  from_seed(u64)  derive(&self, label)->Rng    // ★親状態を変えない。派生順に依存しない
+  next_u64 next_f64 range_f64 range_i64 bool_with_probability
+  normal normal_clamped                        // Box-Muller。キャッシュを持たない（意図的）
+  state_hash()                                 // 状態を消費しない。決定性テスト用
+
+// util.rs
+EPSILON=1e-9 clamp saturate lerp inverse_lerp remap smoothstep smootherstep
+move_towards(current,target,max_delta)                   // ★レート制限
+approach_exponential(current,target,time_constant,dt)    // ★一次遅れ（フレームレート非依存）
+wrap_angle signed_angle_delta is_finite_within
+```
+
+`move_towards` と `approach_exponential` は Driver AI の制御出力に必ず通すこと。
+**この 2 つが「Steering が不連続に振動しない」の構造的保証**（TESTING.md T-AI-02）。
+
+### `sim-track`（依存は sim-math + optional serde。wasm32 ビルド確認済み）
+
+```rust
+struct TrackCoord { s, t }            // t は左が正
+struct TrackFrame {                   // ★正規直交基底。Gram-Schmidt 済み
+  position tangent normal lateral     // lateral は左向き、normal = tangent.cross(lateral)
+  curvature banking camber elevation width_left width_right
+}
+enum SurfaceKind { Asphalt, Kerb, Grass, Gravel, PitLane }
+  .properties() -> SurfaceProperties { grip_multiplier, rolling_resistance, roughness, within_limits }
+  既定値: Asphalt 1.00/0.012  Kerb 0.90/0.020  Grass 0.45/0.090  Gravel 0.35/0.250  PitLane 0.95/0.013
+  within_limits: Asphalt/Kerb/PitLane = true, Grass/Gravel = false
+
+struct CrossSection { width_left width_right banking camber kerb_left kerb_right runoff }
+struct TrackDefinition { name centerline sections closed sector_splits start_finish }
+enum TrackError { Spline, SectionCountMismatch, NonPositiveWidth, InvalidSectorSplits, InvalidStartFinish }
+
+struct Track
+  FRAME_SPACING_M = 0.5                        // フレームテーブルの間隔
+  build(&TrackDefinition)->Result<Track,TrackError>
+  name length is_closed
+  frame_at(s)->TrackFrame                      // 36ns。テーブル補間+直交化
+  track_to_world(TrackCoord)->Vec3
+  world_to_track(p, hint)->TrackCoord          // 579ns。hint に前tickの s を渡すこと
+  wrap_s signed_delta_s                        // ★ラップ処理はこれを通す
+  surface_at(TrackCoord)->SurfaceKind  is_within_limits(TrackCoord)->bool
+  sector_of(s)->usize  sector_boundaries()->&[f64]  start_finish_s()
+
+enum LapCrossing { None, Forward, Backward, Suspect }
+fn detect_lap_crossing(&Track, prev_s, new_s, max_ds) -> LapCrossing
+  // ★1 tick の移動が max_ds を超えたら Suspect。**このときラップを加算してはならない**
+  //   ラップカウント暴走を構造的に防ぐ仕掛け
+
+// io.rs（feature "serde"。既定で有効。--no-default-features で依存ゼロになる）
+TRACK_SCHEMA_VERSION = 1
+enum TrackIoError { Io, Parse, Invalid, UnsupportedVersion }
+struct TrackFile { schema_version, description, track }
+track_from_json_str / track_from_json_file / load_track / track_to_json_string
+  // ★読み込み時に Track::build を実行して検証する。不正データは後段へ流れない
+```
+
+### `assets/`
+
+- `tracks/aoyama_ring.track.json` — オリジナル 4 139 m。制御点 329。
+  高速コーナー 4（130/150/185/140 m）、中速 5、ヘアピン 1（20.6 m・150 度）、
+  S 字 1、高低差 23.5 m、バンク 0.100 rad、幅 12〜16 m、3 セクター。
+  **全要件は `crates/sim-track/tests/io.rs` が実測で検証している**
+- `vehicles/gt_proto_a.spec.json` — **見た目（Blender）と物理（Phase 1B）の共通の正**。
+  dimensions / mass / tyre / engine / drivetrain / aero / brakes / suspension / visual を含む。
+  物理側フィールドはまだ誰も読んでいないが、形式を後から変えないため先に定義してある
+
+### `tools/blender/`（稼働中）
+
+```bash
+python tools/blender/generate.py --spec assets/vehicles/gt_proto_a.spec.json
+python tools/blender/tests/test_pipeline.py     # 10 tests, 約 11 s
+```
+2.7 s で 71 178 三角形の GLB を生成。24 オブジェクト、マテリアルスロット 7。
+
+---
+
+## 6. 実行環境（実測済み。推測しないこと）
+
+| 項目 | 値 |
+|------|-----|
+| GPU | **NVIDIA RTX 4060 Ti 8 GB** ← 最大のハード制約。全ての映像設計がこれに従う |
+| CPU / RAM | AMD Ryzen 7 5700X (8C/16T) / 32 GB |
+| OS / Shell | Windows 11 / PowerShell 5.1 + Git Bash |
+| Rust | 1.95.0（`rust-toolchain.toml` で stable 固定） |
+| WASM | `wasm32-unknown-unknown` 導入済み / `wasm-pack` 0.15.0 導入済み。**`sim-math` `sim-track` ともビルド確認済み** |
+| Unreal Engine | **5.8** — `C:\Program Files\Epic Games\UE_5.8` |
+| UE ヘッドレス | `C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe` |
+| Blender | **5.2.1 LTS**（Microsoft Store / MSIX 版） |
+| Node.js | v24.15.0 |
+
+### Blender の起動方法（厳守）
+
+```
+%LOCALAPPDATA%\Microsoft\WindowsApps\blender-launcher.exe ^
+    --background --factory-startup --python <script.py> -- <args...>
+```
+
+- **実行体を直接叩かない。** `C:\Program Files\WindowsApps\...\Blender\blender.exe` は
+  存在するが ACL により **Access Denied** になる
+- **stdout / stderr は転送されない（0 バイト）。** `print()` は届かない
+  → スクリプトは **JSON サマリファイル**で報告し、呼び出し側は
+  **終了コードとサマリの両方**で判定する。終了コード 0 でもサマリが無ければ失敗
+- **glTF の軸変換**: `glTF.X = Blender.X` / `glTF.Y = Blender.Z` / `glTF.Z = -Blender.Y`。
+  実座標 `(x_fwd, y_up, z_right)` を置くには Blender へ `(x_fwd, -z_right, y_up)` で渡す。
+  **推測せず、エクスポートした GLB を読み直して確認すること**（左右反転を実際に踏んだ）
+
+---
+
+## 7. 作業の進め方
 
 ```
 Opus が実装仕様を書く（TODO.md の NEXT SONNET TASK）
@@ -102,118 +284,54 @@ TODO.md にレビュー記録を書き、次タスクの仕様を書く
 `Goal` / `Allowed Files` / `Do Not Change` / `Dependencies` / `Required Changes` /
 `Required Tests` / `Acceptance Criteria` / `Performance Criteria` / `Out of Scope` /
 `Known Risks` / `完了時の報告フォーマット`
-に加えて、**IMPORTANT IMPLEMENTATION CONTRACT**（設計変更禁止 / `PROPOSED DESIGN CHANGE` /
-`BLOCKED BY ARCHITECTURE` / リファクタリング禁止）の全文。
+に加えて **IMPORTANT IMPLEMENTATION CONTRACT** の全文
+（設計変更禁止 / `PROPOSED DESIGN CHANGE` / `BLOCKED BY ARCHITECTURE` / リファクタリング禁止）。
 
-`TODO.md` の TASK-1A-3 セクションがそのままテンプレートとして使える。
+`TODO.md` の TASK-1A-4 セクションがそのままテンプレートとして使える。
 
 ### 監査で必ず確認すること
 
 1. `git diff --stat` で**スコープ外のファイルが変更されていないか**
-2. 凍結 crate（`sim-math`）の差分が空か
+2. 凍結 crate の差分が空か
 3. テスト / clippy / fmt / warnings を**自分で再実行**する（報告を鵜呑みにしない）
-4. 新しいテストが**実質的か**（修正前なら落ちるか）を確認する
-5. 報告された「根本原因」が正しいか。**疑わしければ自分で計測する**
+4. **新しいテストが実質的か**（修正前なら落ちるか）を確認する
+5. **報告された「根本原因」が正しいか。疑わしければ自分で計測する**
+   （実際に 2 回、報告された根本原因が誤っていた）
+6. 実装者が書いた検証器を信用しきらない。**可能なら独立に検証器を書く**
+   （TASK-05-2 では独立 GLB リーダーを書いて確認した）
 
 Severity は `CRITICAL / HIGH / MEDIUM / LOW`。
 **CRITICAL または HIGH が残っている Phase を Complete にしてはならない。**
 
 ---
 
-## 4. 実行環境（実測済み・推測しないこと）
-
-| 項目 | 値 |
-|------|-----|
-| GPU | **NVIDIA RTX 4060 Ti 8 GB** ← 最大のハード制約。全ての映像設計がこれに従う |
-| CPU / RAM | AMD Ryzen 7 5700X (8C/16T) / 32 GB |
-| OS / Shell | Windows 11 / PowerShell 5.1 + Git Bash |
-| Rust | 1.95.0（stable, `rust-toolchain.toml` で固定） |
-| WASM | `wasm32-unknown-unknown` ターゲット導入済み / `wasm-pack` 0.15.0 導入済み。**`sim-math` と `sim-track` は wasm32 でビルド確認済み** |
-| Unreal Engine | **5.8** — `C:\Program Files\Epic Games\UE_5.8` |
-| UE ヘッドレス | `C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe` |
-| Blender | **5.2.1 LTS**（Microsoft Store / MSIX 版）— 起動方法は下記。**車両生成パイプライン稼働中** |
-
-### Blender の起動方法（厳守）
-
-```
-%LOCALAPPDATA%\Microsoft\WindowsApps\blender-launcher.exe ^
-    --background --factory-startup --python <script.py> -- <args...>
-```
-
-- **実行体を直接叩かないこと。** `C:\Program Files\WindowsApps\...\Blender\blender.exe` は
-  存在するが ACL により **Access Denied** になる。必ずエイリアス経由
-- **stdout / stderr は転送されない（0 バイト）。** `print()` は届かない
-- したがって Blender スクリプトは **必ず JSON サマリファイルを書き出す**こと。
-  呼び出し側は「終了コード」と「サマリファイルの内容」の両方で成否を判定する
-- 動作確認済み: `bpy` 利用 / `--` 以降の引数受け渡し / メッシュ生成 / **glTF(GLB) エクスポート**
-- **稼働中のパイプライン**: `python tools/blender/generate.py --spec assets/vehicles/gt_proto_a.spec.json`
-  （2.7 s で 71 k 三角形の GLB を生成。テストは `python tools/blender/tests/test_pipeline.py`）
-- **glTF の軸変換**: `glTF.X = Blender.X` / `glTF.Y = Blender.Z` / `glTF.Z = -Blender.Y`。
-  実座標 (x_fwd, y_up, z_right) を置くには Blender へ `(x_fwd, -z_right, y_up)` で渡す。
-  **推測せず、エクスポートした GLB を読み直して確認すること**（左右反転を実際に踏んだ）
-
-詳細は `DECISIONS.md` の「ADR-0006 追記」を参照。
-
----
-
-## 5. 次にやること
-
-### TASK-1A-4（次の実装タスク）
-
-**仕様の全文は `TODO.md` の `# NEXT SONNET TASK` にある。**
-
-概要: `sim-core` を wasm32 へビルドし、ブラウザ上の **Engineering View**
-（Three.js テレメトリビューア）でトラックと車両状態を可視化する。
-これは **デバッグ用の計測器であり、製品レンダラではない**（ADR-0003）。
-装飾的な作り込みに工数を使わないこと。
-
-### その後の予定
-
-| Task | 内容 |
-|------|------|
-| TASK-05-1 | UE5 プロジェクトの Code-First 構築 + M1〜M9 実測 — **仕様は `docs/phase-0.5-tasks.md`** |
-| ~~TASK-05-2~~ | ~~Blender 車両生成パイプライン~~ **完了**（`2ec80c9`。M9 達成） |
-| Phase 1B | `sim-vehicle`（サスペンション + Pacejka タイヤ + パワートレイン + 空力）— **仕様は `docs/phase-1b-vehicle.md`** |
-
-Phase 1A 完了の判定基準は `TESTING.md` の T-TRK-01〜06 と `PLAN.md` Phase 1A の Acceptance。
-
----
-
-## 6. 再導出すると高くつく知見（重要）
+## 8. 再導出すると高くつく知見
 
 ### 設計上の要点
 
-- **トラック上の位置は Waypoint index ではなく連続量 `s`（弧長 [m]）。**
-  これが「Waypoint index が暴走する」類のバグを構造的に防ぐ根拠
-- **ラップ処理は `wrap_s` / `signed_delta_s` に一本化する。** 各所で自前の剰余計算をしない
-- **順位は `(laps_completed, s)` の辞書順のみで決まる。** ワールド距離で並べない
-- **曲率の符号**: 左カーブが正。`lateral = up.cross(tangent)` は標準的な CCW 左法線とは
-  **逆手系**なので、`perp_dot` の引数順は `diff.perp_dot(tangent)`。
-  逆にすると符号が反転する（TASK-1A-2 で実際に踏んだ）
 - **`TrackFrame` は正規直交基底。** `tangent`/`lateral`/`normal` を個別に lerp して個別に
-  正規化すると、バンク変化や 3D ねじれで直交性が崩れる（実測 |N·T| = 1.8e-5）。
-  Gram-Schmidt で直交化し `normal = tangent.cross(lateral)` で導出すること
-- **`camber` は現在データとして保持のみで、幾何には未適用。** 下流はこれを前提にしないこと
+  正規化すると、バンク変化や 3D ねじれで直交性が崩れる（実測 `|N·T| = 1.8e-5`）。
+  Gram-Schmidt で直交化し `normal = tangent.cross(lateral)` で導出すること。
+  downstream（タイヤ力の縦横分解）がこれを前提にする
 - **制御点の密度を急変させない。** 円弧 10 m / 直線 18 m のように density が跳ぶと、
-  centripetal Catmull-Rom の接線推定が跳ね、継ぎ目に曲率オーバーシュートが出る
+  Catmull-Rom の接線推定が跳ね、継ぎ目に曲率オーバーシュートが出る
   （実測: 半径 130 m のコーナー出口に R=101 m の 1 サンプルスパイク）。
-  直線側の間隔を継ぎ目で 10 m・中央で 18 m へ滑らかに変化させて解消した。
+  直線側を継ぎ目 10 m・中央 18 m へ滑らかに変化させて解消した。
   **Phase 2 の Speed Profile は曲率から限界速度を出すため、偽スパイクは偽の減速になる**
-- **コーナー半径を「最小値」で測らない。** 継ぎ目のスパイクを拾う。
-  **中央値**を使うこと（ドライバーが体験する半径はそちら）
+- **コーナー半径を「最小値」で測らない。** 継ぎ目のスパイクを拾う。**中央値**を使う
+- **`camber` は現在データとして保持のみで、幾何には未適用。** 下流はこれを前提にしないこと
 - **`serde_json` の f64 は 1 ULP ずれて往復する**（実測）。
-  トラックデータでは 1e-14 m で無意味だが、「保存→再読込でビット一致」と仮定しないこと。
-  アセット JSON が唯一の正であり実行時に再生成しないため、決定性契約には影響しない
+  「保存→再読込でビット一致」と仮定しないこと。アセット JSON が唯一の正であり
+  実行時に再生成しないため、決定性契約には影響しない
 
 ### 性能基準の考え方
 
-性能基準は**予算から導出すること。** 恣意的な数値を置かない。
-例: `closest_s` は当初 200 ns としたが根拠が無く、実測 420 ns。
-実際の呼び出しは 24 台 × 60 Hz = 1440 call/s で予算比 2% だったため
-「< 1 µs」へ改めた。**基準を緩めるときは必ず予算に基づく根拠を書く。**
+**性能基準は予算から導出すること。恣意的な数値を置かない。**
+例: `closest_s` を当初 200 ns としたが根拠が無く、実測 420 ns。
+実際の呼び出しは 24 台 × 60 Hz = 1440 call/s で予算比 2% だったため「< 1 µs」へ改めた。
 
 逆に、**仕様に明記された受け入れ数値を実装者が勝手に緩めるのは設計変更**であり、
-`PROPOSED DESIGN CHANGE` として事前に起票させること（TASK-1A-2 で実際に発生した）。
+`PROPOSED DESIGN CHANGE` として事前に起票させること（実際に発生した）。
 
 ### 環境上の落とし穴
 
@@ -227,30 +345,96 @@ Phase 1A 完了の判定基準は `TESTING.md` の T-TRK-01〜06 と `PLAN.md` P
 
 ---
 
-## 7. 人間の判断が必要な事項
+## 9. 検証コマンド一覧
 
-| # | 内容 | 状態 |
-|---|------|------|
-| H-1 | Simulation Core の言語 = Rust | ✅ 承認済（ADR-0001/0005） |
-| H-2 | 製品レンダラ = Unreal Engine 5（Code-First 制約つき） | ✅ 承認済（ADR-0004） |
-| H-3 | アセットは自作（Blender headless + Python） | ✅ 承認済（ADR-0006） |
-| H-4 | Phase 0.5 の M1〜M9 実測結果に基づく UE5 続行判定 | ⏳ Phase 3 完了時が期限 |
+```bash
+cd /c/AI/App_Dev/Racing
 
-以下は Opus 単独で実行してはならない（`PROJECT.md` §10）。
-Game Engine 変更 / 言語変更 / 主要フレームワーク置換 / 物理アーキテクチャ置換 /
-リポジトリ全体の書き換え / プロジェクト目標の変更。
+# Rust（期待値: 66 passed / clippy 0 / warnings 0 / fmt clean）
+cargo test --release
+cargo clippy --all-targets -- -D warnings
+cargo build --release
+cargo fmt --check
+
+# 依存ゼロの core が壊れていないか（WASM/FFI 向け）
+cargo build -p sim-track --no-default-features       # 依存が sim-math のみになる
+cargo build -p sim-track --target wasm32-unknown-unknown
+
+# Blender パイプライン
+python tools/blender/generate.py --spec assets/vehicles/gt_proto_a.spec.json
+python tools/blender/tests/test_pipeline.py          # 10 tests
+
+# 凍結ファイルの確認（レビュー時）
+git diff --stat crates/sim-math
+git status --short
+```
+
+### 実測されている性能値
+
+| 項目 | 実測 | 予算 |
+|------|------|------|
+| `Rng::next_f64` | 0.91 ns | < 5 ns |
+| `ArcLengthSpline::closest_s`（hint 有） | 420 ns | < 1 µs |
+| `Track::frame_at` | 36 ns | < 100 ns |
+| `Track::world_to_track`（hint 有） | 579 ns | < 1 µs |
+| `Track::build`（5 km） | 4.0 ms | < 100 ms |
+| フレームテーブル（5 km） | 1.21 MB | < 2 MB |
+| `load_track`（4 km） | 7.0 ms | < 50 ms |
+| 車両 GLB 生成 | 2.7 s / 71 178 tri | 60k〜150k tri |
 
 ---
 
-## 8. 絶対に破ってはいけない原則（`PROJECT.md` §4 §5 より）
+## 10. 決定事項（ADR の要約。詳細は `DECISIONS.md`）
 
-1. **AI が Vehicle の Transform / Position / Velocity を直接書き換えてはならない。**
-   AI が出せるのは `steering / throttle / brake / gear / clutch / drs` のみ
-2. **Lap Time を乱数生成して順位を決めてはならない。** 結果は Tick の積み重ねから創発させる
-3. 乱数は「結果」ではなく「原因」に作用させる（reaction / decision / confidence / risk /
-   mistake / precision / consistency）
-4. **Simulation Core は Rendering / UI / Camera を知らない。** crate 依存グラフで機械的に強制する
-5. 固定タイムステップのみ。可変 dt を Simulation Core に入れない
-6. グローバル乱数・時刻依存乱数は禁止。すべて `Rng` の明示的な派生で
+| ADR | 決定 | 一行理由 |
+|-----|------|---------|
+| 0000 | 本プロジェクトは Greenfield | 監査時点でリポジトリは完全に空だった |
+| 0001/0005 | **Simulation Core は Rust** | メモリ安全性がコンパイル時に保証され、AI 実装+全件レビュー体制でバグ面積が実質縮小する。WASM/C-ABI 両対応で UE5・Unity・Web いずれにも書き直しなしで接続できる |
+| 0002 | Godot / Web 3D を主レンダラ候補から除外 | Photorealism 要件（Q3）を満たせない |
+| 0003 | Engineering View を恒久的なデバッグ基盤とする | テレメトリ可視化なしでは AI 挙動を検収できない。**製品レンダラではない。装飾禁止** |
+| 0004 | **製品レンダラは Unreal Engine 5**（Code-First 運用制約 6 項目つき） | 映像の最高到達点。ただし Blueprint 禁止・エディタ GUI を正としない・レンダラ設定は ini・トラックは手続き的生成・視覚検証は自動スクショ・UE C++ は薄く保つ |
+| 0006 | **アセットは購入せず自作**（Blender headless + Python） | 実車の工学数値を `spec.json` に落とし、見た目と物理を同じ根から導出する。100% テキストから再生成可能。IP リスクなし |
 
-違反はレビューで **CRITICAL** 判定。
+**人間承認が必要な変更**（Opus 単独で実行してはならない）:
+Game Engine 変更 / 言語変更 / 主要フレームワーク置換 / 物理アーキテクチャ置換 /
+リポジトリ全体の書き換え / プロジェクト目標の変更。
+
+### 未解決の人間判断
+
+| # | 内容 | 期限 |
+|---|------|------|
+| H-4 | Phase 0.5 の M1〜M9 実測結果に基づく UE5 続行判定 | **Phase 3 完了時**。不合格なら Unity 6 HDRP へ退避（Simulation Core は無傷） |
+
+---
+
+## 11. 次にやること
+
+### TASK-1A-4 — Engineering View（仕様は `TODO.md` に全文）
+
+`sim-wasm` crate を作り、`sim-track` を WASM 経由でブラウザへ公開。
+Three.js でトラックを可視化する。表示すべきものの中核は **曲率のカラーマップ**
+（スパイクや不連続を目視で発見するため）。
+
+> **これは製品レンダラではない。見た目の品質向上に工数を使ってはならない。**
+> 影・反射・ポストエフェクト・マテリアルの作り込み・UI の装飾は禁止（ADR-0003）。
+
+前提: `wasm32` ターゲットと `wasm-pack` は導入済み。すぐ着手できる。
+
+### 並行して着手可能
+
+- **TASK-05-1**（UE5 Code-First 構築 + M1〜M9 実測）— `docs/phase-0.5-tasks.md`
+  UE 5.8 導入済み。**UE 5.8 の cvar 名は推測で書かず、適用後の値を読み出して検証すること**
+- **Phase 1B**（`sim-vehicle`）— `docs/phase-1b-vehicle.md`
+  最大リスクは低速での Pacejka 発散。緩和長 0.30 m + 低速ブレンド 2.0 m/s +
+  静止摩擦ばね + 車輪のみ 960 Hz サブステップで対処する設計になっている
+
+### Phase の全体像（`PLAN.md` 参照）
+
+```
+0 Discovery ✅ / 0.5 UE5 Spike(05-2 ✅) / 1A Track(1A-4 が最後) / 1B Vehicle
+2 RacingLine+単独AI / 3 複数台+レース / 4 追走 / 5 追い抜き・防御  ← ここまでが中核
+6 タイヤ・戦略 / 7 天候 / 8 放送カメラ / 9 TV Director / 10 映像 / 11 音・リプレイ / 12 最適化
+```
+
+**Phase 1〜5 が安定するまで UI / メニュー / 演出 / コンテンツ量産へ工数を使わない。**
+まず「車が自然に走る」「複数台が自然に競う」を完成させる。

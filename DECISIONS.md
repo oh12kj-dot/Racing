@@ -1,5 +1,8 @@
 # DECISIONS.md — Architecture Decision Record
 
+> **再開するときは先に [`HANDOFF.md`](HANDOFF.md) を読むこと。** 現在地・実装済み API・環境・手順が 1 本にまとまっている。
+
+
 各 ADR は次を必ず含む:
 `Current State / Problem / Requirements / Alternatives / Pros / Cons / Migration Cost / Migration Risk / Expected Benefit / Recommendation / Status`
 

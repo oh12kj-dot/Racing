@@ -1,5 +1,8 @@
 # ARCHITECTURE.md
 
+> **再開するときは先に [`HANDOFF.md`](HANDOFF.md) を読むこと。** 現在地・実装済み API・環境・手順が 1 本にまとまっている。
+
+
 Status: **設計確定 / 実装未着手**（Phase 0）
 Last updated: 2026-09-06
 

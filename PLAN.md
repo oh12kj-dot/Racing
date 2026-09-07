@@ -1,5 +1,8 @@
 # PLAN.md — Development Roadmap
 
+> **再開するときは先に [`HANDOFF.md`](HANDOFF.md) を読むこと。** 現在地・実装済み API・環境・手順が 1 本にまとまっている。
+
+
 Last updated: 2026-09-06
 Current Phase: **Phase 0 — Discovery / Architecture（完了間近）**
 
