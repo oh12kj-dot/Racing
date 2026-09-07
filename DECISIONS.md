@@ -420,3 +420,64 @@ Greenfield のためコスト 0。将来「やはり購入アセットを使う�
 - Phase 0.5: Blender 導入、`tools/blender/` 生成スクリプト基盤、車両 1 台の生成 -> UE5 インポート実証
 - Phase 1A: `sim-track` データからの手続き的トラックメッシュ生成
 - Phase 10: マテリアル品質の作り込み（最優先）
+
+---
+
+## ADR-0006 追記: 導入環境の確定と Microsoft Store 版 Blender の不適合
+
+- **Date**: 2026-09-07
+- **Status**: ACCEPTED（ADR-0006 の実装制約として追加）
+
+### 確定した導入環境
+
+| ツール | 実測 | パス |
+|--------|------|------|
+| Unreal Engine | **5.8** | `C:\Program Files\Epic Games\UE_5.8` |
+| UE ヘッドレス実行 | 確認済 | `C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe` |
+| Rust | 1.95.0 | — |
+
+ADR-0004 の Code-First 運用制約で前提とした `UnrealEditor-Cmd.exe -run=pythonscript` の
+実行体が存在することを確認した。
+
+### 問題: Microsoft Store 版 Blender は headless パイプラインに使用できない
+
+導入された Blender は **MSIX（Microsoft Store）パッケージ**であった。
+
+```
+Name            : BlenderFoundation.Blender
+PackageFullName : BlenderFoundation.Blender_5.2.1.0_x64__ppwjx1n5r4v9t
+InstallLocation : C:\Program Files\WindowsApps\BlenderFoundation.Blender_5.2.1.0_x64__ppwjx1n5r4v9t
+```
+
+**観測された事実**
+
+1. 実行エイリアスとして公開されているのは `blender-launcher.exe` のみで、`blender.exe` は存在しない
+2. `blender-launcher.exe --background --version` は**何も出力しない**
+   （通常のビルドはバージョン文字列を標準出力へ返す）
+3. `C:\Program Files\WindowsApps\...` は ACL により列挙できず、実行体を直接叩けない
+
+**根本原因**: MSIX パッケージはサンドボックス化され、ファイルシステムが仮想化されるうえ、
+公開されるのは GUI 起動用ランチャーのみである。ADR-0006 が前提とする
+`blender --background --python build_car.py -- --spec ...` の形式が成立しない。
+
+**影響範囲**: TASK-05-2（Blender 生成基盤）および以降のアセット生成タスク全般。
+**`sim-track` 以降の Simulation Core 側タスクには影響しない**（Blender に依存しないため）。
+
+### Decision
+
+**スタンドアロン（MSI）版の Blender LTS 4.5 を使用する。** Store 版は使用しない。
+
+```
+winget install --id BlenderFoundation.Blender.LTS.4.5 --source winget
+```
+
+インストール後の想定パス: `C:\Program Files\Blender Foundation\Blender 4.5\blender.exe`
+
+LTS を指定する理由は ADR-0006 のとおり `bpy` API の安定性である。
+Store 版の 5.2.1 は最新リリース版であり、LTS ではない点でも本プロジェクトの方針と合わない。
+
+**検証コマンド**（TASK-05-2 の前提条件とする）:
+```
+"C:\Program Files\Blender Foundation\Blender 4.5\blender.exe" --background --version
+```
+これがバージョン文字列を返すことを確認してから TASK-05-2 に着手する。
