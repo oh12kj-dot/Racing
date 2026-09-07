@@ -40,7 +40,7 @@ Current Phase: **Phase 1A — Track Foundation**
 | Task | 内容 | 担当 | 状態 |
 |------|------|------|------|
 | TASK-05-1 | `Config/DefaultEngine.ini` レンダラ設定（UE **5.8** 導入済み） | Sonnet 5 | 仕様作成中 |
-| TASK-05-2 | `tools/blender/` 生成基盤 | Sonnet 5 | ⛔ **Blender LTS 4.5 の導入待ち**（ADR-0006 追記） |
+| TASK-05-2 | `tools/blender/` 生成基盤 | Sonnet 5 | 仕様作成中（Blender 5.2.1 LTS 動作確認済み） |
 | TASK-05-3 | M1〜M9 実測（PLAN.md Phase 0.5） | Opus + 人間 | 未着手 |
 
 ---

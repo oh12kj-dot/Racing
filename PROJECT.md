@@ -156,6 +156,7 @@ Track Geometry
 
 | File | 役割 |
 |------|------|
+| **`HANDOFF.md`** | **セッション再開の入口。新しいセッション / 別の AI はまずこれを読む** |
 | `PROJECT.md` | 本書。目的・品質目標・予算・不可侵原則 |
 | `ARCHITECTURE.md` | 現在の Architecture（実装と一致させること） |
 | `PLAN.md` | 全体 Development Roadmap / Phase 定義 |

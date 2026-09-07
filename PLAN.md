@@ -50,7 +50,7 @@ Current Phase: **Phase 0 — Discovery / Architecture（完了間近）**
 
 | **自作アセットのパイプラインが回るか** | **M9**: `spec.json` -> Blender Python -> glTF -> UE5 インポート -> マテリアル適用 を**全自動**で通す | 人間の GUI 作業ゼロで車両 1 台が UE5 に立つ（ADR-0006） |
 
-**Scope**: UE5 導入（**5.8 導入済み**）、Blender LTS 4.5 導入（**要対応: Store 版は headless 不可。ADR-0006 追記参照**）、`Config/DefaultEngine.ini` によるレンダラ設定、
+**Scope**: UE5 導入（**5.8 導入済み**）、Blender（**5.2.1 LTS 導入済み・headless 動作確認済み。ADR-0006 追記の起動方法を厳守**）、`Config/DefaultEngine.ini` によるレンダラ設定、
 `tools/ue_python/` および `tools/blender/` のスクリプト群、
 最小シーン（直線 + 1 コーナー、車両 24 台、動的太陽、放送カメラ 1 台）
 

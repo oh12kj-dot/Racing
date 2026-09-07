@@ -423,9 +423,9 @@ Greenfield のためコスト 0。将来「やはり購入アセットを使う�
 
 ---
 
-## ADR-0006 追記: 導入環境の確定と Microsoft Store 版 Blender の不適合
+## ADR-0006 追記: 導入環境の確定と Blender 実行方式
 
-- **Date**: 2026-09-07
+- **Date**: 2026-09-07（2026-09-07 に訂正）
 - **Status**: ACCEPTED（ADR-0006 の実装制約として追加）
 
 ### 確定した導入環境
@@ -434,50 +434,67 @@ Greenfield のためコスト 0。将来「やはり購入アセットを使う�
 |--------|------|------|
 | Unreal Engine | **5.8** | `C:\Program Files\Epic Games\UE_5.8` |
 | UE ヘッドレス実行 | 確認済 | `C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe` |
+| Blender | **5.2.1 LTS**（Microsoft Store / MSIX 版） | 下記「起動方法」を参照 |
 | Rust | 1.95.0 | — |
 
 ADR-0004 の Code-First 運用制約で前提とした `UnrealEditor-Cmd.exe -run=pythonscript` の
 実行体が存在することを確認した。
 
-### 問題: Microsoft Store 版 Blender は headless パイプラインに使用できない
+### 訂正記録（重要）
 
-導入された Blender は **MSIX（Microsoft Store）パッケージ**であった。
+**本節は 2026-09-07 に一度「Microsoft Store 版 Blender は headless パイプラインに使用できない」
+と誤って記載し、スタンドアロン版 LTS 4.5 の再インストールを要求していた。これは誤りである。**
 
-```
-Name            : BlenderFoundation.Blender
-PackageFullName : BlenderFoundation.Blender_5.2.1.0_x64__ppwjx1n5r4v9t
-InstallLocation : C:\Program Files\WindowsApps\BlenderFoundation.Blender_5.2.1.0_x64__ppwjx1n5r4v9t
-```
+誤った根拠: `blender-launcher.exe --background --version` が標準出力を返さなかったことのみを見て、
+「ヘッドレス実行そのものが不可能」と一般化した。実際には **ランチャーが stdout を転送しないだけ**で、
+Blender 本体は正常に起動し Python を実行していた。単一の弱い信号から結論を出した Opus の判断ミスである。
 
-**観測された事実**
+**再検証により、Store 版は ADR-0006 のパイプライン要件をすべて満たすことが確認された。**
+スタンドアロン版の再インストールは**不要**である。
 
-1. 実行エイリアスとして公開されているのは `blender-launcher.exe` のみで、`blender.exe` は存在しない
-2. `blender-launcher.exe --background --version` は**何も出力しない**
-   （通常のビルドはバージョン文字列を標準出力へ返す）
-3. `C:\Program Files\WindowsApps\...` は ACL により列挙できず、実行体を直接叩けない
-
-**根本原因**: MSIX パッケージはサンドボックス化され、ファイルシステムが仮想化されるうえ、
-公開されるのは GUI 起動用ランチャーのみである。ADR-0006 が前提とする
-`blender --background --python build_car.py -- --spec ...` の形式が成立しない。
-
-**影響範囲**: TASK-05-2（Blender 生成基盤）および以降のアセット生成タスク全般。
-**`sim-track` 以降の Simulation Core 側タスクには影響しない**（Blender に依存しないため）。
-
-### Decision
-
-**スタンドアロン（MSI）版の Blender LTS 4.5 を使用する。** Store 版は使用しない。
+### 起動方法（TASK-05-2 以降で遵守すること）
 
 ```
-winget install --id BlenderFoundation.Blender.LTS.4.5 --source winget
+%LOCALAPPDATA%\Microsoft\WindowsApps\blender-launcher.exe ^
+    --background --factory-startup --python <script.py> -- <args...>
 ```
 
-インストール後の想定パス: `C:\Program Files\Blender Foundation\Blender 4.5\blender.exe`
+**実行体を直接指定してはならない。**
+`C:\Program Files\WindowsApps\...\Blender\blender.exe` はファイルとしては存在するが、
+WindowsApps の ACL により **実行が Access Denied で拒否される**。
+必ず上記のアプリ実行エイリアス経由で起動すること。
 
-LTS を指定する理由は ADR-0006 のとおり `bpy` API の安定性である。
-Store 版の 5.2.1 は最新リリース版であり、LTS ではない点でも本プロジェクトの方針と合わない。
+### 実測による動作確認（2026-09-07）
 
-**検証コマンド**（TASK-05-2 の前提条件とする）:
-```
-"C:\Program Files\Blender Foundation\Blender 4.5\blender.exe" --background --version
-```
-これがバージョン文字列を返すことを確認してから TASK-05-2 に着手する。
+| 検証項目 | 結果 |
+|----------|------|
+| ヘッドレス実行 | ✅ exit code 0 |
+| `bpy` の利用 | ✅ `bpy.app.version_string` = `"5.2.1 LTS"` |
+| `--` 以降の引数受け渡し | ✅ `sys.argv` から正しく取得できる |
+| `--factory-startup` | ✅ ユーザー設定に依存しない再現可能な実行が可能 |
+| メッシュ生成 | ✅ `bpy.ops.mesh.primitive_cube_add` で 8 verts / 6 polys |
+| **glTF (GLB) エクスポート** | ✅ `bpy.ops.export_scene.gltf` が 1 728 B の GLB を生成 |
+| **標準出力 / 標準エラー** | ❌ **転送されない（0 バイト）** |
+
+### 制約: プロセス間通信はファイル経由とすること
+
+ランチャーは子プロセスの stdout / stderr を呼び出し元へ転送しない。
+したがって Blender 側スクリプトは **標準出力に依存してはならない**。
+
+TASK-05-2 以降のツールは次の規約に従うこと。
+
+1. **入力**: `--` 以降のコマンドライン引数、または環境変数で渡す
+2. **成果物**: ファイルとして書き出す（`.glb` / `.fbx`）
+3. **実行結果の報告**: **JSON のサマリファイルを必ず書き出す**
+   （生成した頂点数・ポリゴン数・出力パス・警告・エラーを含める）
+4. **失敗の検知**: 呼び出し側は「終了コード」と「サマリファイルの存在と内容」の
+   両方で判定する。終了コード 0 でもサマリが無ければ失敗として扱う
+5. **ログ**: 必要ならスクリプト側でログファイルへ書く。`print()` は届かない
+
+この規約は、ヘッドレス実行の成否を機械的に判定可能にするために必須である。
+
+### LTS 要件について
+
+ADR-0006 は `bpy` API の安定性を理由に LTS を要求していた。
+導入されている **5.2.1 は LTS リリースである**（`bpy.app.version_string` が自己申告）。
+したがって ADR-0006 の LTS 要件は**満たされている**。
