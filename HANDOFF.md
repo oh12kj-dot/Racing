@@ -1,6 +1,6 @@
 # HANDOFF.md — 引き継ぎ資料
 
-Last updated: 2026-09-07
+Last updated: 2026-09-07（TASK-1A-3 完了時点）
 このファイルは **セッションを跨いで作業を再開するための単一の入口**である。
 新しいセッション / 別の AI は **まずこれを読むこと。**
 
@@ -10,9 +10,10 @@ Last updated: 2026-09-07
 
 - **何を作っているか**: Realistic Race Spectator Simulator。プレイヤーは運転せず**観戦**する。
   目標は「実際のモータースポーツ中継に見え、よく見ると各 AI が本当にレースをしている」こと
-- **今どこか**: **Phase 1A（Track Foundation）進行中**。Phase 0（設計）と `sim-math` / `sim-track` は完了
-- **次に何をするか**: **TASK-1A-3**（トラック JSON ロード + オリジナル・サーキット 1 本）。
-  完全な実装仕様は `TODO.md` の `# NEXT SONNET TASK` セクションにある
+- **今どこか**: **Phase 1A（Track Foundation）**。TASK-1A-1 / 1A-2 / 1A-3 が完了・APPROVED
+- **次に何をするか**: **TASK-1A-4**（`sim-wasm` + Engineering View）。
+  完全な実装仕様は `TODO.md` の `# NEXT SONNET TASK` セクションにある。
+  Phase 0.5（UE5 / Blender）は `docs/phase-0.5-tasks.md` にあり、並行して着手できる
 - **役割**: Opus 5 = Architect / Reviewer / Quality Gate。Sonnet 5 = Implementation Engineer。
   重大な技術変更は人間の承認が必要
 
@@ -46,18 +47,21 @@ Last updated: 2026-09-07
 | ADR-0004/0005/0006 | UE5 / Rust / 自作アセットの決定 | ✅ 人間承認済 | `856d0bd` |
 | TASK-1A-1 | `sim-math`（数学基盤・決定的 RNG） | ✅ APPROVED | `85f6c6f` |
 | TASK-1A-2 | `sim-track`（トラック局所座標系） | ✅ APPROVED | `4fc4c48` |
+| TASK-1A-3 | トラック JSON ロード + Aoyama Ring | ✅ APPROVED | `cf3d7dd` |
+| Phase 0.5 仕様 | TASK-05-1 / 05-2 の実装仕様 | ✅ 作成済 | `4f3fd6c` |
 
 ### 検証コマンド（再開時に必ず実行して健全性を確認すること）
 
 ```bash
 cd /c/AI/App_Dev/Racing
-cargo test --release      # 55 passed / 0 failed が期待値
+cargo test --release      # 66 passed / 0 failed が期待値
 cargo clippy --all-targets -- -D warnings   # 0
 cargo build --release     # warnings 0
 cargo fmt --check         # clean
 ```
 
-期待値: **55 tests**（sim-math 38 + sim-track 16 + doc-test 1）。
+期待値: **66 tests**（sim-math 37 + sim-track 28 + doc-test 1）。
+`cargo build -p sim-track --no-default-features` も通ること（依存が sim-math のみになる）。
 これを下回る / 失敗する場合は、先に原因を特定すること。新機能より退行の解消が優先。
 
 ### 実装済みの crate
@@ -67,8 +71,9 @@ crates/sim-math/   Vec2/Vec3, Quat(YXZ), CubicSpline, ArcLengthSpline, Rng, util
                    依存ゼロ / unsafe ゼロ / #![deny(unsafe_code)]
 crates/sim-track/  TrackCoord{s,t}, TrackFrame, SurfaceKind, TrackDefinition,
                    Track(build/frame_at/track_to_world/world_to_track/...),
-                   detect_lap_crossing
-                   依存は sim-math のみ
+                   detect_lap_crossing, io(JSON ロード。feature "serde")
+                   依存は sim-math（+ optional serde/serde_json）
+assets/tracks/     aoyama_ring.track.json — オリジナル 4 139 m サーキット
 ```
 
 **`crates/sim-math` は APPROVED 済みで凍結中。** 変更が必要なら `BLOCKED BY ARCHITECTURE` として起票する。
@@ -144,24 +149,19 @@ Severity は `CRITICAL / HIGH / MEDIUM / LOW`。
 
 ## 5. 次にやること
 
-### TASK-1A-3（次の実装タスク）
+### TASK-1A-4（次の実装タスク）
 
-**仕様の全文は `TODO.md` の `# NEXT SONNET TASK` にある。** そのまま Sonnet へ渡せる。
+**仕様の全文は `TODO.md` の `# NEXT SONNET TASK` にある。**
 
-概要: `sim-track` に optional feature `serde` を追加し、トラック定義を JSON から
-ロードできるようにする。あわせて**オリジナルのテスト用サーキット 1 本**
-（`assets/tracks/aoyama_ring.track.json`）を作る。
-
-- 形式は **JSON**。RON ではない。**Blender Python と Engineering View(JS) が
-  追加ライブラリなしで同じファイルを読む必要がある**ため。これは決定事項
-- serde は `optional` + feature 越し。`--no-default-features` で依存ゼロの core が残ること
-- サーキットは全長・コーナー半径・高低差・バンク・幅まで数値要件があり、**テストで機械検証**させる
+概要: `sim-core` を wasm32 へビルドし、ブラウザ上の **Engineering View**
+（Three.js テレメトリビューア）でトラックと車両状態を可視化する。
+これは **デバッグ用の計測器であり、製品レンダラではない**（ADR-0003）。
+装飾的な作り込みに工数を使わないこと。
 
 ### その後の予定
 
 | Task | 内容 |
 |------|------|
-| TASK-1A-4 | `sim-wasm` + `view-engineering`（Three.js テレメトリビューア。**デバッグ専用・製品レンダラではない**） |
 | TASK-05-1 | UE5 プロジェクトの Code-First 構築 + M1〜M9 実測 — **仕様は `docs/phase-0.5-tasks.md`** |
 | TASK-05-2 | Blender 車両生成パイプライン — **仕様は `docs/phase-0.5-tasks.md`**（先に着手可） |
 | Phase 1B | `sim-vehicle`（サスペンション + Pacejka タイヤ + パワートレイン + 空力） |
@@ -185,6 +185,16 @@ Phase 1A 完了の判定基準は `TESTING.md` の T-TRK-01〜06 と `PLAN.md` P
   正規化すると、バンク変化や 3D ねじれで直交性が崩れる（実測 |N·T| = 1.8e-5）。
   Gram-Schmidt で直交化し `normal = tangent.cross(lateral)` で導出すること
 - **`camber` は現在データとして保持のみで、幾何には未適用。** 下流はこれを前提にしないこと
+- **制御点の密度を急変させない。** 円弧 10 m / 直線 18 m のように density が跳ぶと、
+  centripetal Catmull-Rom の接線推定が跳ね、継ぎ目に曲率オーバーシュートが出る
+  （実測: 半径 130 m のコーナー出口に R=101 m の 1 サンプルスパイク）。
+  直線側の間隔を継ぎ目で 10 m・中央で 18 m へ滑らかに変化させて解消した。
+  **Phase 2 の Speed Profile は曲率から限界速度を出すため、偽スパイクは偽の減速になる**
+- **コーナー半径を「最小値」で測らない。** 継ぎ目のスパイクを拾う。
+  **中央値**を使うこと（ドライバーが体験する半径はそちら）
+- **`serde_json` の f64 は 1 ULP ずれて往復する**（実測）。
+  トラックデータでは 1e-14 m で無意味だが、「保存→再読込でビット一致」と仮定しないこと。
+  アセット JSON が唯一の正であり実行時に再生成しないため、決定性契約には影響しない
 
 ### 性能基準の考え方
 
