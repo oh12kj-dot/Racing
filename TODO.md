@@ -3,7 +3,7 @@
 > **再開するときは先に [`HANDOFF.md`](HANDOFF.md) を読むこと。** 現在地・実装済み API・環境・手順が 1 本にまとまっている。
 
 
-Last updated: 2026-09-07
+Last updated: 2026-09-08
 Current Phase: **Phase 1A — Track Foundation**
 
 ---
@@ -36,7 +36,8 @@ Current Phase: **Phase 1A — Track Foundation**
 | TASK-1A-1 | `sim-math`: 数学基盤と決定的 RNG | Opus 5 | ✅ **完了・APPROVED** |
 | TASK-1A-2 | `sim-track`: Track Coordinate System | Sonnet 5 | ✅ **完了・APPROVED** |
 | TASK-1A-3 | トラック定義の JSON ロード + Aoyama Ring | Sonnet 5 + Opus 5 | ✅ **完了・APPROVED** |
-| TASK-1A-4 | Engineering View（トラック可視化） | **Sonnet 5** | ⬅ **NEXT** |
+| TASK-1A-4 | Engineering View（トラック可視化） | Opus 5 | ✅ **完了・APPROVED** |
+| TASK-1A-5 | 曲率リップル解消と平滑性テスト | **Sonnet 5** | ⬅ **NEXT** |
 
 ### Phase 0.5（並行）
 
@@ -315,11 +316,194 @@ PROJECT.md §7 の決定性契約（同一バイナリ・同一シードでビ�
 
 ---
 
-# NEXT SONNET TASK
+# TASK-1A-4 — 完了報告 / レビュー記録
 
-## TASK-1A-4 — Engineering View（トラック可視化）
+**実装**: Opus 5（本セッションの runtime は model 別 subagent の起動が禁止されていたため、
+Architect が実装も担当した。TASK-1A-1 と同じ例外運用）／ **監査**: 同一セッションで全項目を再実行
+
+> **運用上の注記**: 実装者と監査者が同一のため、「他人の報告を鵜呑みにしない」という
+> 通常の担保が効かない。これを補うため、**独立検証器を 2 本**書いて結論を裏取りした
+> （Menger 曲率による曲率の独立計算、CDP 経由のブラウザ内数値検証）。
+
+### Implemented Files
+
+```
+Cargo.toml                       members に crates/sim-wasm を追加
+.gitignore                       /view-engineering/pkg/ を追加
+crates/sim-wasm/Cargo.toml
+crates/sim-wasm/src/lib.rs       TrackView（純 Rust）+ WasmTrack（境界）+ テスト 7 本
+view-engineering/index.html      import map と CSS。ビルドツールなし
+view-engineering/src/main.js     シーン構築・入力・ホバー読み取り
+view-engineering/src/track_mesh.js  WasmTrack -> Three.js。カラーマップ
+view-engineering/src/overlay.js  数値 HUD
+view-engineering/package.json    依存は three のみ
+view-engineering/README.md
+```
+
+**Toolchain used**: `wasm-pack` 0.15.0（既に導入済みだった。仕様の「未導入」は誤り。
+`wasm-bindgen-cli` へのフォールバックは不要だった）
+
+### Test Results（監査での再実行）
+
+```
+cargo test --release
+  sim-math : vec_quat 12 / spline 14 / rng_util 11 / doc-test 1 = 38
+  sim-track: track 16 / io 12                                   = 28
+  sim-wasm : lib tests                                          =  7
+  ----------------------------------------------------------------
+  合計 73 passed / 0 failed（既存 66 に退行なし）
+
+cargo build --release                                : 0 warnings
+cargo clippy --all-targets -- -D warnings            : 0
+cargo fmt --check                                    : clean
+cargo build -p sim-wasm --target wasm32-unknown-unknown --release : OK
+cargo build -p sim-track --no-default-features       : OK（退行なし）
+手書き unsafe                                         : 0 行
+git diff --stat crates/sim-math crates/sim-track docs assets *.md : 空（凍結遵守）
+view-engineering/node_modules                        : three のみ（ビルドツールなし）
+```
+
+### ブラウザでの実測（headless Chrome + CDP による自動検証）
+
+スクリーンショットは `build/engineering-view/` に保存（gitignore 済み）。
+
+| ファイル | 内容 |
+|---------|------|
+| `01-overview-curvature.png` | 全景・曲率カラーマップ |
+| `02-hairpin-curvature.png` | ヘアピン拡大。**リップルが縞として見える** |
+| `03-banking.png` | T7 バンク区間（負 = 外側が高い） |
+| `04-elevation-tilted.png` | 標高カラーマップ + y=0 グリッド |
+
+ブラウザ内で読み出した値が、アセットの設計値と一致することを機械的に確認した。
+
+| 項目 | 実測 | 期待 |
+|------|------|------|
+| `length()` | 4 138.991 m | 4 139 m |
+| `sample_surface(1.0)` 頂点数 | 8 280 | `2*ceil(L/1)+2` = 8 280 |
+| `world_to_track` ラウンドトリップ `t` | 1.5e-12 m | ≈ 0 |
+| 同 `s` 誤差 | 8.0e-10 m | ≈ 0 |
+| コース幅 | 12.000〜16.000 m | 12〜16 m |
+| 標高 | -0.0005〜23.4999 m | 高低差 23.5 m |
+| バンク | -0.100〜0.000 rad | -0.100 rad |
+| console errors | 0 | 0 |
+
+### Performance
+
+| 項目 | 基準 | 実測 | 判定 |
+|------|------|------|------|
+| `sample_surface(1.0)`（4 km） | < 50 ms | **0.3 ms** | ✅ |
+| ビューアの表示 | 60 fps | **60.6 fps** | ✅ |
+
+**fps は SwiftShader（CPU ソフトウェアラスタライザ）での実測**である。
+実 GPU（RTX 4060 Ti）ではこれを大きく上回る。三角形数 8 278 は些少で、
+ボトルネックにならない。
+
+### Deviations from Spec
+
+1. **`serde` / `serde-wasm-bindgen` を依存から外した**（Opus の判断）
+   仕様の依存表には両者が挙がっていたが、確定した公開 API を通る値は
+   `f64` / `String` / `Vec<f64>` だけで、`Vec<f64>` は `wasm-bindgen` が
+   `Float64Array` へ直接変換する。JSON 形の値が境界を渡らないため両者とも
+   未使用になる。未使用依存はビルド時間を増やすだけで利点がない。
+   構造化された戻り値が必要になった時点で追加すれば足りる（追加は 2 行）。
+
+2. **`TrackView`（純 Rust）と `WasmTrack`（境界）に二層化した**
+   仕様は「テストは `#[cfg(test)]` で `wasm_bindgen` に依存しない形にすること」を
+   要求している。サンプリング実装を `TrackView` に置き、`WasmTrack` を
+   型変換だけの薄いラッパにすることでこれを構造的に満たした。
+   公開 API（`WasmTrack` のメソッド名・シグネチャ）は仕様どおりで変更していない。
+
+3. **`window.__engview` デバッグハンドルを追加**（Opus の判断）
+   計測器を外から操作できないと、表示の正しさを機械的に確認できない
+   （受け入れ基準 7 のスクリーンショットも手作業になる）。
+   読み出しと視点操作のみを公開し、シミュレーション状態は変更しない。
+   上記のブラウザ内実測はすべてこのハンドル経由で行った。
+
+4. **`stations` / `sample_*` は不正な `step_m` に対して空配列を返す**（仕様が沈黙）
+   `panic` は `profile.release` の `panic = "abort"` により WASM では回復不能になる。
+   非有限・非正、およびステーション数が `MAX_STATIONS`（200 000）を超える指定を
+   空で失敗させる。テスト `invalid_step_returns_empty` で固定した。
+
+5. **曲率カラーマップの正規化に `signed sqrt` を採用**（仕様は正規化方法に沈黙）
+   線形正規化ではヘアピン（κ ≈ 0.081）が値域を支配し、高速コーナーが
+   すべて灰色に潰れて**発見対象のスパイクが見えなくなる**。
+   `sqrt` は 0 付近の勾配を立てるため、微小な曲率の跳ねほど見つけやすい。
+   凡例に実数値を併記し、正規化方法も画面に明記している。
+
+### Design Concerns Found
+
+**MEDIUM-1 — Aoyama Ring のヘアピンに 10 m 周期の曲率リップルがある（未修正・要対応）**
+
+**Engineering View が最初の起動で発見した。** `build/engineering-view/02-hairpin-curvature.png`
+に縞として視認できる。アセットは凍結対象のため、本タスクでは修正せず報告に留める。
+
+ヘアピン本体（s = 3316〜3343）で曲率が制御点間隔とほぼ同じ **周期 10.5 m** で振動する。
+
+```
+s=3320  κ=0.047687  R=20.97      ← 谷
+s=3325  κ=0.061026  R=16.39      ← 山
+s=3330  κ=0.047673  R=20.98      ← 谷
+s=3335  κ=0.061435  R=16.28      ← 山
+s=3340  κ=0.047641  R=20.99      ← 谷
+```
+
+さらに進入端 s=3315 と脱出端 s=3346 に **1〜2 サンプルの尖ったピーク**がある
+（κ = 0.0807 / R = 12.4 m、κ = 0.0777 / R = 12.9 m）。
+
+**独立検証**: `curvature_at` を一切使わず、サンプル点 3 点の外接円から求めた
+Menger 曲率で裏取りした。本体のリップルは両者が 1% 以内で一致する（実在する）。
+尖ったピークのみ Menger（±2 m ステンシル）が平滑化して 0.0713 を返す
+（= ピークが極めて局所的であることの証拠）。
+
+**根本原因**: centripetal Catmull-Rom は円弧を厳密に再現しない。逸脱量は
+おおむね `(chord / R)^2` に比例する。
+
+| コーナー | R | 制御点間隔 | chord/R | 本体のリップル |
+|---------|---|-----------|---------|--------------|
+| 高速 T1 | 130 m | 約 10 m | 0.077 | **0.8%**（R = 129.35〜130.38。実質なし） |
+| ヘアピン | 約 19.4 m | 約 10.5 m | **0.52** | **±13%**（R = 16.3〜21.0） |
+
+直線も健全（s = 400〜900 で max |κ| = 1.27e-4、R = 7 900 m）。
+**問題は「小半径コーナーでの制御点間隔」に限定される。全周の系統的欠陥ではない。**
+
+**なぜ既存テストが通ったか**: TASK-1A-3 はコーナー半径を**中央値**で測る
+（継ぎ目スパイクを拾わないための正しい判断）。中央値 ≈ 20.6 m は
+リップルの包絡線の上側におり、設計値と一致してしまう。
+**中央値は半径の測定には正しいが、滑らかさの測定にはならない。**
+
+**Phase 2 への影響**: Speed Profile は κ から限界速度 `v = sqrt(mu*g*R)` を出す。
+R が 16.3 ↔ 21.0 m で 10 m 周期に振動すると、速度指令が **±13% 相当**で
+同周期に振動する。さらに R=12.4 m の 1 サンプルスパイクは
+`sqrt(12.4/19.4) = 0.80`、すなわち **20% の偽の減速**になる。
+ヘアピン通過中に不自然なスロットル／ブレーキの脈動として現れ、
+本プロジェクトの中核目標「車が自然に走る」に直接反する。
+
+**severity 判定**: **MEDIUM**。現時点でどの契約・テストも破っておらず、
+影響は最もタイトな 1 コーナーに限局する。ただし
+**Phase 2 の Speed Profile 着手前に必ず解消すること**（TASK-1A-5 として起票済み）。
+
+### Architecture Compliance
+
+- ✅ `sim-wasm` は**読み出し専用**。書き込み用メソッドを持たない
+- ✅ Simulation Core は Rendering / UI / Camera を知らない（依存は sim-wasm → sim-track の一方向）
+- ✅ ビューアは曲率・バンクを再計算せず、すべて WASM から読む
+- ✅ 手書き `unsafe` 0 行。`wasm_bindgen` の展開だけを `bindings` モジュールに閉じ込め、
+  crate 全体は `#![deny(unsafe_code)]` を維持する構造にした
+- ✅ 装飾なし（ライティング・影・反射・ポストエフェクト・スカイボックスをすべて不使用）。
+  路面は `MeshBasicMaterial` + 頂点カラーで、**表示された色 = データの値**
+- ✅ 凍結ファイルの差分ゼロ
+- ✅ ビルドツール未導入（`node_modules` は `three` のみ）
+
+### Decision: **APPROVED**
+
+Phase 1A の実装は完了。MEDIUM-1 はアセットの品質課題であり、
+本タスクの実装に起因するものではない。TASK-1A-5 として分離して対応する。
 
 ---
+
+# NEXT SONNET TASK
+
+## TASK-1A-5 — 小半径コーナーの曲率リップル解消と平滑性テスト
 
 ### IMPORTANT IMPLEMENTATION CONTRACT
 
@@ -384,193 +568,149 @@ Recommended Next Step:
 
 ### Goal
 
-**トラックを目で見て検証できるようにする。**
+**曲率が「設計半径どおり」であるだけでなく「滑らかである」ことを、機械的に保証する。**
 
-Phase 2 以降の Driver AI・車両挙動を人間が評価するには、
-テレメトリを可視化する計測器が要る。まずその土台をトラック表示として作る。
+TASK-1A-4 の Engineering View が、Aoyama Ring のヘアピン本体に
+制御点間隔とほぼ同じ **周期 10.5 m・振幅 ±13% の曲率リップル**を発見した
+（詳細と実測値は上の TASK-1A-4 レビュー記録 MEDIUM-1 を参照。
+`build/engineering-view/02-hairpin-curvature.png` に縞として視認できる）。
 
-> **これは製品レンダラではない**（DECISIONS.md ADR-0003）。
-> **見た目の品質向上に工数を使ってはならない。** 装飾・演出・マテリアルの作り込みは禁止。
-> 追加してよい機能は、検証とデバッグに直接寄与するものだけ。
-> Photorealism は UE5 側でのみ追求する。
+Phase 2 の Speed Profile は κ から限界速度を出すため、このリップルは
+ヘアピン通過中の**偽のスロットル／ブレーキ脈動**になる。
+Phase 2 に着手する前に解消する。
 
-### 前提（すでに導入済み）
+### 対応する 2 つの欠落
 
-- `wasm32-unknown-unknown` ターゲット: **導入済み**
-- Node.js v24: 導入済み
-- **`wasm-pack` は未導入。** 最初に `cargo install wasm-pack` を実行すること
-  （時間がかかる。失敗する場合は `wasm-bindgen-cli` でも可。使った方を報告に明記）
+1. **アセット**: ヘアピン付近の制御点が疎すぎる（`chord / R = 0.52`）
+2. **テスト**: 半径を**中央値**で測る検査しかなく、**滑らかさを測る検査が無い**。
+   中央値は半径の測定には正しいが、リップルは素通しする
+
+**2 を先に作ること。** テストが無いまま 1 を直しても、直ったことを証明できない。
 
 ### Allowed Files
 
 ```
-Cargo.toml                          (members に crates/sim-wasm を追加するのみ)
-crates/sim-wasm/Cargo.toml
-crates/sim-wasm/src/lib.rs
-view-engineering/index.html
-view-engineering/src/main.js
-view-engineering/src/track_mesh.js
-view-engineering/src/overlay.js
-view-engineering/README.md
-view-engineering/package.json
-.gitignore                          (pkg/ と node_modules/ の除外を追記)
+crates/sim-track/tests/io.rs            平滑性テストの追加のみ
+assets/tracks/aoyama_ring.track.json    ヘアピン周辺の制御点の再生成
+assets/tracks/README.md                 制御点間隔の規約の更新
+tools/tracks/**                         生成スクリプトを置く場合（新規作成可）
 ```
+
+### Do Not Change
+
+`crates/sim-math/**`、`crates/sim-track/src/**`（**スプライン実装は変更しない**）、
+`crates/sim-wasm/**`、`view-engineering/**`、ルート直下の `.md`、`docs/`。
+
+> **`sim-math` の `CubicSpline` を「円弧を厳密に通るスプライン」へ差し替えてはならない。**
+> それは基盤 crate の設計変更であり、`ArcLengthSpline` / `Track` / 既存 38 テストの
+> 全体に波及する。必要と判断した場合は着手せず `PROPOSED DESIGN CHANGE` を提出すること。
+> 本タスクは**制御点の配置だけで**解決する。
 
 ### Dependencies
 
-`crates/sim-wasm`:
-```toml
-[lib]
-crate-type = ["cdylib", "rlib"]
-
-[dependencies]
-sim-math  = { path = "../sim-math" }
-sim-track = { path = "../sim-track" }
-wasm-bindgen = "0.2"
-serde = { version = "1", features = ["derive"] }
-serde-wasm-bindgen = "0.6"
-```
-
-`view-engineering` は **three のみ**（CDN でもローカルでも可）。
-ビルドツール（webpack / vite 等）を導入しないこと。素の ES module で動かす。
+なし（既存の crate のみ）。
 
 ### Required Changes
 
-#### 1. `crates/sim-wasm` — WASM 境界
+#### 1. 平滑性テスト（先に書く。修正前に落ちることを確認すること）
 
-**この crate の責務は「Simulation Core の状態を JS へ読み出させる」ことだけ。**
-ロジックを一切持たない。Presentation が Simulation を書き換える経路を作らない。
+`crates/sim-track/tests/io.rs` に追加する。
+`Track::frame_at(s).curvature` を **0.5 m 間隔**（= `FRAME_SPACING_M`）で全周サンプルする。
 
-```rust
-/// トラックを WASM 側で保持し、JS から幾何を読み出すためのハンドル。
-#[wasm_bindgen]
-pub struct WasmTrack { /* 非公開に sim_track::Track を持つ */ }
+| Test | 内容 | 基準 |
+|------|------|------|
+| `aoyama_curvature_has_no_ripple` | `\|κ\| > 1/100`（R < 100 m）の**コーナー本体**区間で、局所極大と隣接する局所極小の比 `κ_max / κ_min` | **< 1.10** |
+| `aoyama_curvature_rate_is_bounded` | 全周で `\|dκ/ds\|`（0.5 m 差分） | **< 0.010 1/m²** |
+| `aoyama_no_isolated_curvature_spikes` | 各サンプルの κ と、前後 ±3 m の中央値との比 | **< 1.15** |
 
-#[wasm_bindgen]
-impl WasmTrack {
-    /// トラック定義 JSON から構築する。失敗時は JsError。
-    #[wasm_bindgen(constructor)]
-    pub fn new(track_json: &str) -> Result<WasmTrack, JsError>;
+**「コーナー本体」の定義**: `\|κ\| > 1/100` が 15 m 以上連続する区間の、
+両端から 5 m を除いた部分。進入・脱出の遷移で κ が 0 から立ち上がるのは
+正常であり、リップルと混同してはならない（TASK-1A-4 の監査で実際に一度誤検出した）。
 
-    pub fn name(&self) -> String;
-    pub fn length(&self) -> f64;
-    pub fn sector_boundaries(&self) -> Vec<f64>;
-    pub fn start_finish_s(&self) -> f64;
+現状の実測値（修正前。テストが実質的であることの確認に使う）:
 
-    /// `step_m` 間隔でサンプリングした帯状メッシュ用の頂点配列。
-    /// 返すのは `Float64Array` 相当の平坦配列（`[x,y,z, x,y,z, ...]`）。
-    /// `lateral_offset` に `t` を渡すと、その横位置に沿った線を返す
-    /// （0 でセンターライン、+width_left で左端、-width_right で右端）。
-    pub fn sample_line(&self, lateral_offset_ratio: f64, step_m: f64) -> Vec<f64>;
-
-    /// 路面ポリゴン用。左端と右端を交互に並べた三角形ストリップ用頂点列。
-    pub fn sample_surface(&self, step_m: f64) -> Vec<f64>;
-
-    /// 各サンプル点の曲率 [1/m]。`sample_surface` と同じ `step_m` で対応する。
-    pub fn sample_curvature(&self, step_m: f64) -> Vec<f64>;
-
-    /// 各サンプル点のバンク角 [rad]。
-    pub fn sample_banking(&self, step_m: f64) -> Vec<f64>;
-
-    /// ワールド座標からトラック座標を求める。`[s, t]` を返す。
-    pub fn world_to_track(&self, x: f64, y: f64, z: f64) -> Vec<f64>;
-}
+```
+ヘアピン本体 κ_max/κ_min = 0.061435 / 0.047641 = 1.29   -> 基準 1.10 を超過（落ちる）
+全周 max |dκ/ds|         = 0.0410 1/m^2                 -> 基準 0.010 を超過（落ちる）
+高速 T1 本体 κ_max/κ_min = 130.38 / 129.35 相当 = 1.008  -> 通る（健全な区間は誤検出しない）
+直線 s=400..900 max |κ|  = 1.27e-4                       -> 通る
 ```
 
-`lateral_offset_ratio` は `-1.0` で右端、`0.0` でセンター、`+1.0` で左端とする
-（コース幅が `s` によって変わるため、絶対値ではなく比で指定する）。
+**3 本とも、修正前に落ちること／高速コーナーと直線では誤検出しないことを
+実行して確認し、報告に出力を貼ること。**
 
-#### 2. `view-engineering` — ビューア
+#### 2. 制御点の再配置
 
-**表示すべきもの（すべて検証目的）**
+**方針**: 制御点間隔を半径に応じて決める。目標は全コーナーで `chord / R <= 0.25`。
 
-| 表示 | 目的 |
-|------|------|
-| 路面ポリゴン | 形状の確認 |
-| センターライン | `s` の基準の確認 |
-| 左右のコース端（corridor 境界） | 幅の確認 |
-| **曲率のカラーマップ**（路面を曲率で着色） | **スパイクや不連続を目視で発見する。最重要** |
-| 標高（3D 表示） | 高低差の確認 |
-| バンク区間のハイライト | バンクが意図した場所にあるか |
-| セクター境界とスタート/フィニッシュ線 | タイミングの基準の確認 |
-| 100 m ごとの `s` の目盛り | 位置の確認 |
-| マウスホバーで `s` / `t` / 曲率 / バンク / 幅 を数値表示 | **数値での確認** |
+`(chord/R)^2` に比例して逸脱するため、`chord/R` を 0.52 -> 0.25 にすれば
+リップルはおよそ 1/4.3、±13% -> 約 ±3% になる。基準 1.10（= ±5%）に収まる。
 
-**操作**: オービット / パン / ズームのみ。凝ったカメラ演出は不要。
+| R | 上限間隔 |
+|---|---------|
+| < 30 m | **R * 0.25**（ヘアピン R≈20 m なら 5 m） |
+| 30〜80 m | 8 m |
+| > 80 m | 従来どおり 10 m |
+| 直線 | 継ぎ目 = 隣接コーナーの間隔、中央 18 m |
 
-**禁止**: 影・反射・ポストエフェクト・スカイボックス・マテリアルの作り込み・
-アニメーション・UI の装飾。これらは製品レンダラ（UE5）の責務であり、
-ここでやると ADR-0003 に違反する。
+**密度を急変させないこと（TASK-1A-3 の既知の落とし穴）。**
+隣接する制御点間隔の比を **1.5 倍以内**に保ち、遷移は滑らかにする。
+密度の跳びは、それ自体が接線推定を跳ねさせて偽スパイクを生む。
 
-`view-engineering/README.md` に「これはデバッグ用計測器であり製品レンダラではない」
-ことと、起動方法を明記すること。
+トラック全体の形状・全長・コーナー配置は**変えない**。
+既存の `io.rs` の全要件テスト（全長 3 800〜4 600 m、高速 4 本、中速 5 本、
+ヘアピン 1 本、S 字、高低差 >= 20 m、バンク、幅、縁石、ファイルサイズ）が
+**すべて通り続けること**。中央値半径は従来値の ±5% 以内に保つ。
 
-### Required Tests
+#### 3. `assets/tracks/README.md` の規約更新
 
-WASM 境界は自動テストが難しいため、**Rust 側のロジックを rlib としてテストする**。
-
-| Test | 内容 |
-|------|------|
-| `wasm_track_builds_from_asset` | 同梱 JSON 文字列から `WasmTrack` が構築でき、`length()` が `Track::length()` と一致 |
-| `sample_surface_is_consistent` | 頂点数が `2 * ceil(length/step) + 2`。全頂点が有限。左右の点の距離が `width_left + width_right` と一致（誤差 < 1e-6） |
-| `sample_line_offsets` | `ratio = 0` がセンターライン、`+1` が左端、`-1` が右端と一致 |
-| `sample_curvature_matches_track` | `Track::frame_at(s).curvature` と一致 |
-| `world_to_track_roundtrip` | `sample_line` で得た点を `world_to_track` に戻すと `t` がほぼ 0 |
-| `invalid_json_returns_error` | 壊れた JSON で `Err` |
-
-`cargo test -p sim-wasm` でネイティブ実行できるよう、テストは `#[cfg(test)]` で
-`wasm_bindgen` に依存しない形にすること。
+「制御点間隔 8〜20 m」を、上の**半径依存の規則**へ置き換える。
+理由（`(chord/R)^2` の逸脱、Speed Profile への影響）を 3 行程度で残すこと。
+制御点数が増えるためファイルサイズ上限（< 200 KB）を再確認する。
 
 ### Acceptance Criteria
 
-1. `cargo build --release` 警告ゼロ
-2. `cargo build -p sim-wasm --target wasm32-unknown-unknown` が通る
-3. `cargo test --release` 全通過（**既存 66 テストの退行なし**）
-4. `cargo clippy --all-targets -- -D warnings` が通る
-5. `cargo fmt --check` が通る
-6. `unsafe` 0 行（`wasm_bindgen` のマクロ展開を除く）
-7. **ブラウザで Aoyama Ring が表示され、曲率カラーマップが見える**
-   （スクリーンショットを撮って報告に添付するか、保存パスを明記すること）
-8. 凍結ファイルの差分がゼロ
-9. `view-engineering/` に **ビルドツールを導入していない**こと
-
-### Performance Criteria
-
-| 項目 | 基準 |
-|------|------|
-| `sample_surface(1.0)`（4 km） | < 50 ms |
-| ビューアの表示 | 60 fps（トラック静止表示） |
+1. 追加した 3 テストが、**修正前に落ち／修正後に通る**（両方の出力を報告に貼る）
+2. `cargo test --release` 全通過（**既存 73 テストの退行なし**。増分のみ）
+3. `cargo clippy --all-targets -- -D warnings` / `cargo fmt --check` が通る
+4. Engineering View（`view-engineering/`）で**ヘアピンの縞が消えている**ことを
+   スクリーンショットで確認する。手順は `view-engineering/README.md`
+5. 中央値コーナー半径が従来値の ±5% 以内
+6. `aoyama_ring.track.json` < 200 KB / `load_track` < 50 ms
+7. 凍結ファイルの差分がゼロ
 
 ### Out of Scope
 
-- 車両の表示（車両がまだ存在しない。Phase 1B 以降）
-- リプレイ・タイムライン
-- 見た目の品質向上（**明確に禁止**）
-- UE5 側の作業
+- `sim-math` のスプライン実装の変更（**明確に禁止**。上記 Do Not Change を参照）
+- 他のトラックの追加
+- Engineering View の機能追加
+- Speed Profile そのものの実装（Phase 2）
 
 ### Known Risks
 
 | Risk | 対策 |
 |------|------|
-| `wasm-pack` のインストールに失敗する | `wasm-bindgen-cli` へフォールバック。使った方を報告に明記 |
-| Engineering View が肥大化する | 上の「禁止」リストを厳守。装飾的な変更は行わない |
-| `Vec<f64>` の受け渡しが遅い | まず素直に実装し、実測が基準を超えたら報告する |
+| 密度を上げた結果、継ぎ目に新しいスパイクが出る | 隣接間隔比 1.5 倍以内。追加した `aoyama_no_isolated_curvature_spikes` が検出する |
+| 制御点数が増えてファイルが 200 KB を超える | 増えるのは小半径区間のみ。超えたら報告すること |
+| 基準 1.10 が達成できない | **勝手に緩めない。** `PROPOSED DESIGN CHANGE` として実測値つきで提出する |
 
 ### 完了時の報告フォーマット
 
 ```
-TASK-1A-4 COMPLETE
+TASK-1A-5 COMPLETE
 
 Implemented Files:
-Toolchain used:            (wasm-pack か wasm-bindgen-cli か)
-Test Results:              (cargo test の実出力)
-wasm32 build:              (実出力)
+Tests Before Fix:          (3 テストが落ちる出力)
+Tests After Fix:           (cargo test の実出力)
+Control Point Changes:     (点数の増減、間隔の分布、chord/R の最大)
+Corner Radii (median):     (修正前 -> 修正後。±5% 以内であること)
+Ripple Measurements:       (ヘアピン本体の κ_max/κ_min、全周 max |dκ/ds|)
+File Size / load_track:
 Clippy / fmt Results:
-Frozen-file diffs:         (git diff --stat。空であること)
-Screenshot:                (保存パス、または添付)
+Frozen-file diffs:         (空であること)
+Screenshot:                (ヘアピン。縞が消えていること)
 Deviations from Spec:      (なければ "None")
-Design Concerns Found:     (なければ "None")
-Performance Notes:
+Design Concerns Found:
 ```
 
 **git commit はしないこと。** 作業ツリーに残し、Opus 5 のレビューを受けること。

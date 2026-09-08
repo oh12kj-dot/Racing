@@ -9,3 +9,7 @@ __pycache__/
 # TASK-05-2: Blender-generated vehicle assets are reproducible from
 # assets/vehicles/*.spec.json + tools/blender/*.py — do not commit them.
 /build/
+
+# TASK-1A-4: Engineering View の生成物。
+# wasm-pack と npm でソースから再生成できる（view-engineering/README.md 参照）。
+/view-engineering/pkg/

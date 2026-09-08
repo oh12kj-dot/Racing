@@ -1,6 +1,6 @@
 # HANDOFF.md — 引き継ぎ資料
 
-Last updated: 2026-09-08 / HEAD `097a881`
+Last updated: 2026-09-08 / HEAD `d39e204` + 未コミットの TASK-1A-4
 **このファイル 1 本で作業を再開できるように書いてある。**
 他の文書は「必要になったときだけ」開けばよい（どこに何があるかは §2 に記載）。
 
@@ -11,16 +11,16 @@ Last updated: 2026-09-08 / HEAD `097a881`
 | | |
 |---|---|
 | **何を作っているか** | Realistic Race Spectator Simulator。プレイヤーは運転せず**観戦**する。「実際のモータースポーツ中継に見え、よく見ると各 AI が本当にレースをしている」ことが目標 |
-| **今どこか** | **Phase 1A（Track Foundation）**。1A-1 / 1A-2 / 1A-3 完了。Phase 0.5 の TASK-05-2（Blender）も完了 |
-| **次に何をするか** | **TASK-1A-4（Engineering View）**。仕様は `TODO.md` の `# NEXT SONNET TASK` に全文がある |
+| **今どこか** | **Phase 1A（Track Foundation）**。1A-1 / 1A-2 / 1A-3 / **1A-4 完了**。Phase 0.5 の TASK-05-2（Blender）も完了 |
+| **次に何をするか** | **TASK-1A-5（曲率リップル解消と平滑性テスト）**。仕様は `TODO.md` の `# NEXT SONNET TASK` に全文がある |
 | **役割** | Opus 5 = Architect / Reviewer / Quality Gate。Sonnet 5 = Implementation Engineer。重大な技術変更は人間承認が必要 |
-| **健全性確認** | `cargo test --release` → **66 passed / 0 failed** |
+| **健全性確認** | `cargo test --release` → **73 passed / 0 failed** |
 
 ### 最初にやること
 
 ```bash
 cd /c/AI/App_Dev/Racing
-cargo test --release      # 66 passed が期待値。下回ったら先に原因を特定する
+cargo test --release      # 73 passed が期待値。下回ったら先に原因を特定する
 ```
 
 これが通れば、リポジトリは既知の健全な状態にある。
@@ -38,7 +38,8 @@ cargo test --release      # 66 passed が期待値。下回ったら先に原因
 | TASK-1A-3 | トラック JSON ロード + Aoyama Ring | ✅ APPROVED | `cf3d7dd` |
 | TASK-05-2 | Blender 車両生成パイプライン（**M9 達成**） | ✅ APPROVED | `2ec80c9` |
 | Phase 1B 仕様 | `sim-vehicle` 実装仕様 | ✅ 作成済 | `60c1577` |
-| **TASK-1A-4** | **Engineering View** | ⬅ **次。仕様済** | — |
+| TASK-1A-4 | Engineering View（`sim-wasm` + ビューア） | ✅ APPROVED | **未コミット** |
+| **TASK-1A-5** | **曲率リップル解消と平滑性テスト** | ⬅ **次。仕様済** | — |
 | TASK-05-1 | UE5 Code-First 構築 + M1〜M9 実測 | 📄 仕様済 | — |
 | Phase 1B | `sim-vehicle` 実装 | 📄 仕様済 | — |
 
@@ -50,13 +51,15 @@ docs/phase-0.5-tasks.md      TASK-05-1(UE5) / TASK-05-2(Blender) の実装仕様
 docs/phase-1b-vehicle.md     Phase 1B (sim-vehicle) の実装仕様
 crates/sim-math/             Vec2/Vec3, Quat, CubicSpline, ArcLengthSpline, Rng, util
 crates/sim-track/            TrackCoord, TrackFrame, Track, SurfaceKind, io(JSON), lap
+crates/sim-wasm/             読み出し専用 WASM 境界（TrackView / WasmTrack）
+view-engineering/            デバッグ用計測器（Three.js）。製品レンダラではない
 assets/tracks/               aoyama_ring.track.json（オリジナル 4 139 m サーキット）
 assets/vehicles/             gt_proto_a.spec.json（見た目と物理の共通仕様）
 tools/blender/               車両メッシュ生成パイプライン（稼働中）
 build/                       生成物。gitignore 済み。コミットしない
 ```
 
-Rust 約 5 200 行 / Python 約 1 400 行。
+Rust 約 5 700 行 / Python 約 1 400 行 / JS 約 900 行。
 
 ---
 
@@ -74,6 +77,7 @@ Rust 約 5 200 行 / Python 約 1 400 行。
 | `TESTING.md` | 受け入れ基準 T-TRK / T-VEH / T-AI / T-RACE の一覧 |
 | `assets/tracks/README.md` | トラックデータ形式を扱うとき |
 | `tools/blender/README.md` | Blender パイプラインを触るとき |
+| `view-engineering/README.md` | Engineering View を起動する／触るとき |
 
 **Documentation Rule**: コードと文書が矛盾したら、どちらかを推測で正としない。
 実装 / Git History / Runtime Behaviour / Tests から裏付けを取る。
@@ -120,7 +124,7 @@ Rust 約 5 200 行 / Python 約 1 400 行。
 
 ## 5. 実装済み API（ソースを読まずに済むように）
 
-> 以下は HEAD `097a881` 時点のスナップショット。**正はソース**だが、
+> 以下は TASK-1A-4 完了時点のスナップショット。**正はソース**だが、
 > 通常はこれで足りる。詳細な doc comment は各 `.rs` にある。
 
 ### `sim-math`（依存ゼロ / unsafe ゼロ / wasm32 ビルド確認済み）
@@ -213,6 +217,67 @@ track_from_json_str / track_from_json_file / load_track / track_to_json_string
   // ★読み込み時に Track::build を実行して検証する。不正データは後段へ流れない
 ```
 
+### `sim-wasm`（依存は sim-math + sim-track + wasm-bindgen）
+
+**読み出し専用の境界。ロジックを持たない。書き込み用メソッドは存在しない。**
+
+```rust
+// 純 Rust 層（wasm_bindgen 非依存。テストはこちらに書く）
+struct TrackView
+  from_json(&str)->Result<TrackView, TrackIoError>
+  track()->&Track
+  stations(step_m)->Vec<f64>            // ★サンプリングの唯一の正
+  sample_line(ratio, step_m)->Vec<f64>  // 平坦な [x,y,z,...]
+  sample_surface(step_m)->Vec<f64>      // 左端/右端を交互に並べたストリップ
+  sample_curvature / sample_banking(step_m)->Vec<f64>
+  world_to_track(Vec3)->TrackCoord
+
+// 境界層（型変換のみ。JS からはこちらが見える）
+#[wasm_bindgen] struct WasmTrack
+  new(track_json) name length sector_boundaries start_finish_s
+  sample_line sample_surface sample_curvature sample_banking
+  world_to_track(x,y,z)->Vec<f64>       // [s, t]
+```
+
+**ステーションの規約**（全 `sample_*` が共有する）:
+`n = ceil(L / step_m)`、`s_i = i * L / n`（`i = 0..=n`）。ステーション数は `n + 1`、
+実際の間隔 `L / n` は `step_m` 以下。最後の `s_n = L` は `frame_at` の `wrap_s` により
+`s_0 = 0` と厳密一致するので、閉じたトラックの継ぎ目が正確に閉じる。
+`sample_curvature[i]` は `sample_line[i]` / `sample_surface[2i], [2i+1]` に対応する。
+
+`step_m` が非有限・非正、またはステーション数が 200 000 を超えると **空配列**を返す
+（`profile.release` の `panic = "abort"` により WASM では panic が回復不能なため）。
+
+`ratio` は `-1.0` = 右端 / `0.0` = センター / `+1.0` = 左端
+（幅が `s` によって変わるため、絶対値ではなく比で指定する）。
+
+**手書き `unsafe` は 0 行。** `wasm_bindgen` の展開だけを `mod bindings` に
+`#[allow(unsafe_code)]` で閉じ込め、crate 全体は `#![deny(unsafe_code)]` を維持している。
+**この構造を壊さないこと。**
+
+### `view-engineering/`（デバッグ用計測器。**製品レンダラではない** = ADR-0003）
+
+素の ES module + import map のみ。**ビルドツールを導入してはならない。**
+装飾（影・反射・ポストエフェクト・スカイボックス・マテリアルの作り込み）は禁止。
+路面は `MeshBasicMaterial` + 頂点カラー。ライティングを使わないのは意図的で、
+**表示された色 = データの値** を保つため（陰影が乗ると色を値として読めなくなる）。
+
+起動は `view-engineering/README.md`。要点だけ:
+
+```bash
+cd view-engineering && npm install && cd ..
+wasm-pack build crates/sim-wasm --target web --out-dir ../../view-engineering/pkg --release
+python -m http.server 8080          # ★リポジトリルートで起動する
+# http://localhost:8080/view-engineering/
+```
+
+着色モード `1`=曲率 / `2`=バンク / `3`=標高。レイヤ切替 `q w e r t y g`。
+ホバーで `s / t / 曲率 / 半径 / バンク / 幅 / 標高 / セクター` を数値表示。
+
+`window.__engview` に `{ scene, camera, controls, data, track, setMode,
+setLayerVisible, focusAt(s, dist, height) }` を公開している。
+**自動検証とスクリーンショット取得のためのもの**で、読み出しと視点操作のみ。
+
 ### `assets/`
 
 - `tracks/aoyama_ring.track.json` — オリジナル 4 139 m。制御点 329。
@@ -241,11 +306,12 @@ python tools/blender/tests/test_pipeline.py     # 10 tests, 約 11 s
 | CPU / RAM | AMD Ryzen 7 5700X (8C/16T) / 32 GB |
 | OS / Shell | Windows 11 / PowerShell 5.1 + Git Bash |
 | Rust | 1.95.0（`rust-toolchain.toml` で stable 固定） |
-| WASM | `wasm32-unknown-unknown` 導入済み / `wasm-pack` 0.15.0 導入済み。**`sim-math` `sim-track` ともビルド確認済み** |
+| WASM | `wasm32-unknown-unknown` / `wasm-pack` **0.15.0 導入済み**。`sim-math` `sim-track` `sim-wasm` ともビルド確認済み |
 | Unreal Engine | **5.8** — `C:\Program Files\Epic Games\UE_5.8` |
 | UE ヘッドレス | `C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe` |
 | Blender | **5.2.1 LTS**（Microsoft Store / MSIX 版） |
-| Node.js | v24.15.0 |
+| Node.js | v24.15.0。`three` 0.180.0 を `view-engineering/node_modules` にローカル導入済み |
+| Chrome | 152。`C:\Program Files\Google\Chrome\Application\chrome.exe`。headless + CDP でビューアを自動検証できる（下記） |
 
 ### Blender の起動方法（厳守）
 
@@ -319,6 +385,18 @@ Severity は `CRITICAL / HIGH / MEDIUM / LOW`。
   直線側を継ぎ目 10 m・中央 18 m へ滑らかに変化させて解消した。
   **Phase 2 の Speed Profile は曲率から限界速度を出すため、偽スパイクは偽の減速になる**
 - **コーナー半径を「最小値」で測らない。** 継ぎ目のスパイクを拾う。**中央値**を使う
+- **中央値は半径の測定には正しいが、滑らかさの測定にはならない。**
+  TASK-1A-4 の Engineering View が、ヘアピン本体に制御点間隔とほぼ同じ
+  **周期 10.5 m・振幅 ±13% の曲率リップル**を発見した（R が 16.3 ↔ 21.0 m で振動）。
+  中央値 20.6 m は設計値と一致してしまうため、既存テストは全て通っていた。
+  centripetal Catmull-Rom は円弧を厳密に再現せず、逸脱は **`(chord / R)^2` に比例**する。
+  高速コーナー（R=130 m, chord/R=0.077）は 0.8% で健全、
+  ヘアピン（R≈19 m, chord/R=0.52）だけが壊れる。**小半径コーナーでは制御点を詰める。**
+  対応は TASK-1A-5。詳細な実測値は `TODO.md` の TASK-1A-4 レビュー記録 MEDIUM-1
+- **曲率の検証には独立検証器を使う。** `curvature_at` の値を `curvature_at` で
+  検証しても意味がない。サンプル点 3 点の外接円から求める **Menger 曲率**なら
+  スプライン実装に一切依存せず裏取りできる（TASK-1A-4 で実際に使い、
+  リップルが実在することと、尖ったピークが極めて局所的であることを確認した）
 - **`camber` は現在データとして保持のみで、幾何には未適用。** 下流はこれを前提にしないこと
 - **`serde_json` の f64 は 1 ULP ずれて往復する**（実測）。
   「保存→再読込でビット一致」と仮定しないこと。アセット JSON が唯一の正であり
@@ -350,7 +428,7 @@ Severity は `CRITICAL / HIGH / MEDIUM / LOW`。
 ```bash
 cd /c/AI/App_Dev/Racing
 
-# Rust（期待値: 66 passed / clippy 0 / warnings 0 / fmt clean）
+# Rust（期待値: 73 passed / clippy 0 / warnings 0 / fmt clean）
 cargo test --release
 cargo clippy --all-targets -- -D warnings
 cargo build --release
@@ -359,6 +437,12 @@ cargo fmt --check
 # 依存ゼロの core が壊れていないか（WASM/FFI 向け）
 cargo build -p sim-track --no-default-features       # 依存が sim-math のみになる
 cargo build -p sim-track --target wasm32-unknown-unknown
+cargo build -p sim-wasm  --target wasm32-unknown-unknown --release
+
+# Engineering View（詳細は view-engineering/README.md）
+wasm-pack build crates/sim-wasm --target web --out-dir ../../view-engineering/pkg --release
+python -m http.server 8080                           # ★リポジトリルートで起動
+# http://localhost:8080/view-engineering/
 
 # Blender パイプライン
 python tools/blender/generate.py --spec assets/vehicles/gt_proto_a.spec.json
@@ -381,6 +465,21 @@ git status --short
 | フレームテーブル（5 km） | 1.21 MB | < 2 MB |
 | `load_track`（4 km） | 7.0 ms | < 50 ms |
 | 車両 GLB 生成 | 2.7 s / 71 178 tri | 60k〜150k tri |
+| `WasmTrack::sample_surface(1.0)`（4 km） | 0.3 ms | < 50 ms |
+| Engineering View の表示 | 60.6 fps（**SwiftShader**。実 GPU ではさらに上） | 60 fps |
+
+### Engineering View をヘッドレスで自動検証する
+
+`window.__engview` を CDP から叩けば、スクリーンショットとブラウザ内の
+数値検証を人手なしで行える（TASK-1A-4 の受け入れ確認はこれで実施した）。
+
+```bash
+"/c/Program Files/Google/Chrome/Application/chrome.exe" --headless=new --no-sandbox \
+  --disable-gpu --enable-unsafe-swiftshader --remote-debugging-port=9222 about:blank &
+# node から ws://localhost:9222 へ接続し、Runtime.evaluate と Page.captureScreenshot
+```
+
+`--enable-unsafe-swiftshader` が無いと WebGL が起動せず、真っ黒な画像が撮れる。
 
 ---
 
@@ -409,16 +508,28 @@ Game Engine 変更 / 言語変更 / 主要フレームワーク置換 / 物理�
 
 ## 11. 次にやること
 
-### TASK-1A-4 — Engineering View（仕様は `TODO.md` に全文）
+### TASK-1A-5 — 曲率リップル解消と平滑性テスト（仕様は `TODO.md` に全文）
 
-`sim-wasm` crate を作り、`sim-track` を WASM 経由でブラウザへ公開。
-Three.js でトラックを可視化する。表示すべきものの中核は **曲率のカラーマップ**
-（スパイクや不連続を目視で発見するため）。
+Engineering View が最初の起動で見つけた MEDIUM を潰す。
+Aoyama Ring のヘアピン本体に、制御点間隔とほぼ同じ **周期 10.5 m・±13% の
+曲率リップル**がある。Phase 2 の Speed Profile は κ から限界速度を出すため、
+これは**ヘアピン通過中の偽のスロットル／ブレーキ脈動**になる。
 
-> **これは製品レンダラではない。見た目の品質向上に工数を使ってはならない。**
-> 影・反射・ポストエフェクト・マテリアルの作り込み・UI の装飾は禁止（ADR-0003）。
+やることは 2 つ。**順序が重要で、テストを先に書く。**
 
-前提: `wasm32` ターゲットと `wasm-pack` は導入済み。すぐ着手できる。
+1. **平滑性テストを `crates/sim-track/tests/io.rs` に追加**（修正前に落ちること）
+2. **小半径コーナーの制御点を詰める**（目標 `chord / R <= 0.25`）
+
+> **`sim-math` のスプライン実装は変更しないこと。** 基盤 crate の設計変更であり、
+> 既存 38 テスト全体に波及する。**制御点の配置だけで解決する。**
+
+`build/engineering-view/02-hairpin-curvature.png` に、リップルが縞として写っている。
+
+### まだコミットしていない作業がある
+
+TASK-1A-4 は APPROVED 済みだが**作業ツリーに残っている**。
+`crates/sim-wasm/`、`view-engineering/`、`Cargo.toml`、`.gitignore`、
+`TODO.md`、`HANDOFF.md` が対象。先にコミットしてから TASK-1A-5 に入ること。
 
 ### 並行して着手可能
 

@@ -1,0 +1,11 @@
+{
+  "name": "view-engineering",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Engineering View - debug instrument for the simulation core. Not a product renderer (ADR-0003).",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "three": "0.180.0"
+  }
+}
