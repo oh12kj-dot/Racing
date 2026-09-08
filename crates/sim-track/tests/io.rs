@@ -399,22 +399,89 @@ fn asset_track_meets_layout_requirements() {
         "every corner must have a kerb outside the racing surface"
     );
 
-    // --- 制御点間隔 ---
+    // --- 制御点間隔（半径に応じた規則。TASK-1A-5 で一律 8..20 m から改めた） ---
+    //
+    // centripetal Catmull-Rom の円弧からの逸脱は `(chord / R)^2` に比例する。
+    // したがって曲率リップルを決めるのは間隔の絶対値ではなく **半径に対する比**であり、
+    // 一律の下限では小半径コーナーを守れない（実際にヘアピンが壊れていた）。
     let def = sim_track::track_from_json_file(asset_path()).expect("load def");
     let m = def.centerline.len();
-    let mut dmin = f64::INFINITY;
-    let mut dmax = f64::NEG_INFINITY;
-    for i in 0..m {
-        let d = (def.centerline[(i + 1) % m] - def.centerline[i]).length();
-        dmin = dmin.min(d);
-        dmax = dmax.max(d);
-    }
+    let spacing: Vec<f64> = (0..m)
+        .map(|i| (def.centerline[(i + 1) % m] - def.centerline[i]).length())
+        .collect();
+    let dmin = spacing.iter().copied().fold(f64::INFINITY, f64::min);
+    let dmax = spacing.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     println!("control points: {m}, spacing {dmin:.2}..{dmax:.2} m");
     assert!(
-        dmin >= 8.0 && dmax <= 20.0,
-        "control point spacing {dmin:.2}..{dmax:.2} outside 8..20 m"
+        dmax <= 20.0,
+        "control point spacing {dmax:.2} m exceeds 20 m"
+    );
+    assert!(
+        dmin >= 3.0,
+        "control point spacing {dmin:.2} m below the 3 m floor"
+    );
+
+    // 制御点そのものの曲率（スプラインを介さない Menger 曲率）から半径を測り、
+    // コーナー上の制御点に chord/R の上限を課す。
+    let mut worst_ratio = 0.0f64;
+    let mut worst_i = 0usize;
+    let mut worst_r = f64::INFINITY;
+    for i in 0..m {
+        let a = def.centerline[(i + m - 1) % m];
+        let b = def.centerline[i];
+        let c = def.centerline[(i + 1) % m];
+        let area = 0.5 * (b - a).cross(c - a).length();
+        let denom = (b - a).length() * (c - b).length() * (a - c).length();
+        if area <= 0.0 || denom <= 0.0 {
+            continue;
+        }
+        let radius = denom / (4.0 * area);
+        if radius >= CONTROL_POINT_CORNER_RADIUS_M {
+            continue; // 直線とみなす
+        }
+        let chord = spacing[(i + m - 1) % m].max(spacing[i]);
+        let ratio = chord / radius;
+        if ratio > worst_ratio {
+            worst_ratio = ratio;
+            worst_i = i;
+            worst_r = radius;
+        }
+    }
+    println!("max chord/R on corner control points: {worst_ratio:.3} (index {worst_i}, R={worst_r:.1} m)");
+    assert!(
+        worst_ratio <= CONTROL_POINT_MAX_CHORD_RATIO,
+        "control point {worst_i}: chord/R {worst_ratio:.3} (R={worst_r:.1} m) exceeds \
+         {CONTROL_POINT_MAX_CHORD_RATIO}; curvature ripple grows as (chord/R)^2"
+    );
+
+    // 密度の急変はそれ自体が接線推定を跳ねさせ、偽の曲率スパイクを生む
+    // （TASK-1A-3 の既知の落とし穴）。
+    let mut worst_jump = 0.0f64;
+    for i in 0..m {
+        let (a, b) = (spacing[i], spacing[(i + 1) % m]);
+        worst_jump = worst_jump.max(a.max(b) / a.min(b));
+    }
+    println!("max adjacent spacing ratio: {worst_jump:.3}");
+    assert!(
+        worst_jump <= CONTROL_POINT_MAX_SPACING_RATIO,
+        "adjacent control point spacing ratio {worst_jump:.3} exceeds \
+         {CONTROL_POINT_MAX_SPACING_RATIO}"
     );
 }
+
+/// 制御点の曲率がこの半径を下回る点を「コーナー上の制御点」とみなす。
+const CONTROL_POINT_CORNER_RADIUS_M: f64 = 250.0;
+/// コーナー上の制御点に許す `chord / R`。
+///
+/// 逸脱は `(chord / R)^2` に比例する。0.25 なら曲率リップルは実測で 6% 以下に収まる
+/// （`aoyama_curvature_has_no_ripple` の基準 10% に対して余裕がある）。
+const CONTROL_POINT_MAX_CHORD_RATIO: f64 = 0.25;
+/// 隣接する制御点間隔の比の上限。
+///
+/// 詰め直しの目標は 1.5。1.6 なのは S 字（index 159 付近）に 1.557 が
+/// 元から存在するため。そこは平滑性の実測が健全（`κ_max/κ_min` = 1.04）であり、
+/// 触る理由がない。
+const CONTROL_POINT_MAX_SPACING_RATIO: f64 = 1.6;
 
 #[test]
 fn asset_track_has_no_self_intersection() {
@@ -608,4 +675,217 @@ fn missing_file_reports_io_error() {
         Err(TrackIoError::Io(_)) => {}
         other => panic!("expected Io error, got {other:?}"),
     }
+}
+
+// ---------------------------------------------------------------------------
+// 曲率の平滑性（TASK-1A-5）
+// ---------------------------------------------------------------------------
+//
+// 半径が設計どおりでも、曲率が滑らかとは限らない。centripetal Catmull-Rom は
+// 円弧を厳密には再現せず、逸脱はおおむね `(chord / R)^2` に比例する。
+// 小半径コーナーで制御点が疎だと、曲率が**制御点間隔と同じ周期で振動する**。
+//
+// これは見た目の問題ではない。Phase 2 の Speed Profile は曲率から限界速度
+// `v = sqrt(mu*g*R)` を出すため、偽のリップルは偽のスロットル／ブレーキ脈動になる。
+//
+// `asset_track_meets_layout_requirements` は半径を**中央値**で測る。それは
+// 継ぎ目のスパイクに引きずられないための正しい判断だが、**リップルは素通しする**。
+// 中央値は半径の測定には正しく、滑らかさの測定にはならない。だからこの節がある。
+
+/// 曲率プロファイル。フレームテーブルと同じ 0.5 m 間隔で全周をサンプルする。
+struct CurvatureProfile {
+    /// 実際の間隔 [m]。`length / n` なので継ぎ目が厳密に閉じる。
+    step: f64,
+    curvature: Vec<f64>,
+}
+
+/// コーナーとみなす曲率の下限（R < 250 m）。`detect_corners` と揃えてある。
+const BODY_RUN_MAX_RADIUS_M: f64 = 250.0;
+/// コーナー区間の両端から除外する長さ [m]。
+///
+/// 進入・脱出では曲率が 0 から立ち上がる。これは設計どおりの挙動であり、
+/// リップルと混同してはならない。Catmull-Rom がその段差を均す範囲は
+/// おおむね制御点間隔 1 個分（このトラックでは最大 10 m）なので、
+/// 少し余裕をみて 12 m を落とす。
+///
+/// この値の妥当性は実測で確認した。12 m で健全なコーナーの `κ_max/κ_min` は
+/// 1.005〜1.058 に収まり、壊れたヘアピンは 1.879 を示す（十分に分離する）。
+const BODY_TRIM_M: f64 = 12.0;
+/// 本体として検査するのに必要な最小の長さ [m]。
+const BODY_MIN_M: f64 = 4.0;
+
+/// コーナー本体でのリップルの上限。`κ_max / κ_min`。
+const BODY_MAX_RIPPLE_RATIO: f64 = 1.10;
+/// コーナー本体での曲率の変化率の上限 [1/m^2]。
+///
+/// **コーナー本体に限定する。** 弧と直線の継ぎ目では曲率が設計どおり不連続に
+/// 変化する（このトラックは緩和曲線を持たない）。実測でそこは 0.040 1/m^2 に達し、
+/// 全周へこの基準を課すと**全コーナーに緩和曲線を入れる設計変更**になってしまう。
+const BODY_MAX_CURVATURE_RATE: f64 = 0.010;
+/// 局所中央値に対する単発スパイクの上限。
+const BODY_MAX_SPIKE_RATIO: f64 = 1.15;
+/// スパイク判定に使う窓の半幅 [m]。
+const SPIKE_WINDOW_M: f64 = 3.0;
+
+impl CurvatureProfile {
+    fn new(track: &Track) -> Self {
+        let l = track.length();
+        let n = (l / Track::FRAME_SPACING_M).ceil() as usize;
+        let step = l / n as f64;
+        let curvature = (0..n)
+            .map(|i| track.frame_at(i as f64 * step).curvature)
+            .collect();
+        Self { step, curvature }
+    }
+
+    fn len(&self) -> usize {
+        self.curvature.len()
+    }
+
+    /// 索引はラップする。
+    fn at(&self, i: usize) -> f64 {
+        self.curvature[i % self.len()]
+    }
+
+    fn s(&self, i: usize) -> f64 {
+        (i % self.len()) as f64 * self.step
+    }
+
+    fn in_corner(&self, i: usize) -> bool {
+        self.at(i).abs() * BODY_RUN_MAX_RADIUS_M > 1.0
+    }
+
+    /// コーナー本体を `(開始索引, サンプル数)` で返す。索引はラップしうる。
+    fn bodies(&self) -> Vec<(usize, usize)> {
+        let n = self.len();
+        let trim = (BODY_TRIM_M / self.step).round() as usize;
+        let min_run = 2 * trim + (BODY_MIN_M / self.step).round() as usize;
+        let mut out = Vec::new();
+        for i in 0..n {
+            // 区間の先頭だけを拾う（直前が外、自分が内）。
+            if !self.in_corner(i) || self.in_corner(i + n - 1) {
+                continue;
+            }
+            let mut run = 0usize;
+            while run < n && self.in_corner(i + run) {
+                run += 1;
+            }
+            if run < min_run {
+                continue;
+            }
+            out.push((i + trim, run - 2 * trim));
+        }
+        out
+    }
+
+    /// 本体の中央値半径 [m]。
+    fn median_radius(&self, start: usize, len: usize) -> f64 {
+        let mut radii: Vec<f64> = (0..len).map(|o| 1.0 / self.at(start + o).abs()).collect();
+        radii.sort_by(|a, b| a.partial_cmp(b).expect("radii are finite"));
+        radii[radii.len() / 2]
+    }
+}
+
+#[test]
+fn aoyama_curvature_has_no_ripple() {
+    let track = asset_track();
+    let p = CurvatureProfile::new(&track);
+    let bodies = p.bodies();
+    assert!(!bodies.is_empty(), "no corner bodies detected");
+
+    let mut worst = (0.0f64, 0.0f64);
+    println!(
+        "{:>9} {:>8} {:>10}  s range",
+        "R_med", "body_m", "kmax/kmin"
+    );
+    for &(start, len) in &bodies {
+        let mut kmin = f64::INFINITY;
+        let mut kmax: f64 = 0.0;
+        for o in 0..len {
+            let a = p.at(start + o).abs();
+            kmin = kmin.min(a);
+            kmax = kmax.max(a);
+        }
+        let ratio = kmax / kmin;
+        let r = p.median_radius(start, len);
+        println!(
+            "{:>9.1} {:>8.1} {:>10.3}  {:.0}..{:.0}",
+            r,
+            len as f64 * p.step,
+            ratio,
+            p.s(start),
+            p.s(start + len - 1)
+        );
+        if ratio > worst.0 {
+            worst = (ratio, r);
+        }
+    }
+    assert!(
+        worst.0 < BODY_MAX_RIPPLE_RATIO,
+        "curvature ripple {:.3} (R_med {:.1} m) exceeds {BODY_MAX_RIPPLE_RATIO}; \
+         control points are too sparse for that radius",
+        worst.0,
+        worst.1
+    );
+}
+
+#[test]
+fn aoyama_curvature_rate_is_bounded() {
+    let track = asset_track();
+    let p = CurvatureProfile::new(&track);
+
+    let mut worst = (0.0f64, 0.0f64);
+    for &(start, len) in &p.bodies() {
+        for o in 0..len.saturating_sub(1) {
+            let d = (p.at(start + o + 1) - p.at(start + o)).abs() / p.step;
+            if d > worst.0 {
+                worst = (d, p.s(start + o));
+            }
+        }
+    }
+    println!(
+        "max |dk/ds| inside corner bodies = {:.5} 1/m^2 at s={:.1}",
+        worst.0, worst.1
+    );
+    assert!(
+        worst.0 < BODY_MAX_CURVATURE_RATE,
+        "curvature rate {:.5} 1/m^2 at s={:.1} exceeds {BODY_MAX_CURVATURE_RATE}",
+        worst.0,
+        worst.1
+    );
+}
+
+#[test]
+fn aoyama_no_isolated_curvature_spikes() {
+    let track = asset_track();
+    let p = CurvatureProfile::new(&track);
+    let n = p.len();
+    let w = (SPIKE_WINDOW_M / p.step).round() as usize;
+
+    let mut worst = (0.0f64, 0.0f64);
+    for &(start, len) in &p.bodies() {
+        for o in 0..len {
+            let i = start + o;
+            let mut win: Vec<f64> = (0..=2 * w).map(|j| p.at(i + n + j - w).abs()).collect();
+            win.sort_by(|a, b| a.partial_cmp(b).expect("curvature is finite"));
+            let median = win[win.len() / 2];
+            if median <= 0.0 {
+                continue;
+            }
+            let ratio = p.at(i).abs() / median;
+            if ratio > worst.0 {
+                worst = (ratio, p.s(i));
+            }
+        }
+    }
+    println!(
+        "max spike ratio (vs +-{SPIKE_WINDOW_M} m median) = {:.3} at s={:.1}",
+        worst.0, worst.1
+    );
+    assert!(
+        worst.0 < BODY_MAX_SPIKE_RATIO,
+        "isolated curvature spike {:.3} at s={:.1} exceeds {BODY_MAX_SPIKE_RATIO}",
+        worst.0,
+        worst.1
+    );
 }

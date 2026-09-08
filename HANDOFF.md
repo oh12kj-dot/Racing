@@ -1,6 +1,6 @@
 # HANDOFF.md — 引き継ぎ資料
 
-Last updated: 2026-09-08 / HEAD `d39e204` + 未コミットの TASK-1A-4
+Last updated: 2026-09-08 / HEAD `3a4ba0a` + 未コミットの TASK-1A-5
 **このファイル 1 本で作業を再開できるように書いてある。**
 他の文書は「必要になったときだけ」開けばよい（どこに何があるかは §2 に記載）。
 
@@ -11,16 +11,16 @@ Last updated: 2026-09-08 / HEAD `d39e204` + 未コミットの TASK-1A-4
 | | |
 |---|---|
 | **何を作っているか** | Realistic Race Spectator Simulator。プレイヤーは運転せず**観戦**する。「実際のモータースポーツ中継に見え、よく見ると各 AI が本当にレースをしている」ことが目標 |
-| **今どこか** | **Phase 1A（Track Foundation）**。1A-1 / 1A-2 / 1A-3 / **1A-4 完了**。Phase 0.5 の TASK-05-2（Blender）も完了 |
-| **次に何をするか** | **TASK-1A-5（曲率リップル解消と平滑性テスト）**。仕様は `TODO.md` の `# NEXT SONNET TASK` に全文がある |
+| **今どこか** | **Phase 1A（Track Foundation）は完了**（1A-1〜1A-5）。Phase 0.5 の TASK-05-2（Blender）も完了。次は Phase 1B |
+| **次に何をするか** | **TASK-1B-1（`sim-vehicle` 車両物理）**。物理の全文仕様は `docs/phase-1b-vehicle.md`、タスク契約は `TODO.md` の `# NEXT SONNET TASK` |
 | **役割** | Opus 5 = Architect / Reviewer / Quality Gate。Sonnet 5 = Implementation Engineer。重大な技術変更は人間承認が必要 |
-| **健全性確認** | `cargo test --release` → **73 passed / 0 failed** |
+| **健全性確認** | `cargo test --release` → **76 passed / 0 failed** |
 
 ### 最初にやること
 
 ```bash
 cd /c/AI/App_Dev/Racing
-cargo test --release      # 73 passed が期待値。下回ったら先に原因を特定する
+cargo test --release      # 76 passed が期待値。下回ったら先に原因を特定する
 ```
 
 これが通れば、リポジトリは既知の健全な状態にある。
@@ -38,8 +38,9 @@ cargo test --release      # 73 passed が期待値。下回ったら先に原因
 | TASK-1A-3 | トラック JSON ロード + Aoyama Ring | ✅ APPROVED | `cf3d7dd` |
 | TASK-05-2 | Blender 車両生成パイプライン（**M9 達成**） | ✅ APPROVED | `2ec80c9` |
 | Phase 1B 仕様 | `sim-vehicle` 実装仕様 | ✅ 作成済 | `60c1577` |
-| TASK-1A-4 | Engineering View（`sim-wasm` + ビューア） | ✅ APPROVED | **未コミット** |
-| **TASK-1A-5** | **曲率リップル解消と平滑性テスト** | ⬅ **次。仕様済** | — |
+| TASK-1A-4 | Engineering View（`sim-wasm` + ビューア） | ✅ APPROVED | `3a4ba0a` |
+| TASK-1A-5 | 曲率リップル解消と平滑性テスト | ✅ APPROVED | **未コミット** |
+| **TASK-1B-1** | **`sim-vehicle`（車両物理）** | ⬅ **次。仕様済** | — |
 | TASK-05-1 | UE5 Code-First 構築 + M1〜M9 実測 | 📄 仕様済 | — |
 | Phase 1B | `sim-vehicle` 実装 | 📄 仕様済 | — |
 
@@ -56,10 +57,11 @@ view-engineering/            デバッグ用計測器（Three.js）。製品レ�
 assets/tracks/               aoyama_ring.track.json（オリジナル 4 139 m サーキット）
 assets/vehicles/             gt_proto_a.spec.json（見た目と物理の共通仕様）
 tools/blender/               車両メッシュ生成パイプライン（稼働中）
+tools/tracks/                トラックの制御点を詰め直すツール（densify_corners.py）
 build/                       生成物。gitignore 済み。コミットしない
 ```
 
-Rust 約 5 700 行 / Python 約 1 400 行 / JS 約 900 行。
+Rust 約 5 900 行 / Python 約 1 800 行 / JS 約 900 行。
 
 ---
 
@@ -280,8 +282,8 @@ setLayerVisible, focusAt(s, dist, height) }` を公開している。
 
 ### `assets/`
 
-- `tracks/aoyama_ring.track.json` — オリジナル 4 139 m。制御点 329。
-  高速コーナー 4（130/150/185/140 m）、中速 5、ヘアピン 1（20.6 m・150 度）、
+- `tracks/aoyama_ring.track.json` — オリジナル 4 139 m。制御点 337。
+  高速コーナー 4（130/150/185/140 m）、中速 5、ヘアピン 1（**19.2 m**・150 度）、
   S 字 1、高低差 23.5 m、バンク 0.100 rad、幅 12〜16 m、3 セクター。
   **全要件は `crates/sim-track/tests/io.rs` が実測で検証している**
 - `vehicles/gt_proto_a.spec.json` — **見た目（Blender）と物理（Phase 1B）の共通の正**。
@@ -385,14 +387,24 @@ Severity は `CRITICAL / HIGH / MEDIUM / LOW`。
   直線側を継ぎ目 10 m・中央 18 m へ滑らかに変化させて解消した。
   **Phase 2 の Speed Profile は曲率から限界速度を出すため、偽スパイクは偽の減速になる**
 - **コーナー半径を「最小値」で測らない。** 継ぎ目のスパイクを拾う。**中央値**を使う
-- **中央値は半径の測定には正しいが、滑らかさの測定にはならない。**
-  TASK-1A-4 の Engineering View が、ヘアピン本体に制御点間隔とほぼ同じ
-  **周期 10.5 m・振幅 ±13% の曲率リップル**を発見した（R が 16.3 ↔ 21.0 m で振動）。
+- **中央値は半径の測定には正しいが、滑らかさの測定にはならない。**（TASK-1A-4 で発見 / 1A-5 で解消）
+  ヘアピン本体に制御点間隔とほぼ同じ**周期 10.5 m・振幅 ±13% の曲率リップル**があった。
   中央値 20.6 m は設計値と一致してしまうため、既存テストは全て通っていた。
   centripetal Catmull-Rom は円弧を厳密に再現せず、逸脱は **`(chord / R)^2` に比例**する。
-  高速コーナー（R=130 m, chord/R=0.077）は 0.8% で健全、
-  ヘアピン（R≈19 m, chord/R=0.52）だけが壊れる。**小半径コーナーでは制御点を詰める。**
-  対応は TASK-1A-5。詳細な実測値は `TODO.md` の TASK-1A-4 レビュー記録 MEDIUM-1
+  **制御点間隔は絶対値ではなく `chord / R` で決めること**（規約は `chord/R <= 0.25`）。
+  4.51 m へ詰めてリップルは ±2.7% になった。設計円は円フィットで完全に復元できた
+  （残差 0.5 mm、半径は 130/150/62/58/52/185/19/45/140 の切りのいい値）
+- **平滑性は専用のテストで測る。** `crates/sim-track/tests/io.rs` の
+  `aoyama_curvature_has_no_ripple` / `aoyama_curvature_rate_is_bounded` /
+  `aoyama_no_isolated_curvature_spikes` の 3 本。
+  **コーナー本体（区間の両端 12 m を除いた部分）に限定して測る。**
+  進入・脱出では曲率が 0 から立ち上がるのが正常であり、リップルと混同してはならない
+  （監査中に実際に一度誤検出した）
+- **弧と直線の継ぎ目には曲率のオーバーシュートが残っている（全コーナー共通・設計どおり）。**
+  このトラックは緩和曲線を持たない。実測で `median_R / min_R` は全 9 コーナーで
+  1.41〜1.51 と一様。**Phase 2 の Speed Profile はセンターラインではなく
+  レーシングラインの曲率から計算すること**。センターラインの継ぎ目を引き継ぐ設計に
+  するなら、先に緩和曲線を入れる必要がある
 - **曲率の検証には独立検証器を使う。** `curvature_at` の値を `curvature_at` で
   検証しても意味がない。サンプル点 3 点の外接円から求める **Menger 曲率**なら
   スプライン実装に一切依存せず裏取りできる（TASK-1A-4 で実際に使い、
@@ -428,7 +440,7 @@ Severity は `CRITICAL / HIGH / MEDIUM / LOW`。
 ```bash
 cd /c/AI/App_Dev/Racing
 
-# Rust（期待値: 73 passed / clippy 0 / warnings 0 / fmt clean）
+# Rust（期待値: 76 passed / clippy 0 / warnings 0 / fmt clean）
 cargo test --release
 cargo clippy --all-targets -- -D warnings
 cargo build --release
@@ -443,6 +455,10 @@ cargo build -p sim-wasm  --target wasm32-unknown-unknown --release
 wasm-pack build crates/sim-wasm --target web --out-dir ../../view-engineering/pkg --release
 python -m http.server 8080                           # ★リポジトリルートで起動
 # http://localhost:8080/view-engineering/
+
+# トラックの制御点を詰め直す（chord/R <= 0.25 を満たすまで）
+PYTHONIOENCODING=utf-8 python tools/tracks/densify_corners.py \
+    --track assets/tracks/aoyama_ring.track.json [--dry-run]
 
 # Blender パイプライン
 python tools/blender/generate.py --spec assets/vehicles/gt_proto_a.spec.json
@@ -508,28 +524,28 @@ Game Engine 変更 / 言語変更 / 主要フレームワーク置換 / 物理�
 
 ## 11. 次にやること
 
-### TASK-1A-5 — 曲率リップル解消と平滑性テスト（仕様は `TODO.md` に全文）
+### TASK-1B-1 — `sim-vehicle`（車両物理）
 
-Engineering View が最初の起動で見つけた MEDIUM を潰す。
-Aoyama Ring のヘアピン本体に、制御点間隔とほぼ同じ **周期 10.5 m・±13% の
-曲率リップル**がある。Phase 2 の Speed Profile は κ から限界速度を出すため、
-これは**ヘアピン通過中の偽のスロットル／ブレーキ脈動**になる。
+**Phase 1A は完了した。次はここが中核である。**
 
-やることは 2 つ。**順序が重要で、テストを先に書く。**
+物理モデルの全文仕様は **`docs/phase-1b-vehicle.md`（430 行）**にある。
+タスク契約（Allowed Files / 凍結 / 受け入れ基準 / 報告フォーマット）は
+`TODO.md` の `# NEXT SONNET TASK`。**両方読んでから着手すること。**
 
-1. **平滑性テストを `crates/sim-track/tests/io.rs` に追加**（修正前に落ちること）
-2. **小半径コーナーの制御点を詰める**（目標 `chord / R <= 0.25`）
+要点だけ:
 
-> **`sim-math` のスプライン実装は変更しないこと。** 基盤 crate の設計変更であり、
-> 既存 38 テスト全体に波及する。**制御点の配置だけで解決する。**
-
-`build/engineering-view/02-hairpin-curvature.png` に、リップルが縞として写っている。
+- 依存は `sim-math` + `sim-track` のみ。**物理エンジン crate は使わない**（ADR-0005）
+- `assets/vehicles/gt_proto_a.spec.json` の物理側フィールドを**初めて読む実装**になる
+- 決定性が受け入れ基準に入っている（同一シード・同一入力で**ビット一致**）
+- **最大リスクは低速での Pacejka 発散。** 緩和長 0.30 m + 低速ブレンド 2.0 m/s +
+  静止摩擦ばね + 車輪のみ 960 Hz サブステップで対処する設計が仕様書にある。
+  **ここを自己流にするとグリッドスタートとピットで必ず破綻する**
 
 ### まだコミットしていない作業がある
 
-TASK-1A-4 は APPROVED 済みだが**作業ツリーに残っている**。
-`crates/sim-wasm/`、`view-engineering/`、`Cargo.toml`、`.gitignore`、
-`TODO.md`、`HANDOFF.md` が対象。先にコミットしてから TASK-1A-5 に入ること。
+TASK-1A-5 は APPROVED 済みだが**作業ツリーに残っている**。
+`assets/tracks/`、`crates/sim-track/tests/io.rs`、`tools/tracks/`、
+`TODO.md`、`HANDOFF.md`、`CLAUDE.md` が対象。
 
 ### 並行して着手可能
 

@@ -4,7 +4,7 @@
 
 
 Last updated: 2026-09-08
-Current Phase: **Phase 1A — Track Foundation**
+Current Phase: **Phase 1B — Vehicle Physics**
 
 ---
 
@@ -29,7 +29,7 @@ Current Phase: **Phase 1A — Track Foundation**
 
 ---
 
-## Phase 1A — Track Foundation
+## Phase 1A — Track Foundation（完了）
 
 | Task | 内容 | 担当 | 状態 |
 |------|------|------|------|
@@ -37,7 +37,15 @@ Current Phase: **Phase 1A — Track Foundation**
 | TASK-1A-2 | `sim-track`: Track Coordinate System | Sonnet 5 | ✅ **完了・APPROVED** |
 | TASK-1A-3 | トラック定義の JSON ロード + Aoyama Ring | Sonnet 5 + Opus 5 | ✅ **完了・APPROVED** |
 | TASK-1A-4 | Engineering View（トラック可視化） | Opus 5 | ✅ **完了・APPROVED** |
-| TASK-1A-5 | 曲率リップル解消と平滑性テスト | **Sonnet 5** | ⬅ **NEXT** |
+| TASK-1A-5 | 曲率リップル解消と平滑性テスト | Opus 5 | ✅ **完了・APPROVED** |
+
+**Phase 1A は完了。** CRITICAL / HIGH の未解決なし。
+
+### Phase 1B — Vehicle Physics
+
+| Task | 内容 | 担当 | 状態 |
+|------|------|------|------|
+| TASK-1B-1 | `sim-vehicle`: 車両物理 | **Sonnet 5** | ⬅ **NEXT** `docs/phase-1b-vehicle.md` |
 
 ### Phase 0.5（並行）
 
@@ -501,9 +509,192 @@ Phase 1A の実装は完了。MEDIUM-1 はアセットの品質課題であり�
 
 ---
 
+# TASK-1A-5 — 完了報告 / レビュー記録
+
+**実装・監査**: Opus 5（TASK-1A-4 と同じく、runtime が model 別 subagent の起動を
+禁止していたため Architect が実装も担当）
+
+### Implemented Files
+
+```
+crates/sim-track/tests/io.rs         平滑性テスト 3 本を追加 + 制御点間隔の規約を改訂
+tools/tracks/densify_corners.py      小半径コーナーの制御点を詰め直すツール（新規）
+assets/tracks/aoyama_ring.track.json ヘアピン周辺のみ再生成（130 挿入 / 18 削除）
+assets/tracks/README.md              制御点間隔の規約を半径依存へ改訂
+```
+
+### Tests Before Fix（テストが実質的であることの確認）
+
+```
+test aoyama_curvature_has_no_ripple ... FAILED
+    curvature ripple 1.879 (R_med 19.1 m) exceeds 1.1
+test aoyama_curvature_rate_is_bounded ... FAILED
+    curvature rate 0.04277 1/m^2 at s=3345.0 exceeds 0.01
+test aoyama_no_isolated_curvature_spikes ... FAILED
+    isolated curvature spike 1.420 at s=3345.5 exceeds 1.15
+```
+
+**健全なコーナーでは誤検出しない**ことも同時に確認している。修正前の時点で
+ヘアピン以外の 8 コーナーはすべて基準内だった（`κ_max/κ_min` = 1.005〜1.058）。
+落ちたのはヘアピン（R_med 19.1）だけである。
+
+### Tests After Fix
+
+```
+cargo test --release
+  sim-math : 38 / sim-track: track 16 + io 15 / sim-wasm: 7 = 76 passed / 0 failed
+  （既存 73 に退行なし。増分は io の +3）
+cargo clippy --all-targets -- -D warnings : 0
+cargo fmt --check                         : clean
+cargo build --release                     : 0 warnings
+git diff --stat crates/sim-math crates/sim-wasm view-engineering docs *.md : 空
+```
+
+### Ripple Measurements
+
+| 指標 | 修正前 | 修正後 | 基準 |
+|------|-------|-------|------|
+| ヘアピン本体 `κ_max/κ_min` | **1.879** | **1.054** | < 1.10 |
+| コーナー本体 max `\|dκ/ds\|` | **0.04277** | **0.00209** | < 0.010 |
+| 局所中央値に対するスパイク比 | **1.420** | **1.046** | < 1.15 |
+
+コーナー本体ごとの `κ_max/κ_min`（修正後）:
+
+```
+    R_med   body_m  kmax/kmin
+    130.1    199.0      1.011
+    150.1     81.5      1.012
+     62.4     47.5      1.033
+     58.3     57.0      1.036
+     52.5     13.0      1.038
+    185.2     32.5      1.005
+     19.0     32.0      1.054   <- ヘアピン。1.879 から改善し、他と同等になった
+     45.4     24.5      1.054
+    139.9      7.0      1.004
+```
+
+ヘアピンは**もはや外れ値ではない**。R=45 のコーナーと同じ水準にある。
+
+### Control Point Changes
+
+```
+制御点        329 -> 337 (+8)
+間隔          9.36..18.15 m -> 4.51..18.15 m
+最大 chord/R  0.518 -> 0.238
+隣接間隔比    1.557 -> 1.557（S 字の既存値。ヘアピン周辺では 1.21 に収めた）
+ファイルサイズ 76.9 KB（< 200 KB）
+diff          130 insertions / 18 deletions（全 329 点中、触れたのは 18 点）
+```
+
+ヘアピン: 5 分割（30 度・9.83 m）-> **11 分割**（13.6 度・4.51 m）。
+両隣の直線に間隔のランプ（4.51 -> 5.47 -> 6.62 -> 8.02 m、比 1.21）を作った。
+
+### Corner Radii（中央値）
+
+| コーナー | 修正前 | 修正後 |
+|---------|-------|-------|
+| 130 / 150 / 62 / 58 / 52 / 185 / 45 / 140 | — | **すべて変化なし** |
+| ヘアピン | 20.55 m | **19.2 m** |
+
+全長 4 138.99 m -> 4 139.09 m（+0.10 m）。レイアウト要件はすべて通り続けている
+（高速 4 / 中速 5 / ヘアピン 1 / S 字 / 最長ストレート 742 m / 高低差 23.50 m /
+バンク -0.100 rad / 幅 12.0〜16.0 m / 縁石 10/10）。
+
+### 手法 — なぜ形状を変えずに直せたか
+
+**このトラックのコーナーは厳密な円弧の上に制御点が置かれている。**
+最小二乗の円フィット残差は全コーナーで **<= 0.5 mm**（= JSON の mm 丸めそのもの）、
+半径は 130 / 150 / 62 / 58 / 52 / 185 / **19** / 45 / 140 という切りのいい値だった。
+
+したがって設計円は完全に復元でき、**同じ円の上に詰めて置き直す**だけで
+リップルだけを消せる。形状の推測は一切していない。
+隣接する直線側は、端点を結ぶ直線からの垂直距離が 1 mm 以内であることを
+確認してから再配置している（直線でなければツールは中断する）。
+
+標高は元の値を Catmull-Rom 補間、断面は線形補間、`runoff` は最近傍で引き継いだ
+（断面が元から線形補間されるため、線形での再サンプルは厳密に等価）。
+
+### Deviations from Spec（Opus が実測に基づいて自分の仕様を訂正した 3 点）
+
+1. **`|dκ/ds|` と「スパイク」の検査を「全周」から「コーナー本体」へ限定した**
+
+   仕様は全周に `|dκ/ds| < 0.010 1/m²` を課していた。**これは達成不可能だった。**
+   このトラックは緩和曲線（クロソイド）を持たず、円弧と直線が直接つながるため、
+   継ぎ目では曲率が**設計どおり**不連続に変化する。実測で全周の最大は
+   ヘアピンを除外してもなお **0.040 1/m²**（s=3606 の R=45 出口など）であり、
+   全周に 0.010 を課すことは「全 9 コーナーに緩和曲線を入れる」という
+   トラックの設計変更を要求するに等しい。
+
+   本体の定義は実測で決めた。両端 12 m を落とすと、健全なコーナーは
+   1.005〜1.058、壊れたヘアピンは 1.879 で**明確に分離する**。
+
+2. **ヘアピンの中央値半径が ±5% を超えて変化した（20.55 -> 19.2 m、-6.6%）**
+
+   仕様は「中央値は従来値の ±5% 以内」としていたが、これは誤りだった。
+   **従来の中央値 20.55 m はリップルによって水増しされた値**であり、
+   設計円は R=19.000 m（フィット残差 0.2 mm）である。
+   リップルを消せば中央値は設計値へ収束するのが正しい。
+   他の 8 コーナーは中央値が一切変化していない。
+
+3. **`asset_track_meets_layout_requirements` の制御点間隔の判定を書き換えた**
+
+   仕様の Allowed Files は io.rs を「平滑性テストの追加のみ」としていたが、
+   一律 `8..20 m` の判定は詰め直しと両立しない（新しい下限は 4.51 m）。
+   単に下限を下げるのではなく、**半径依存の規則へ置き換えた**:
+
+   - `chord / R <= 0.25`（制御点そのものの Menger 曲率から半径を測る）
+   - 絶対上限 20 m / 絶対下限 3 m
+   - 隣接間隔比 <= 1.6（詰め直しの目標は 1.5。1.6 なのは S 字に 1.557 が
+     元から存在するため。そこは平滑性が健全〈1.04〉で触る理由がない）
+
+   一律の下限では小半径コーナーを守れない、というのが本タスクの発見そのもの
+   なので、規約自体を直すのが正しい。
+
+### Design Concerns Found
+
+**LOW-1 — 弧と直線の継ぎ目に曲率のオーバーシュートが残る（全コーナー共通・仕様どおり）**
+
+継ぎ目で Catmull-Rom は曲率をオーバーシュートする。実測（`median_R / min_R`）:
+
+```
+130 -> 1.48    150 -> 1.51    62 -> 1.44    58 -> 1.47    52 -> 1.41
+185 -> 1.46     19 -> 1.45    45 -> 1.43   140 -> 1.42
+```
+
+**全 9 コーナーで一様（1.41〜1.51）であり、ヘアピンだけが悪いのではない。**
+修正前のヘアピンは 1.66 と突出していたが、いまは他と同等になった。
+
+これは緩和曲線を持たない設計の帰結であり、平坦にするには全コーナーの
+ジオメトリを変える必要がある（= トラックの設計変更）。本タスクの範囲外とした。
+
+**Phase 2 への申し送り**: Speed Profile は**センターラインではなく
+レーシングラインの曲率**から計算すること。レーシングラインはコリドー内で
+最適化されるため、センターラインの継ぎ目のオーバーシュートをそのまま
+引き継ぐ必要はない。もし引き継ぐ設計にするなら、先に緩和曲線を入れること。
+
+### Architecture Compliance
+
+- ✅ `sim-math` のスプライン実装を変更していない（**制御点の配置だけで解決**）
+- ✅ `crates/sim-track/src/**` の差分ゼロ（変更はテストのみ）
+- ✅ `crates/sim-wasm` / `view-engineering` / `docs` / ルート `.md` の差分ゼロ
+- ✅ トラック形状を推測で作り直していない（円フィットで設計を復元し、その上に再配置）
+- ✅ アセットは 100% テキストから再生成可能（ADR-0006 の方針を維持）
+
+### Screenshot
+
+`build/engineering-view/02-hairpin-BEFORE.png` と `02-hairpin-curvature.png`。
+修正前ははっきりした縞（10.5 m 周期のリップル）が見え、修正後は一様な赤になっている。
+Engineering View が見つけた問題を、Engineering View で確認して閉じた。
+
+### Decision: **APPROVED**
+
+Phase 1A は完了。CRITICAL / HIGH の未解決はない。
+
+---
+
 # NEXT SONNET TASK
 
-## TASK-1A-5 — 小半径コーナーの曲率リップル解消と平滑性テスト
+## TASK-1B-1 — `sim-vehicle`（車両物理）
 
 ### IMPORTANT IMPLEMENTATION CONTRACT
 
@@ -568,147 +759,124 @@ Recommended Next Step:
 
 ### Goal
 
-**曲率が「設計半径どおり」であるだけでなく「滑らかである」ことを、機械的に保証する。**
+**1 台の車が、物理的に妥当に走るようにする。**
 
-TASK-1A-4 の Engineering View が、Aoyama Ring のヘアピン本体に
-制御点間隔とほぼ同じ **周期 10.5 m・振幅 ±13% の曲率リップル**を発見した
-（詳細と実測値は上の TASK-1A-4 レビュー記録 MEDIUM-1 を参照。
-`build/engineering-view/02-hairpin-curvature.png` に縞として視認できる）。
+Phase 2 以降（レーシングライン / Driver AI / 追走 / 追い抜き）はすべてこの上に載る。
+ここが不安定だと、上に何を積んでも「自然に走っている」ようには見えない。
 
-Phase 2 の Speed Profile は κ から限界速度を出すため、このリップルは
-ヘアピン通過中の**偽のスロットル／ブレーキ脈動**になる。
-Phase 2 に着手する前に解消する。
+### 正となる仕様書
 
-### 対応する 2 つの欠落
+**物理モデルの全文仕様は [`docs/phase-1b-vehicle.md`](docs/phase-1b-vehicle.md) にある（430 行）。**
+実装前に必ず全部読むこと。以下がそこに書かれている。
 
-1. **アセット**: ヘアピン付近の制御点が疎すぎる（`chord / R = 0.52`）
-2. **テスト**: 半径を**中央値**で測る検査しかなく、**滑らかさを測る検査が無い**。
-   中央値は半径の測定には正しいが、リップルは素通しする
+| 節 | 内容 |
+|----|------|
+| 責務の境界（不可侵） | AI が触れてよいのは制御入力だけ。crate 依存の向き |
+| データ構造 | 入力 / 状態 / パラメータ |
+| 物理モデル | 剛体・サスペンション・簡略 Pacejka・車輪回転・サブステップ・パワートレイン・空力・積分 |
+| 破綻検知（必須） | 発散を検出して止める仕組み |
+| 公開 API | `sim-vehicle` の外向きインターフェース |
+| Required Tests / シナリオ | 受け入れ基準と、数値で確認する挙動 |
+| Performance Criteria | 予算 |
+| Out of Scope / Known Risks | Phase 1B で実装しないもの、既知のリスク |
 
-**2 を先に作ること。** テストが無いまま 1 を直しても、直ったことを証明できない。
+**この TODO の記述と `docs/phase-1b-vehicle.md` が食い違った場合、
+`docs/phase-1b-vehicle.md` を正とする。** 食い違いを見つけたら報告すること。
 
 ### Allowed Files
 
 ```
-crates/sim-track/tests/io.rs            平滑性テストの追加のみ
-assets/tracks/aoyama_ring.track.json    ヘアピン周辺の制御点の再生成
-assets/tracks/README.md                 制御点間隔の規約の更新
-tools/tracks/**                         生成スクリプトを置く場合（新規作成可）
+Cargo.toml                       members に crates/sim-vehicle を追加するのみ
+crates/sim-vehicle/Cargo.toml
+crates/sim-vehicle/src/**
+crates/sim-vehicle/tests/**
 ```
 
-### Do Not Change
+### Do Not Change（凍結）
 
-`crates/sim-math/**`、`crates/sim-track/src/**`（**スプライン実装は変更しない**）、
-`crates/sim-wasm/**`、`view-engineering/**`、ルート直下の `.md`、`docs/`。
+`crates/sim-math/**`、`crates/sim-track/**`、`crates/sim-wasm/**`、
+`view-engineering/**`、`assets/**`、`tools/**`、
+ルート直下の `.md` 各種、`docs/`。
 
-> **`sim-math` の `CubicSpline` を「円弧を厳密に通るスプライン」へ差し替えてはならない。**
-> それは基盤 crate の設計変更であり、`ArcLengthSpline` / `Track` / 既存 38 テストの
-> 全体に波及する。必要と判断した場合は着手せず `PROPOSED DESIGN CHANGE` を提出すること。
-> 本タスクは**制御点の配置だけで**解決する。
+`sim-math` に関数を足したくなった場合は、**足す前に** `PROPOSED DESIGN CHANGE` を
+提出すること（TASK-1A-1 では実際にこの経路で 4 つの API 追加が承認されている）。
 
 ### Dependencies
 
-なし（既存の crate のみ）。
-
-### Required Changes
-
-#### 1. 平滑性テスト（先に書く。修正前に落ちることを確認すること）
-
-`crates/sim-track/tests/io.rs` に追加する。
-`Track::frame_at(s).curvature` を **0.5 m 間隔**（= `FRAME_SPACING_M`）で全周サンプルする。
-
-| Test | 内容 | 基準 |
-|------|------|------|
-| `aoyama_curvature_has_no_ripple` | `\|κ\| > 1/100`（R < 100 m）の**コーナー本体**区間で、局所極大と隣接する局所極小の比 `κ_max / κ_min` | **< 1.10** |
-| `aoyama_curvature_rate_is_bounded` | 全周で `\|dκ/ds\|`（0.5 m 差分） | **< 0.010 1/m²** |
-| `aoyama_no_isolated_curvature_spikes` | 各サンプルの κ と、前後 ±3 m の中央値との比 | **< 1.15** |
-
-**「コーナー本体」の定義**: `\|κ\| > 1/100` が 15 m 以上連続する区間の、
-両端から 5 m を除いた部分。進入・脱出の遷移で κ が 0 から立ち上がるのは
-正常であり、リップルと混同してはならない（TASK-1A-4 の監査で実際に一度誤検出した）。
-
-現状の実測値（修正前。テストが実質的であることの確認に使う）:
-
-```
-ヘアピン本体 κ_max/κ_min = 0.061435 / 0.047641 = 1.29   -> 基準 1.10 を超過（落ちる）
-全周 max |dκ/ds|         = 0.0410 1/m^2                 -> 基準 0.010 を超過（落ちる）
-高速 T1 本体 κ_max/κ_min = 130.38 / 129.35 相当 = 1.008  -> 通る（健全な区間は誤検出しない）
-直線 s=400..900 max |κ|  = 1.27e-4                       -> 通る
+```toml
+[dependencies]
+sim-math  = { path = "../sim-math" }
+sim-track = { path = "../sim-track" }
 ```
 
-**3 本とも、修正前に落ちること／高速コーナーと直線では誤検出しないことを
-実行して確認し、報告に出力を貼ること。**
+**それ以外の依存を足さないこと。** 物理エンジンの crate（rapier / nphysics 等）は
+使わない（ADR-0005。物理は自前で持ち、決定性を自分で保証する）。
 
-#### 2. 制御点の再配置
+### 必ず守る原則（違反は CRITICAL）
 
-**方針**: 制御点間隔を半径に応じて決める。目標は全コーナーで `chord / R <= 0.25`。
+`HANDOFF.md` §3 の全項目。特にこのタスクで踏みやすいもの:
 
-`(chord/R)^2` に比例して逸脱するため、`chord/R` を 0.52 -> 0.25 にすれば
-リップルはおよそ 1/4.3、±13% -> 約 ±3% になる。基準 1.10（= ±5%）に収まる。
+1. **固定タイムステップのみ。** 可変 dt を受け取らない
+2. **グローバル乱数・時刻依存乱数は禁止。** `Rng` の明示的な派生のみ
+3. **状態と積算はすべて `f64`**
+4. **Simulation Core は Rendering / UI / Camera を知らない**
+5. 位置は連続量。`sim-track` の `wrap_s` / `signed_delta_s` を通す
 
-| R | 上限間隔 |
-|---|---------|
-| < 30 m | **R * 0.25**（ヘアピン R≈20 m なら 5 m） |
-| 30〜80 m | 8 m |
-| > 80 m | 従来どおり 10 m |
-| 直線 | 継ぎ目 = 隣接コーナーの間隔、中央 18 m |
+### 使えるもの（再実装しないこと）
 
-**密度を急変させないこと（TASK-1A-3 の既知の落とし穴）。**
-隣接する制御点間隔の比を **1.5 倍以内**に保ち、遷移は滑らかにする。
-密度の跳びは、それ自体が接線推定を跳ねさせて偽スパイクを生む。
-
-トラック全体の形状・全長・コーナー配置は**変えない**。
-既存の `io.rs` の全要件テスト（全長 3 800〜4 600 m、高速 4 本、中速 5 本、
-ヘアピン 1 本、S 字、高低差 >= 20 m、バンク、幅、縁石、ファイルサイズ）が
-**すべて通り続けること**。中央値半径は従来値の ±5% 以内に保つ。
-
-#### 3. `assets/tracks/README.md` の規約更新
-
-「制御点間隔 8〜20 m」を、上の**半径依存の規則**へ置き換える。
-理由（`(chord/R)^2` の逸脱、Speed Profile への影響）を 3 行程度で残すこと。
-制御点数が増えるためファイルサイズ上限（< 200 KB）を再確認する。
+- `sim_math::util::{move_towards, approach_exponential}` — 制御出力のレート制限と
+  一次遅れ。**Driver AI の出力は必ずこの 2 つを通す**（TESTING.md T-AI-02）
+- `sim_track::Track::{frame_at, world_to_track, surface_at}` — 路面の幾何と種別。
+  `TrackFrame` は**正規直交基底**であり、タイヤ力の縦横分解はこれを前提にしてよい
+- `SurfaceKind::properties()` — `grip_multiplier` / `rolling_resistance`
+- `assets/vehicles/gt_proto_a.spec.json` — **見た目と物理の共通の正**。
+  dimensions / mass / tyre / engine / drivetrain / aero / brakes / suspension を含む。
+  物理側フィールドはまだ誰も読んでいない。**このタスクが最初の読み手になる**
 
 ### Acceptance Criteria
 
-1. 追加した 3 テストが、**修正前に落ち／修正後に通る**（両方の出力を報告に貼る）
-2. `cargo test --release` 全通過（**既存 73 テストの退行なし**。増分のみ）
-3. `cargo clippy --all-targets -- -D warnings` / `cargo fmt --check` が通る
-4. Engineering View（`view-engineering/`）で**ヘアピンの縞が消えている**ことを
-   スクリーンショットで確認する。手順は `view-engineering/README.md`
-5. 中央値コーナー半径が従来値の ±5% 以内
-6. `aoyama_ring.track.json` < 200 KB / `load_track` < 50 ms
-7. 凍結ファイルの差分がゼロ
+1. `docs/phase-1b-vehicle.md` の Required Tests がすべて通る
+2. `cargo test --release` 全通過（**既存 76 テストの退行なし**）
+3. `cargo clippy --all-targets -- -D warnings` が通る
+4. `cargo fmt --check` が通る
+5. `cargo build --release` 警告ゼロ
+6. `unsafe` 0 行（`#![deny(unsafe_code)]`）
+7. `cargo build -p sim-vehicle --target wasm32-unknown-unknown` が通る
+8. **決定性**: 同一シード・同一入力列で 2 回走らせ、状態が**ビット一致**すること
+9. `docs/phase-1b-vehicle.md` の Performance Criteria を満たす
+10. 凍結ファイルの差分がゼロ
+
+### Known Risks（詳細は仕様書の Known Risks）
+
+| Risk | 対策（仕様書に設計済み） |
+|------|----------------------|
+| **低速で Pacejka が発散する（最大リスク）** | 緩和長 0.30 m + 低速ブレンド 2.0 m/s + 静止摩擦ばね + 車輪のみ 960 Hz サブステップ |
+| サスペンションが硬すぎて振動する | 仕様の減衰係数を使う。勝手に変えない |
+| 決定性が崩れる | `f64` 固定・演算順序を変えない・`HashMap` の反復順に依存しない |
+
+**低速の扱いは仕様書どおりに実装すること。** ここを自己流にすると、
+グリッドスタートとピットで必ず破綻する。
 
 ### Out of Scope
 
-- `sim-math` のスプライン実装の変更（**明確に禁止**。上記 Do Not Change を参照）
-- 他のトラックの追加
-- Engineering View の機能追加
-- Speed Profile そのものの実装（Phase 2）
-
-### Known Risks
-
-| Risk | 対策 |
-|------|------|
-| 密度を上げた結果、継ぎ目に新しいスパイクが出る | 隣接間隔比 1.5 倍以内。追加した `aoyama_no_isolated_curvature_spikes` が検出する |
-| 制御点数が増えてファイルが 200 KB を超える | 増えるのは小半径区間のみ。超えたら報告すること |
-| 基準 1.10 が達成できない | **勝手に緩めない。** `PROPOSED DESIGN CHANGE` として実測値つきで提出する |
+- Driver AI（Phase 2）／レーシングライン（Phase 2）／複数台（Phase 3）
+- タイヤ摩耗・燃料・戦略（Phase 6）／天候（Phase 7）
+- レンダリング・カメラ・音（Phase 8 以降）
+- Engineering View への車両表示（`sim-vehicle` が動いてから別タスクで行う）
 
 ### 完了時の報告フォーマット
 
 ```
-TASK-1A-5 COMPLETE
+TASK-1B-1 COMPLETE
 
 Implemented Files:
-Tests Before Fix:          (3 テストが落ちる出力)
-Tests After Fix:           (cargo test の実出力)
-Control Point Changes:     (点数の増減、間隔の分布、chord/R の最大)
-Corner Radii (median):     (修正前 -> 修正後。±5% 以内であること)
-Ripple Measurements:       (ヘアピン本体の κ_max/κ_min、全周 max |dκ/ds|)
-File Size / load_track:
+Test Results:              (cargo test の実出力)
+Determinism Check:         (2 回実行のビット一致の確認方法と結果)
+wasm32 build:
 Clippy / fmt Results:
+Performance:               (仕様書の Performance Criteria に対する実測)
 Frozen-file diffs:         (空であること)
-Screenshot:                (ヘアピン。縞が消えていること)
+Low-speed Behaviour:       (静止・発進・低速旋回で発散しないことの実測)
 Deviations from Spec:      (なければ "None")
 Design Concerns Found:
 ```

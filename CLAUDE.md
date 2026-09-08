@@ -4,7 +4,7 @@
 すべてそこに 1 本でまとまっている。他の文書は必要になったときだけ開けばよい。
 
 ```bash
-cargo test --release      # 73 passed / 0 failed が健全な状態
+cargo test --release      # 76 passed / 0 failed が健全な状態
 ```
 
 ## このプロジェクトは何か
@@ -41,10 +41,11 @@ Sonnet へタスクを渡すときは `TODO.md` の `# NEXT SONNET TASK` を全�
 
 ## 進行状況
 
-Phase 1A（Track Foundation）。`sim-math` / `sim-track` / トラックアセット /
-Blender 車両生成パイプライン / `sim-wasm` + Engineering View が完成。
-次は TASK-1A-5（曲率リップル解消と平滑性テスト）。
-詳細と次タスクの全文仕様は `HANDOFF.md` と `TODO.md` にある。
+**Phase 1A（Track Foundation）は完了。** `sim-math` / `sim-track` /
+トラックアセット / Blender 車両生成パイプライン / `sim-wasm` + Engineering View。
+次は **TASK-1B-1（`sim-vehicle` 車両物理）**。
+物理の全文仕様は `docs/phase-1b-vehicle.md`、現在地は `HANDOFF.md`、
+タスク契約は `TODO.md`。
 
 ## 環境で踏みやすい罠
 
