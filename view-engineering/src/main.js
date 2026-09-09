@@ -39,6 +39,25 @@ const PHYSICS_DT = 1 / 240;
 const MAX_STEPS_PER_FRAME = 32;
 // 1 台ぶんの入力ストライド [steer, throttle, brake, clutch, gear, drs]。
 const INPUT_STRIDE = 6;
+// sim_driver::SIM_DT（60 Hz 固定）。Simulation Tick の実時間。
+const SIM_DT = 1 / 60;
+// 1 フレームで消化してよい Simulation Tick の上限。WASM 側 MAX_SIM_STEPS_PER_CALL と一致。
+const MAX_SIM_STEPS_PER_FRAME = 8;
+// WasmWorld::driver_telemetry の 1 台あたり要素数。
+const DRIVER_TELEMETRY_STRIDE = 12;
+// DriverMode 判別子 -> ラベル（WASM は `as u8` で数値を返す。§Decision の宣言順）。
+const DRIVER_MODES = [
+  'FreeAir', 'Following', 'Attacking', 'Defending', 'SideBySide', 'Avoiding',
+  'Recovering', 'PitIn', 'PitOut', 'UnderYellow', 'SafetyCar', 'BlueFlag',
+];
+// レーシングラインのサンプル間隔 [m]（RacingLine::DEFAULT_STEP_M と揃える）。
+const RACING_LINE_STEP_M = 2.0;
+// レーシングラインを路面から持ち上げる量 [m]（z-fight 回避）。
+const RACING_LINE_LIFT_M = 0.06;
+// バランス型ドライバーの能力値 14 個（DriverModel 宣言順）。
+const BALANCED_ABILITIES = new Float64Array([
+  0.6, 0.6, 0.6, 0.5, 0.5, 1.0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.2, 1.0, 0.0,
+]);
 
 const overlay = new Overlay(document.getElementById('overlay'));
 
@@ -81,15 +100,30 @@ async function main() {
   // S/F ストレート上（バンクほぼ 0）に置く。spawn の姿勢はヨーのみのため
   // 既知の無害範囲（HANDOFF.md D-1）で運用する。
   const startS = ((track.start_finish_s() - 30 + data.length) % data.length);
-  world.spawn(startS, 0.0);
+  // Driver AI 車。走行計画を取り付けてから spawn_driver する（TASK-2-3）。
+  // set_race_seed は u64 = wasm-bindgen では BigInt。
+  world.set_race_seed(1n);
+  world.attach_racing_line(RACING_LINE_STEP_M);
+  world.spawn_driver(startS, 0.0, BALANCED_ABILITIES);
+  const hasAi = world.vehicle_count() > 0;
 
   const car = buildVehicle(spec);
   scene.add(car.group);
 
-  // 暫定スクリプト入力。**これは Driver AI ではない。**
-  // Phase 2 の Driver AI で置き換える。操舵ロジック（ライン追従等）は書かない。
+  // レーシングライン（v_target で頂点着色）と AI 目標マーカー。
+  const racingLineMesh = buildRacingLineMesh(world);
+  if (racingLineMesh) {
+    scene.add(racingLineMesh);
+    objects.byId.racingline = racingLineMesh;
+  }
+  const aimGroup = buildAimMarkers();
+  aimGroup.visible = hasAi;
+  scene.add(aimGroup);
+  objects.byId.aim = aimGroup;
+
+  // AI 不在時のみ使う暫定スクリプト入力（既存経路。**Driver AI ではない**）。
   const input = { steer: 0.0, throttle: 0.35, brake: 0.0, gear: 1 };
-  let autoShift = true; // rpm に応じたギア選択だけの簡易ロジック（操舵はしない）
+  let autoShift = true;
   let simAccumulator = 0;
   let simLastTime = performance.now();
 
@@ -104,27 +138,141 @@ async function main() {
     ]);
   }
 
+  const EMPTY_MANUAL = new Float64Array(0);
+
   function driveWorld(nowMs) {
     const dtReal = Math.min((nowMs - simLastTime) / 1000, 0.25);
     simLastTime = nowMs;
     simAccumulator += dtReal;
-    let n = Math.floor(simAccumulator / PHYSICS_DT);
-    if (n <= 0) return;
-    if (n > MAX_STEPS_PER_FRAME) n = MAX_STEPS_PER_FRAME;
-    simAccumulator -= n * PHYSICS_DT;
 
-    if (autoShift) {
-      const rpm = world.telemetry()[4];
-      if (rpm > 6600 && input.gear < spec.drivetrain.gear_ratios.length) input.gear += 1;
-      else if (rpm < 2600 && input.gear > 1) input.gear -= 1;
+    if (hasAi) {
+      // Simulation Tick で進める（Driver フェーズ 1 回 + 物理 4 tick / sim tick）。
+      let n = Math.floor(simAccumulator / SIM_DT);
+      if (n <= 0) return;
+      if (n > MAX_SIM_STEPS_PER_FRAME) n = MAX_SIM_STEPS_PER_FRAME;
+      simAccumulator -= n * SIM_DT;
+      world.step_sim(n, EMPTY_MANUAL);
+    } else {
+      // 既存の手動経路（AI 0 台のとき）。
+      let n = Math.floor(simAccumulator / PHYSICS_DT);
+      if (n <= 0) return;
+      if (n > MAX_STEPS_PER_FRAME) n = MAX_STEPS_PER_FRAME;
+      simAccumulator -= n * PHYSICS_DT;
+      if (autoShift) {
+        const rpm = world.telemetry()[4];
+        if (rpm > 6600 && input.gear < spec.drivetrain.gear_ratios.length) input.gear += 1;
+        else if (rpm < 2600 && input.gear > 1) input.gear -= 1;
+      }
+      world.step(n, currentInputsFlat());
     }
-
-    world.step(n, currentInputsFlat());
 
     applyBodyPose(car.chassis, world.body_poses(), 0);
     applyWheelPoses(car.wheels, world.wheel_poses(), 0);
     overlay.setTelemetry(readTelemetry(world, data));
+    if (hasAi) {
+      const d = readDriver(world, 0);
+      overlay.setDriver(d);
+      updateAimMarkers(aimGroup, d);
+    }
     if (chaseCam) updateChaseCamera();
+  }
+
+  /// v_target を [min,max] で正規化して寒色→暖色に着色した折れ線を作る。
+  function buildRacingLineMesh(w) {
+    const flat = Array.from(w.sample_racing_line(RACING_LINE_STEP_M));
+    const vtar = Array.from(w.sample_target_speed(RACING_LINE_STEP_M));
+    if (flat.length < 6 || vtar.length < 2) return null;
+    const n = flat.length / 3;
+    let vmin = Infinity;
+    let vmax = -Infinity;
+    for (const v of vtar) {
+      if (v < vmin) vmin = v;
+      if (v > vmax) vmax = v;
+    }
+    const span = Math.max(vmax - vmin, 1e-6);
+    const positions = new Float32Array(flat.length);
+    const colors = new Float32Array(flat.length);
+    for (let i = 0; i < n; i += 1) {
+      positions[i * 3] = flat[i * 3];
+      positions[i * 3 + 1] = flat[i * 3 + 1] + RACING_LINE_LIFT_M;
+      positions[i * 3 + 2] = flat[i * 3 + 2];
+      const u = (vtar[Math.min(i, vtar.length - 1)] - vmin) / span; // 0 遅い .. 1 速い
+      // 寒色(青)→暖色(赤)。表示された色 = 値。
+      colors[i * 3] = u;
+      colors[i * 3 + 1] = 0.15 + 0.5 * (1 - Math.abs(u * 2 - 1));
+      colors[i * 3 + 2] = 1 - u;
+    }
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    const line = new THREE.LineLoop(
+      geom,
+      new THREE.LineBasicMaterial({ vertexColors: true })
+    );
+    line.name = 'racingline';
+    line.userData.vRange = [vmin, vmax];
+    return line;
+  }
+
+  function buildAimMarkers() {
+    const g = new THREE.Group();
+    g.name = 'aim';
+    const aim = new THREE.Mesh(
+      new THREE.SphereGeometry(0.8, 12, 8),
+      new THREE.MeshBasicMaterial({ color: 0xffee44 })
+    );
+    aim.name = 'aim-point';
+    const tgt = new THREE.Mesh(
+      new THREE.SphereGeometry(0.6, 12, 8),
+      new THREE.MeshBasicMaterial({ color: 0x44ffee })
+    );
+    tgt.name = 't-target';
+    g.add(aim, tgt);
+    return g;
+  }
+
+  function updateAimMarkers(group, driver) {
+    if (!driver) return;
+    const aim = group.getObjectByName('aim-point');
+    const tgt = group.getObjectByName('t-target');
+    // aim 点: aim_s のレーシングライン上の点。
+    const aimWorld = lineWorldAt(racingLineMesh, driver.aimS, data.length);
+    if (aimWorld && aim) aim.position.copy(aimWorld);
+    // t_target 点: 現在 s の位置でトラック横方向へ t_target（+ が左）。
+    const i = stationIndexAt(data, driver.s);
+    const c = new THREE.Vector3(
+      data.center[i * 3],
+      data.center[i * 3 + 1],
+      data.center[i * 3 + 2]
+    );
+    const left = new THREE.Vector3(
+      data.left[i * 3] - c.x,
+      data.left[i * 3 + 1] - c.y,
+      data.left[i * 3 + 2] - c.z
+    );
+    if (left.lengthSq() > 1e-9) left.normalize();
+    if (tgt) {
+      tgt.position
+        .copy(c)
+        .addScaledVector(left, driver.tTarget)
+        .setY(c.y + RACING_LINE_LIFT_M);
+    }
+  }
+
+  /// 折れ線上の弧長 s に対応するワールド点（等間隔サンプルの線形補間）。
+  function lineWorldAt(mesh, s, length) {
+    if (!mesh) return null;
+    const pos = mesh.geometry.getAttribute('position');
+    const n = pos.count;
+    const x = (((s % length) + length) % length) / length * n;
+    const i0 = Math.floor(x) % n;
+    const i1 = (i0 + 1) % n;
+    const f = x - Math.floor(x);
+    return new THREE.Vector3(
+      pos.getX(i0) + (pos.getX(i1) - pos.getX(i0)) * f,
+      pos.getY(i0) + (pos.getY(i1) - pos.getY(i0)) * f,
+      pos.getZ(i0) + (pos.getZ(i1) - pos.getZ(i0)) * f
+    );
   }
 
   // ---- チェイスカメラ（車体後方から。OrbitControls と排他）----
@@ -279,13 +427,20 @@ async function main() {
       controls.update();
       return { s: data.stationS[i], index: i };
     },
-    /// 1 物理 tick だけ進める（CDP 検証用）。描画も 1 回更新する。
+    /// 1 tick だけ進める（CDP 検証用）。AI 車なら 1 Simulation Tick、
+    /// そうでなければ 1 物理 tick。描画も 1 回更新する。
     stepOnce() {
-      world.step(1, currentInputsFlat());
+      if (hasAi) world.step_sim(1, EMPTY_MANUAL);
+      else world.step(1, currentInputsFlat());
       applyBodyPose(car.chassis, world.body_poses(), 0);
       applyWheelPoses(car.wheels, world.wheel_poses(), 0);
       overlay.setTelemetry(readTelemetry(world, data));
-      return readTelemetry(world, data);
+      if (hasAi) {
+        const d = readDriver(world, 0);
+        overlay.setDriver(d);
+        updateAimMarkers(aimGroup, d);
+      }
+      return { telemetry: readTelemetry(world, data), driver: readDriver(world, 0) };
     },
     /// 暫定スクリプト入力の上書き。指定したキーだけ更新する。
     setInput(partial = {}) {
@@ -304,12 +459,45 @@ async function main() {
       wheelPoses: (i = 0) => Array.from(world.wheel_poses()).slice(i * 28, i * 28 + 28),
       telemetry: () => readTelemetry(world, data),
     },
+    // 検証用（読み出しのみ）。Driver AI と走行計画。
+    hasAi,
+    driverTelemetry: (i = 0) => readDriver(world, i),
+    racingLine: () => ({
+      points: Array.from(world.sample_racing_line(RACING_LINE_STEP_M)),
+      targetSpeed: Array.from(world.sample_target_speed(RACING_LINE_STEP_M)),
+      vRange: racingLineMesh ? racingLineMesh.userData.vRange : null,
+    }),
     /// 車体後方からのチェイスカメラ。OrbitControls の手動操作とは排他。
     followCar(on = true) {
       chaseCam = !!on;
       if (chaseCam) updateChaseCamera();
       return chaseCam;
     },
+  };
+}
+
+/// driver_telemetry() の平坦配列（1 台ぶん 12 要素）を読みやすい形に展開する。
+/// has_driver = 0 なら null。
+function readDriver(world, i) {
+  const t = world.driver_telemetry();
+  const b = i * DRIVER_TELEMETRY_STRIDE;
+  if (t.length < b + DRIVER_TELEMETRY_STRIDE || t[b] !== 1) return null;
+  const tele = world.telemetry();
+  const speed = tele.length >= 25 ? tele[i * 25 + 3] : 0;
+  return {
+    id: i,
+    tTarget: t[b + 1],
+    vTarget: t[b + 2],
+    lookahead: t[b + 3],
+    aimS: t[b + 4],
+    mode: DRIVER_MODES[t[b + 5]] ?? `#${t[b + 5]}`,
+    confidence: t[b + 6],
+    s: t[b + 7],
+    t: t[b + 8],
+    headingError: t[b + 9],
+    sideslip: t[b + 10],
+    gripUsageMax: t[b + 11],
+    speed,
   };
 }
 

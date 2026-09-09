@@ -18,6 +18,8 @@ export const LAYERS = [
   { id: 'banking', key: 't', label: 'バンク区間' },
   { id: 'markers', key: 'y', label: '距離目盛り' },
   { id: 'grid', key: 'g', label: 'グリッド (y=0)' },
+  { id: 'racingline', key: 'u', label: 'レーシングライン (v_target 着色)' },
+  { id: 'aim', key: 'i', label: 'AI 目標 (aim / t_target)' },
 ];
 
 export class Overlay {
@@ -31,6 +33,7 @@ export class Overlay {
         <div class="section" id="layers"></div>
       </div>
       <div id="telemetry">車両テレメトリ待機中</div>
+      <div id="driver">Driver AI 待機中</div>
       <div id="readout">カーソルを路面に合わせると数値を表示</div>
     `;
     this.info = this.root.querySelector('#track-info');
@@ -38,7 +41,34 @@ export class Overlay {
     this.modes = this.root.querySelector('#modes');
     this.layers = this.root.querySelector('#layers');
     this.telemetry = this.root.querySelector('#telemetry');
+    this.driver = this.root.querySelector('#driver');
     this.readout = this.root.querySelector('#readout');
+  }
+
+  /// Driver AI の内部状態。計測器なので数値だけ（ADR-0003）。
+  /// `d` は main.js の readDriver が返す形。null なら AI 不在。
+  setDriver(d) {
+    if (!d) {
+      this.driver.textContent = 'Driver AI 待機中';
+      return;
+    }
+    const deg = (r) => ((r * 180) / Math.PI).toFixed(2);
+    this.driver.innerHTML = `
+      <div class="label">Driver AI（VehicleId ${d.id}）</div>
+      <table>
+        <tr><th>mode</th><td>${d.mode}</td>
+            <th>confidence</th><td>${d.confidence.toFixed(3)}</td></tr>
+        <tr><th>v_target</th><td>${d.vTarget.toFixed(1)} m/s</td>
+            <th>speed</th><td>${d.speed.toFixed(1)} m/s</td></tr>
+        <tr><th>Δv (tar−spd)</th><td>${(d.vTarget - d.speed).toFixed(1)} m/s</td>
+            <th>lookahead</th><td>${d.lookahead.toFixed(1)} m</td></tr>
+        <tr><th>t_target</th><td>${d.tTarget.toFixed(2)} m</td>
+            <th>t</th><td>${d.t.toFixed(2)} m</td></tr>
+        <tr><th>heading err</th><td>${deg(d.headingError)}°</td>
+            <th>sideslip</th><td>${deg(d.sideslip)}°</td></tr>
+        <tr><th>grip usage max</th><td>${(d.gripUsageMax * 100).toFixed(0)}%</td>
+            <th></th><td></td></tr>
+      </table>`;
   }
 
   /// 車両テレメトリ。main.js の readTelemetry が返す形をそのまま受ける。

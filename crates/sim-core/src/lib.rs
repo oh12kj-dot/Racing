@@ -23,11 +23,16 @@
 #![warn(missing_docs)]
 
 mod ground;
+mod racing_line;
+pub mod rng;
 mod world;
 
 pub use ground::TrackGround;
+pub use racing_line::RacingLine;
 pub use world::{VehicleEntry, VehicleId, World, WorldError, LAP_MAX_DS};
 
 // 下流が同じ型で会話できるよう、依存 crate の主要型を再エクスポートする。
+pub use sim_driver::{Driver, DriverMode, DriverModel, DriverModelError, SIM_DT};
+pub use sim_line::{Corridor, SpeedProfile, Trajectory};
 pub use sim_track::{LapCrossing, Track, TrackCoord, TrackFrame};
 pub use sim_vehicle::{ControlInput, GroundHit, GroundProbe, Vehicle, VehicleParams, PHYSICS_DT};

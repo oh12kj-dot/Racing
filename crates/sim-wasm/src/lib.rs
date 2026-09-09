@@ -41,8 +41,10 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
-use sim_core::{World, WorldError};
-use sim_math::Vec3;
+use sim_core::rng::driver_rng;
+use sim_core::{RacingLine, VehicleId, World, WorldError};
+use sim_driver::DriverModel;
+use sim_math::{Rng, Vec3};
 use sim_track::{Track, TrackCoord, TrackIoError};
 use sim_vehicle::{ControlInput, VehicleParams, VehicleParamsError, WheelIndex};
 
@@ -52,6 +54,24 @@ use sim_vehicle::{ControlInput, VehicleParams, VehicleParamsError, WheelIndex};
 /// 数 GB の配列を確保してタブを落とすのではなく、空配列で失敗させる。
 /// 4 km のトラックに対して 200 000 ステーションは 2 cm 間隔に相当する。
 const MAX_STATIONS: usize = 200_000;
+
+/// ステーション列生成の唯一の実装。[`TrackView::stations`] と
+/// [`WorldView::sample_racing_line`] / [`WorldView::sample_target_speed`] が共有する
+/// （TASK-2-3 契約 Part D「ステーション列の生成は 1 箇所に集約」）。
+///
+/// `n = ceil(L / step_m)` として `s_i = i * L / n`（`i = 0..=n`）。ステーション数は
+/// `n + 1`。`step_m` が非有限・非正、または `n` が [`MAX_STATIONS`] 以上なら空。
+fn stations_for(length: f64, step_m: f64) -> Vec<f64> {
+    if !step_m.is_finite() || step_m <= 0.0 {
+        return Vec::new();
+    }
+    let segments = (length / step_m).ceil();
+    if !segments.is_finite() || segments < 1.0 || segments >= MAX_STATIONS as f64 {
+        return Vec::new();
+    }
+    let n = segments as usize;
+    (0..=n).map(|i| (i as f64) * length / (n as f64)).collect()
+}
 
 /// トラック幾何のサンプリング。`wasm_bindgen` に依存しない純 Rust 層。
 pub struct TrackView {
@@ -79,16 +99,7 @@ impl TrackView {
     /// `step_m` が非有限・非正、またはステーション数が [`MAX_STATIONS`] を
     /// 超える場合は空を返す。
     pub fn stations(&self, step_m: f64) -> Vec<f64> {
-        if !step_m.is_finite() || step_m <= 0.0 {
-            return Vec::new();
-        }
-        let length = self.track.length();
-        let segments = (length / step_m).ceil();
-        if !segments.is_finite() || segments < 1.0 || segments >= MAX_STATIONS as f64 {
-            return Vec::new();
-        }
-        let n = segments as usize;
-        (0..=n).map(|i| (i as f64) * length / (n as f64)).collect()
+        stations_for(self.track.length(), step_m)
     }
 
     /// 幅に対する比 `ratio` の横位置に沿った線。平坦な `[x, y, z, ...]` を返す。
@@ -158,6 +169,25 @@ pub const MAX_STEPS_PER_CALL: u32 = 32;
 /// 並びは `[steer, throttle, brake, clutch, gear, drs]`。
 pub const INPUT_STRIDE: usize = 6;
 
+/// 1 回の [`WorldView::step_sim`] で進めてよい Simulation Tick 数の上限。
+///
+/// `MAX_STEPS_PER_CALL / PHYSICS_TICKS_PER_SIM_TICK = 32 / 4`。物理の総 tick 予算を
+/// [`WorldView::step`] と揃える。
+pub const MAX_SIM_STEPS_PER_CALL: u32 = 8;
+
+/// [`WorldView::driver_telemetry`] の 1 台あたり要素数。
+///
+/// 並び（順序固定）: `has_driver(0/1), t_target, v_target, lookahead_m, aim_s, mode,
+/// confidence, p_s, p_t, p_heading_error, p_sideslip, p_grip_usage_max`。
+pub const DRIVER_TELEMETRY_STRIDE: usize = 12;
+
+/// [`WorldView::spawn_driver`] が受け取る能力値配列の要素数（[`DriverModel`] のフィールド数）。
+///
+/// 並び（[`DriverModel`] の宣言順そのまま）: `pace, braking_skill, cornering_skill,
+/// racecraft, aggression, consistency, overtaking_skill, defending_skill, wet_skill,
+/// tyre_management, risk_tolerance, reaction_time, spatial_awareness, error_rate`。
+pub const DRIVER_MODEL_FIELDS: usize = 14;
+
 /// [`WorldView`] の構築 / スポーンのエラー。
 #[derive(Debug)]
 pub enum WorldViewError {
@@ -206,6 +236,8 @@ pub struct WorldView {
     world: World,
     /// スポーンのたびに複製する車両パラメータ（[`World::spawn`] が値で受け取るため）。
     params: VehicleParams,
+    /// Driver の乱数系列を派生させるレース種（[`WorldView::set_race_seed`]・既定 0）。
+    race_seed: u64,
 }
 
 impl WorldView {
@@ -220,7 +252,40 @@ impl WorldView {
         Ok(WorldView {
             world: World::new(track),
             params,
+            race_seed: 0,
         })
+    }
+
+    /// レースの乱数種を設定する。**AI 車をスポーンする前に呼ぶこと**（既定 0）。
+    pub fn set_race_seed(&mut self, seed: u64) {
+        self.race_seed = seed;
+    }
+
+    /// 走行計画を生成して取り付ける。`step_m <= 0` / 非有限なら
+    /// [`RacingLine::DEFAULT_STEP_M`]。AI 車をスポーンする前に 1 回呼ぶ。
+    pub fn attach_racing_line(&mut self, step_m: f64) {
+        let line = RacingLine::generate(self.world.track(), &self.params, step_m);
+        self.world.attach_racing_line(line);
+    }
+
+    /// AI 付きでスポーンする。戻り値は添字（= `VehicleId.0`）。
+    ///
+    /// `abilities` は [`DriverModel`] の能力値を宣言順で並べた [`DRIVER_MODEL_FIELDS`]
+    /// 要素。長さが違う場合は [`DriverModel::balanced`] を使う。
+    /// [`WorldView::attach_racing_line`] 未実施なら `Err`。
+    pub fn spawn_driver(
+        &mut self,
+        start_s: f64,
+        start_t: f64,
+        abilities: &[f64],
+    ) -> Result<usize, WorldViewError> {
+        let model = driver_model_from_slice(abilities);
+        let next = VehicleId(self.world.vehicles().len());
+        let rng = driver_rng(&Rng::from_seed(self.race_seed), next);
+        let id = self
+            .world
+            .spawn_with_driver(self.params.clone(), start_s, start_t, model, rng)?;
+        Ok(id.0)
     }
 
     /// トラック局所座標 `(s, t)` に 1 台配置する。戻り値は添字（= `VehicleId.0`）。
@@ -244,9 +309,89 @@ impl WorldView {
         }
     }
 
-    /// 進んだ tick 数。
+    /// `sim_steps` Simulation Tick 進める（1 tick = [`sim_core`] の
+    /// `PHYSICS_TICKS_PER_SIM_TICK` 物理 tick）。
+    ///
+    /// `sim_steps` は [`MAX_SIM_STEPS_PER_CALL`] でクランプする。`manual` は
+    /// [`WorldView::step`] と同じ [`INPUT_STRIDE`] の平坦配列で、**AI 付きの車では無視される**。
+    pub fn step_sim(&mut self, sim_steps: u32, manual: &[f64]) {
+        let controls = parse_inputs(manual);
+        let sim_steps = sim_steps.min(MAX_SIM_STEPS_PER_CALL);
+        for _ in 0..sim_steps {
+            self.world.step_sim_tick_with(&controls);
+        }
+    }
+
+    /// 進んだ**物理** tick 数。
     pub fn tick(&self) -> u64 {
         self.world.tick()
+    }
+
+    /// 進んだ **Simulation** tick 数（60 Hz）。
+    pub fn sim_tick(&self) -> u64 {
+        self.world.sim_tick()
+    }
+
+    /// レーシングラインのワールド座標。`[x, y, z, ...]`。
+    ///
+    /// ステーションは [`TrackView::stations`] と**同じ規約**。走行計画が未取り付け、
+    /// または `step_m` が不正なら空配列。
+    pub fn sample_racing_line(&self, step_m: f64) -> Vec<f64> {
+        let Some(line) = self.world.racing_line() else {
+            return Vec::new();
+        };
+        let track = self.world.track();
+        let stations = stations_for(track.length(), step_m);
+        let mut out = Vec::with_capacity(stations.len() * 3);
+        for s in stations {
+            push_vec3(&mut out, line.trajectory().world_at(s, track));
+        }
+        out
+    }
+
+    /// 同じステーション列に対する `SpeedProfile::v_at` [m/s]。
+    ///
+    /// 走行計画が未取り付け、または `step_m` が不正なら空配列。
+    pub fn sample_target_speed(&self, step_m: f64) -> Vec<f64> {
+        let Some(line) = self.world.racing_line() else {
+            return Vec::new();
+        };
+        stations_for(self.world.track().length(), step_m)
+            .into_iter()
+            .map(|s| line.speed_profile().v_at(s))
+            .collect()
+    }
+
+    /// Driver テレメトリ。1 台あたり [`DRIVER_TELEMETRY_STRIDE`] 要素（順序固定）:
+    ///
+    /// `has_driver(0/1), t_target, v_target, lookahead_m, aim_s, mode, confidence,
+    /// p_s, p_t, p_heading_error, p_sideslip, p_grip_usage_max`。
+    /// AI を持たない車は `has_driver = 0` と残り 0。`mode` は `DriverMode as u8`。
+    pub fn driver_telemetry(&self) -> Vec<f64> {
+        let n = self.world.vehicles().len();
+        let mut out = Vec::with_capacity(n * DRIVER_TELEMETRY_STRIDE);
+        for i in 0..n {
+            match self.world.driver(VehicleId(i)) {
+                Some(d) => {
+                    let p = d.plan();
+                    let per = d.perceived();
+                    out.push(1.0);
+                    out.push(p.t_target);
+                    out.push(p.v_target);
+                    out.push(p.lookahead_m);
+                    out.push(p.aim_s);
+                    out.push(d.intent().mode as u8 as f64);
+                    out.push(d.driver_state().confidence);
+                    out.push(per.s);
+                    out.push(per.t);
+                    out.push(per.heading_error);
+                    out.push(per.sideslip);
+                    out.push(per.grip_usage_max);
+                }
+                None => out.resize(out.len() + DRIVER_TELEMETRY_STRIDE, 0.0),
+            }
+        }
+        out
     }
 
     /// 配置済みの車両数。
@@ -343,6 +488,33 @@ fn parse_inputs(inputs: &[f64]) -> Vec<ControlInput> {
             drs: c[5] != 0.0,
         })
         .collect()
+}
+
+/// 能力値の平坦配列から [`DriverModel`] を組む。
+///
+/// 長さが [`DRIVER_MODEL_FIELDS`] でなければ [`DriverModel::balanced`]。
+/// 範囲外の値は `World::spawn_with_driver` 内の `DriverModel::validate` が弾く
+/// （ここではクランプで黙って通さない）。
+fn driver_model_from_slice(a: &[f64]) -> DriverModel {
+    if a.len() != DRIVER_MODEL_FIELDS {
+        return DriverModel::balanced();
+    }
+    DriverModel {
+        pace: a[0],
+        braking_skill: a[1],
+        cornering_skill: a[2],
+        racecraft: a[3],
+        aggression: a[4],
+        consistency: a[5],
+        overtaking_skill: a[6],
+        defending_skill: a[7],
+        wet_skill: a[8],
+        tyre_management: a[9],
+        risk_tolerance: a[10],
+        reaction_time: a[11],
+        spatial_awareness: a[12],
+        error_rate: a[13],
+    }
 }
 
 /// `Quat` を平坦な `[x, y, z, w]` として追加する。
@@ -476,6 +648,55 @@ mod bindings {
         /// `[steer, throttle, brake, clutch, gear, drs]` を平坦に並べた `Float64Array`。
         pub fn step(&mut self, steps: u32, inputs: &[f64]) {
             self.view.step(steps, inputs);
+        }
+
+        /// レースの乱数種を設定する（AI 車をスポーンする前に呼ぶ。既定 0）。
+        pub fn set_race_seed(&mut self, seed: u64) {
+            self.view.set_race_seed(seed);
+        }
+
+        /// 走行計画を生成して取り付ける（AI 車をスポーンする前に 1 回）。
+        pub fn attach_racing_line(&mut self, step_m: f64) {
+            self.view.attach_racing_line(step_m);
+        }
+
+        /// AI 付きでスポーンする。`abilities` は 14 要素の `Float64Array`
+        /// （`DriverModel` の宣言順）。長さ違いは balanced ドライバー。
+        pub fn spawn_driver(
+            &mut self,
+            start_s: f64,
+            start_t: f64,
+            abilities: &[f64],
+        ) -> Result<usize, JsError> {
+            self.view
+                .spawn_driver(start_s, start_t, abilities)
+                .map_err(|e| JsError::new(&e.to_string()))
+        }
+
+        /// `sim_steps` Simulation Tick 進める（1 tick = 4 物理 tick）。
+        /// `manual` は 1 台あたり 6 要素の平坦配列で、AI 付きの車では無視される。
+        pub fn step_sim(&mut self, sim_steps: u32, manual: &[f64]) {
+            self.view.step_sim(sim_steps, manual);
+        }
+
+        /// 進んだ Simulation tick 数（`f64` で返す。デバッグ用途では 2^53 まで十分）。
+        pub fn sim_tick(&self) -> f64 {
+            self.view.sim_tick() as f64
+        }
+
+        /// レーシングラインのワールド座標 `[x,y,z,...]`。未取り付け / 不正 `step_m` で空。
+        pub fn sample_racing_line(&self, step_m: f64) -> Vec<f64> {
+            self.view.sample_racing_line(step_m)
+        }
+
+        /// レーシングライン各ステーションの目標速度 [m/s]。未取り付け / 不正 `step_m` で空。
+        pub fn sample_target_speed(&self, step_m: f64) -> Vec<f64> {
+            self.view.sample_target_speed(step_m)
+        }
+
+        /// Driver テレメトリ。1 台あたり 12 要素（並びは [`WorldView::driver_telemetry`]）。
+        pub fn driver_telemetry(&self) -> Vec<f64> {
+            self.view.driver_telemetry()
         }
 
         /// 進んだ tick 数。JS 側の扱いを単純にするため `f64` で返す
@@ -859,5 +1080,111 @@ mod tests {
         let standings = wv.standings();
         assert_eq!(standings.len(), 2);
         assert_eq!(standings[0], 0);
+    }
+
+    // ------------------------------------------------------------------------------------
+    // T-WASM-AI-01（TASK-2-3）— Driver / RacingLine 境界の型変換
+    // ------------------------------------------------------------------------------------
+
+    /// バランス型ドライバーの能力値 14 個（`DriverModel` 宣言順）。
+    fn balanced_abilities() -> [f64; DRIVER_MODEL_FIELDS] {
+        [
+            0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.25, 0.5, 0.5,
+        ]
+    }
+
+    #[test]
+    fn t_wasm_ai_01_boundary_shapes() {
+        let mut wv = world_view();
+
+        // RacingLine 未取り付けなら sample_* は空。
+        assert!(wv.sample_racing_line(2.0).is_empty());
+        assert!(wv.sample_target_speed(2.0).is_empty());
+        // 未取り付けで spawn_driver は Err。
+        assert!(wv
+            .spawn_driver(SPAWN_S, 0.0, &balanced_abilities())
+            .is_err());
+
+        wv.set_race_seed(42);
+        wv.attach_racing_line(2.0);
+        let i0 = wv
+            .spawn_driver(SPAWN_S, 0.0, &balanced_abilities())
+            .unwrap();
+        let i1 = wv
+            .spawn_driver(SPAWN_S - 15.0, 0.0, &balanced_abilities())
+            .unwrap();
+        assert_eq!((i0, i1), (0, 1));
+        // 長さ違いの能力値配列は balanced にフォールバック（Err にしない）。
+        let i2 = wv.spawn_driver(SPAWN_S - 30.0, 0.0, &[0.9, 0.9]).unwrap();
+        assert_eq!(i2, 2);
+
+        // driver_telemetry の長さ。
+        let dt = wv.driver_telemetry();
+        assert_eq!(dt.len(), wv.vehicle_count() * DRIVER_TELEMETRY_STRIDE);
+        for k in 0..3 {
+            assert_eq!(dt[k * DRIVER_TELEMETRY_STRIDE], 1.0, "has_driver flag");
+        }
+
+        // sample_racing_line: ステーション数が TrackView::stations と一致し、
+        // 各点が trajectory.world_at(s_i) と一致する。
+        let step = 3.0;
+        let stations = stations_for(wv.track_length(), step);
+        let line = wv.sample_racing_line(step);
+        let vtar = wv.sample_target_speed(step);
+        assert_eq!(line.len(), stations.len() * 3);
+        assert_eq!(vtar.len(), stations.len());
+        let rl = wv.world().racing_line().expect("racing line attached");
+        let track = wv.world().track();
+        for (i, &s) in stations.iter().enumerate() {
+            let w = rl.trajectory().world_at(s, track);
+            assert!((line[i * 3] - w.x).abs() < 1e-9, "x @ station {i}");
+            assert!((line[i * 3 + 1] - w.y).abs() < 1e-9, "y @ station {i}");
+            assert!((line[i * 3 + 2] - w.z).abs() < 1e-9, "z @ station {i}");
+            assert!(
+                (vtar[i] - rl.speed_profile().v_at(s)).abs() < 1e-9,
+                "v @ station {i}"
+            );
+        }
+
+        // 異常な step_m は空（TrackView::sample_* と同じ挙動）。
+        for bad in [0.0, -1.0, f64::NAN, f64::INFINITY, 1.0e-9] {
+            assert!(wv.sample_racing_line(bad).is_empty(), "racing_line({bad})");
+            assert!(
+                wv.sample_target_speed(bad).is_empty(),
+                "target_speed({bad})"
+            );
+        }
+
+        // step_sim は MAX_SIM_STEPS_PER_CALL でクランプ。1 sim tick = 4 物理 tick。
+        let before = wv.tick();
+        wv.step_sim(1000, &[]);
+        assert_eq!(wv.tick() - before, MAX_SIM_STEPS_PER_CALL as u64 * 4);
+        assert_eq!(wv.sim_tick(), MAX_SIM_STEPS_PER_CALL as u64);
+    }
+
+    #[test]
+    fn t_wasm_ai_seed_determinism() {
+        // 同一 seed・同一スポーン・同一入力で bit 一致（境界越しの決定性）。
+        let run = || {
+            let mut wv = world_view();
+            wv.set_race_seed(7);
+            wv.attach_racing_line(2.0);
+            wv.spawn_driver(SPAWN_S, 0.0, &balanced_abilities())
+                .unwrap();
+            wv.spawn_driver(SPAWN_S - 15.0, 0.0, &balanced_abilities())
+                .unwrap();
+            let start = wv.body_poses();
+            for _ in 0..300 {
+                wv.step_sim(1, &[]);
+            }
+            (start, wv.body_poses(), wv.driver_telemetry())
+        };
+        let (s0, pa, ta) = run();
+        let (_, pb, tb) = run();
+        assert_eq!(pa, pb, "body_poses must be bit-identical");
+        assert_eq!(ta, tb, "driver_telemetry must be bit-identical");
+        // AI が実際に車を動かしていること（テストが自明でない証拠）。x-z 平面の変位。
+        let moved = ((pa[0] - s0[0]).powi(2) + (pa[2] - s0[2]).powi(2)).sqrt();
+        assert!(moved > 10.0, "car should have moved (got {moved:.2} m)");
     }
 }

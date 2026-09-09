@@ -1,7 +1,19 @@
 //! 固定タイムステップのシミュレーション本体。
+//!
+//! - [`World::step`] は **1 物理 tick**（`PHYSICS_DT`）を進める。`WasmWorld::step` と
+//!   `core.rs` の T-CORE-01〜09 がこの意味に依存するため、挙動は変えない。
+//! - [`World::step_sim_tick`] は **1 Simulation Tick**（`SIM_DT` = 60 Hz）を進める。
+//!   Driver フェーズ（AI ごとに `Driver::update` を **1 回**）→ 物理フェーズ
+//!   （同じ [`ControlInput`] を [`PHYSICS_TICKS_PER_SIM_TICK`] 物理 tick 保持 =
+//!   zero-order hold）。`Driver::update` を物理 tick ごとに呼ぶと実時間あたりの
+//!   操舵レートが 4 倍になり T-AI-02 の構造的保証が壊れる（TASK-2-3 契約 Part B）。
 
 use crate::ground::TrackGround;
-use sim_math::Vec3;
+use crate::racing_line::RacingLine;
+use sim_driver::{
+    Driver, DriverModel, DriverModelError, DriverObservation, PHYSICS_TICKS_PER_SIM_TICK,
+};
+use sim_math::{Rng, Vec3};
 use sim_track::{detect_lap_crossing, LapCrossing, Track, TrackCoord};
 use sim_vehicle::{ControlInput, Vehicle, VehicleParams, VehicleParamsError, PHYSICS_DT};
 
@@ -24,7 +36,10 @@ pub const LAP_MAX_DS: f64 = sim_vehicle::vehicle::MAX_SPEED * PHYSICS_DT * 3.0;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct VehicleId(pub usize);
 
-/// [`World`] が保持する 1 台ぶんの状態。
+/// [`World`] が保持する 1 台ぶんの**物理**状態。
+///
+/// Driver AI はここに入れない（`VehicleEntry` は物理の記録であって AI ではない。
+/// また `&self.vehicles` を読みつつ `&mut driver` を取るために借用を分ける必要がある）。
 pub struct VehicleEntry {
     /// 車両本体。状態を変えるのは [`Vehicle::step`] だけ。
     pub vehicle: Vehicle,
@@ -71,7 +86,7 @@ impl VehicleEntry {
     }
 }
 
-/// [`World::spawn`] のエラー。
+/// [`World::spawn`] / [`World::spawn_with_driver`] のエラー。
 #[derive(Debug)]
 pub enum WorldError {
     /// 車両パラメータの検証に失敗した。
@@ -83,6 +98,10 @@ pub enum WorldError {
         /// 実際の値。
         value: f64,
     },
+    /// [`World::attach_racing_line`] を呼ぶ前に [`World::spawn_with_driver`] を呼んだ。
+    NoRacingLine,
+    /// [`DriverModel`] の検証に失敗した。
+    Driver(DriverModelError),
 }
 
 impl core::fmt::Display for WorldError {
@@ -92,6 +111,13 @@ impl core::fmt::Display for WorldError {
             WorldError::InvalidSpawn { field, value } => {
                 write!(f, "spawn coordinate {field} must be finite (got {value})")
             }
+            WorldError::NoRacingLine => {
+                write!(
+                    f,
+                    "attach_racing_line must be called before spawn_with_driver"
+                )
+            }
+            WorldError::Driver(e) => write!(f, "driver model invalid: {e:?}"),
         }
     }
 }
@@ -100,7 +126,9 @@ impl std::error::Error for WorldError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             WorldError::Params(e) => Some(e),
-            WorldError::InvalidSpawn { .. } => None,
+            WorldError::InvalidSpawn { .. } | WorldError::NoRacingLine | WorldError::Driver(_) => {
+                None
+            }
         }
     }
 }
@@ -111,14 +139,29 @@ impl From<VehicleParamsError> for WorldError {
     }
 }
 
+impl From<DriverModelError> for WorldError {
+    fn from(e: DriverModelError) -> Self {
+        WorldError::Driver(e)
+    }
+}
+
 /// 固定タイムステップのシミュレーション世界。
 ///
 /// トラックを所有し、複数の車両を [`sim_vehicle::PHYSICS_DT`] で進める。
-/// レンダリング / カメラ / UI は知らない。乱数を持たない。
+/// レンダリング / カメラ / UI は知らない。**乱数状態を保持しない**
+/// （Driver の乱数系列は呼び出し側が作って [`World::spawn_with_driver`] へ渡す）。
 pub struct World {
     track: Track,
     vehicles: Vec<VehicleEntry>,
+    /// `vehicles` と**並行**な Driver 列。AI を持たない車は `None`。
+    /// 長さは常に `vehicles.len()` と一致する。
+    drivers: Vec<Option<Driver>>,
+    /// 起動時に 1 回だけ生成して取り付ける走行計画。
+    racing_line: Option<RacingLine>,
+    /// Driver フェーズが書き、物理フェーズが読む入力バッファ。毎 tick 再確保しない。
+    input_buf: Vec<ControlInput>,
     tick: u64,
+    sim_tick: u64,
 }
 
 impl World {
@@ -127,7 +170,11 @@ impl World {
         World {
             track,
             vehicles: Vec::new(),
+            drivers: Vec::new(),
+            racing_line: None,
+            input_buf: Vec::new(),
             tick: 0,
+            sim_tick: 0,
         }
     }
 
@@ -137,10 +184,16 @@ impl World {
         &self.track
     }
 
-    /// 進んだ tick 数。
+    /// 進んだ**物理** tick 数。
     #[inline]
     pub fn tick(&self) -> u64 {
         self.tick
+    }
+
+    /// 進んだ **Simulation** tick 数（60 Hz）。
+    #[inline]
+    pub fn sim_tick(&self) -> u64 {
+        self.sim_tick
     }
 
     /// 全車両の状態。添字が [`VehicleId`] に一致する。
@@ -149,7 +202,26 @@ impl World {
         &self.vehicles
     }
 
-    /// トラック局所座標で車両を配置する。静的つり合いの車高に置く。
+    /// 走行計画を取り付ける。AI 車をスポーンする前に 1 回呼ぶ。
+    ///
+    /// 2 回目以降の呼び出しは前の計画を置き換える（スポーン済みの車がいなければ安全）。
+    pub fn attach_racing_line(&mut self, line: RacingLine) {
+        self.racing_line = Some(line);
+    }
+
+    /// 取り付け済みの走行計画（読み出し）。
+    #[inline]
+    pub fn racing_line(&self) -> Option<&RacingLine> {
+        self.racing_line.as_ref()
+    }
+
+    /// AI を持つ車の直近の [`Driver`]（読み出しのみ）。
+    #[inline]
+    pub fn driver(&self, id: VehicleId) -> Option<&Driver> {
+        self.drivers.get(id.0).and_then(|d| d.as_ref())
+    }
+
+    /// トラック局所座標で車両を配置する（AI なし・静的つり合いの車高）。
     ///
     /// `start_s` は [`Track::wrap_s`] で正規化される。ヨーはセンターラインの
     /// 接線（`+s` 方向）から導く。車両は静止状態で構築される。
@@ -159,6 +231,39 @@ impl World {
         start_s: f64,
         start_t: f64,
     ) -> Result<VehicleId, WorldError> {
+        let (vehicle, coord) = self.build_vehicle(params, start_s, start_t)?;
+        Ok(self.push_entry(vehicle, coord, None))
+    }
+
+    /// AI 付きで車両を配置する。
+    ///
+    /// `rng` は「この個体の」Driver 系列（`crate::rng::driver_rng` で用意する）。
+    /// [`World::attach_racing_line`] 未実施なら [`WorldError::NoRacingLine`]。
+    /// `model` の検証に失敗したら [`WorldError::Driver`]。
+    pub fn spawn_with_driver(
+        &mut self,
+        params: VehicleParams,
+        start_s: f64,
+        start_t: f64,
+        model: DriverModel,
+        rng: Rng,
+    ) -> Result<VehicleId, WorldError> {
+        if self.racing_line.is_none() {
+            return Err(WorldError::NoRacingLine);
+        }
+        // Driver::new は PerformanceEnvelope / Controller に params を要するので先に複製する。
+        let driver = Driver::new(model, &params, rng)?;
+        let (vehicle, coord) = self.build_vehicle(params, start_s, start_t)?;
+        Ok(self.push_entry(vehicle, coord, Some(driver)))
+    }
+
+    /// スポーン座標を検証し、静的つり合いの車高で [`Vehicle`] を構築する。
+    fn build_vehicle(
+        &self,
+        params: VehicleParams,
+        start_s: f64,
+        start_t: f64,
+    ) -> Result<(Vehicle, TrackCoord), WorldError> {
         if !start_s.is_finite() {
             return Err(WorldError::InvalidSpawn {
                 field: "start_s",
@@ -186,14 +291,25 @@ impl World {
         let yaw = (-frame.tangent.z).atan2(frame.tangent.x);
 
         let vehicle = Vehicle::new(params, position, yaw)?;
+        Ok((vehicle, TrackCoord::new(s, start_t)))
+    }
+
+    /// 構築済みの [`Vehicle`] と Driver を並行列へ追加する。
+    fn push_entry(
+        &mut self,
+        vehicle: Vehicle,
+        coord: TrackCoord,
+        driver: Option<Driver>,
+    ) -> VehicleId {
         let id = VehicleId(self.vehicles.len());
         self.vehicles.push(VehicleEntry {
             vehicle,
-            coord: TrackCoord::new(s, start_t),
+            coord,
             laps_completed: 0,
             last_crossing: LapCrossing::None,
         });
-        Ok(id)
+        self.drivers.push(driver);
+        id
     }
 
     /// 1 物理 tick 進める。`inputs[i]` が [`VehicleId`]`(i)` に対応する。
@@ -211,6 +327,7 @@ impl World {
             track,
             vehicles,
             tick,
+            ..
         } = self;
 
         let mut ground = TrackGround::new(track);
@@ -227,6 +344,72 @@ impl World {
         }
 
         *tick += 1;
+    }
+
+    /// **1 Simulation Tick（[`SIM_DT`](sim_driver::SIM_DT) 固定）進める。`dt` を引数に取らない。**
+    ///
+    /// [`World::step_sim_tick_with`]`(&[])` と厳密に等価。
+    pub fn step_sim_tick(&mut self) {
+        self.step_sim_tick_with(&[]);
+    }
+
+    /// AI を持たない車へ手動入力を与えつつ 1 Simulation Tick 進める。
+    ///
+    /// `manual[i]` は [`VehicleId`]`(i)` に対応し、**AI 付きの車では無視される**。
+    ///
+    /// 実行順序（決定性のため固定・変えない）:
+    /// 1. Driver フェーズ（60 Hz・[`VehicleId`] 昇順に 1 回ずつ）
+    /// 2. 物理フェーズ（240 Hz・[`PHYSICS_TICKS_PER_SIM_TICK`] 回・同じ入力を保持 = zero-order hold）
+    /// 3. `sim_tick += 1`
+    pub fn step_sim_tick_with(&mut self, manual: &[ControlInput]) {
+        // 入力バッファをいったん取り出す（Driver フェーズで &mut drivers と
+        // &vehicles / &track を同時に借りるため、self からフィールドを分けて借りる）。
+        let mut inputs = std::mem::take(&mut self.input_buf);
+        inputs.clear();
+        inputs.reserve(self.vehicles.len());
+
+        {
+            let World {
+                track,
+                vehicles,
+                drivers,
+                racing_line,
+                ..
+            } = &mut *self;
+            let track: &Track = track;
+
+            for (i, driver_slot) in drivers.iter_mut().enumerate() {
+                let input = match driver_slot {
+                    Some(driver) => {
+                        // AI 付きの車が存在するなら racing_line は必ず取り付け済み
+                        // （spawn_with_driver が保証する）。防御的に unwrap しない。
+                        let line = racing_line
+                            .as_ref()
+                            .expect("racing line present when a driver exists");
+                        let entry = &vehicles[i];
+                        let obs = DriverObservation {
+                            track,
+                            corridor: line.corridor(),
+                            trajectory: line.trajectory(),
+                            speed_profile: line.speed_profile(),
+                            state: entry.vehicle.state(),
+                            coord: entry.coord,
+                        };
+                        driver.update(&obs)
+                    }
+                    None => manual.get(i).copied().unwrap_or_default(),
+                };
+                inputs.push(input);
+            }
+        }
+
+        // 物理フェーズ: 同じ ControlInput を PHYSICS_TICKS_PER_SIM_TICK 物理 tick 保持する。
+        for _ in 0..PHYSICS_TICKS_PER_SIM_TICK {
+            self.step(&inputs);
+        }
+
+        self.sim_tick += 1;
+        self.input_buf = inputs;
     }
 
     /// 順位（先頭が首位）。**`(laps_completed, s)` の辞書順の降順のみ**で決まる。

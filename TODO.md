@@ -946,12 +946,2934 @@ Forward のみ +1。逆走相殺・後方スタート判定は Phase 3 のレー
 
 # NEXT SONNET TASK
 
-> **次は TASK-1B-3（Engineering View に車両を表示）。仕様は下記。**
-> TASK-1B-2 の仕様は末尾に実装済みの記録として残してある。
+> **次は TASK-2-4（基準走行ラインの収束欠陥修正 + 実物理での AI ラップ完走）。仕様は直下。**
+> **⚠ 着手前に人間の承認が必要**（`sim-line/src/trajectory.rs` と `sim-driver/tests/**` の凍結解除）。
+> TASK-2-3 は PDC-6 込みで land 済み・Architect 最終監査待ち（完了報告は「TASK-2-3 — 進捗メモ」）。
+> TASK-2-3 / 2-2 / 2-1 の実装契約はアーカイブとして後方にある。Phase 1B の記録は末尾。
 
 ---
 
-## TASK-1B-3 — Engineering View に車両を表示
+## TASK-2-4 — 基準走行ラインの収束欠陥修正 + 実物理での AI ラップ完走
+
+> **起票**: Architect（Opus 5）／ 2026-09-09 Round 2。`ARCHITECTURE.md` §4（Racing Line / Speed
+> Profile の生成）。`HANDOFF.md` §8 の「平滑性は専用のテストで測る」「偽スパイクは偽の減速に
+> なる」が `sim-line` 層で再発している。**⚠ 着手前に人間承認が必要**（下記「人間承認事項」A/B/C）。
+
+### 起票根拠（Architect の独立検証）
+
+`RacingLine::generate` の出力を直接サンプルした実測（s = 3000–3300）:
+
+| s | κ_center | κ_traj | t_traj [m] |
+|---|---|---|---|
+| 3120 | +0.000027 | **+0.00333** | −0.294 |
+| 3150 | −0.000021 | **−0.00435** | +0.430 |
+| 3180 | +0.000014 | **+0.00485** | −0.643 |
+| 3220 | −0.000010 | **−0.00575** | +1.117 |
+| 3230 | +0.000013 | **−0.00612** | +1.007 |
+
+センターラインは完全な直線（|κ_center| < 3e-5 = R > 30 km）なのに、**基準ラインが波長
+60〜80 m・振幅 ±0.1 → ±1.1 m で蛇行し、曲率が ±0.006（R≈165 m）まで振れて 30〜40 m ごとに
+符号反転**。コリドー ±8.5 m は一度も拘束していないので境界由来ではない。44 m/s で κ=0.005 は
+**要求横加速度 9.7 m/s² ≈ 1.0 g・0.63 Hz の切り返し**を Driver に要求し、車両ヨー固有振動数
+（~1 Hz）帯の直上で励振する。s≈3150 の lateral weave は**症状**であり、病気は基準ライン。
+
+機構（`trajectory.rs` の doc が自白）: 曲率二乗和最小化の biharmonic 型緩和を SOR ω=1.95 で解き、
+収束判定が **`CONVERGE_M = 2.0e-3` の「1 スイープ最大更新量」**（残差テストではない）。4 階作用素の
+長波長モードは最も遅く収束するため per-sweep delta は真の収束のはるか手前で閾値を割る。
+位置誤差 ε は曲率誤差 **ε·(2π/λ)²** になる（λ=70 m・ε=0.5 m → Δκ≈0.004、実測と一致）。
+直線区間で振動経路は単調経路より ∫κ²ds が厳密に大 → **目的関数の最小化子ではありえず、未収束残差**。
+
+### 人間承認事項（着手前・必須）
+
+- **A.** `crates/sim-line/src/trajectory.rs` の凍結解除（+ `crates/sim-line/tests/**` の該当更新）。
+  TASK-2-1 で監査済みコードの再オープン。下流（SpeedProfile / Driver / Engineering View）の全出力が変化。
+- **B.** `crates/sim-driver/tests/**` の凍結解除 + `tests/common/mod.rs` の運動学プラント**廃止**。
+  受け入れテストの検証基盤そのものの差し替え。
+- **C.**（A の結果次第）`PerformanceEnvelope` の荷重感度対応（`MU_LOAD_DERATE` / `LOAD_RATIO_REF` /
+  `MU_TRACTION` の 3 重定義の解消）。
+
+**A の承認が下りるまで着手禁止。** B/C は A 完了後に個別判断してよい。
+
+### Allowed Files
+
+- `crates/sim-line/src/trajectory.rs`（Phase 1）
+- `crates/sim-line/tests/**`（Phase 1・平滑性テスト追加）
+- `crates/sim-driver/src/{controller.rs, planner.rs}`（Phase 2・lateral ループ）
+- `crates/sim-driver/tests/**`（Phase 3・承認 B 後）
+- `crates/sim-core/tests/world_ai.rs`
+- （C 承認時のみ）`crates/sim-line/src/speed.rs`, `crates/sim-core/src/racing_line.rs`
+
+### Do Not Change
+
+`crates/sim-math/**`、`crates/sim-track/**`、`crates/sim-vehicle/**`、`assets/**`、`tools/**`、
+`docs/**`、`crates/sim-core/src/**`（`racing_line.rs` は C 承認時のみ）、`crates/sim-wasm/**`、
+`view-engineering/**`。**TASK-2-3 で land した PDC-1〜6 は既定値のまま着手すること**（勝手に revert しない）。
+
+### Dependencies
+
+TASK-2-3 が commit 済みであること（PDC-6 込み）。
+
+### Required Changes
+
+#### Phase 1（必須・最優先）— 基準ラインの収束
+
+`crates/sim-line/src/trajectory.rs`。**アルゴリズム（曲率二乗和最小化の緩和）自体は変えない。**
+変えるのは収束判定と反復制御:
+
+1. **収束判定を「per-sweep 更新量」から「残差ノルム」へ**。目的関数の勾配 `g_i` の最大絶対値
+   （または L2 ノルム）が閾値を下回るまで回す。
+2. **閾値は曲率で定義する。** 位置許容 2 mm ではなく **`|κ_traj − κ_converged| ≤ 1e-4 [1/m]`** 相当。
+   下流が読むのは κ（`Δκ ≈ ε·(2π/λ)²`）。
+3. `MAX_SWEEPS` は必要なら引き上げてよい（生成は起動時 1 回）。**収束せず打ち切った場合は必ず
+   `debug_assert!` か戻り値で検出可能に**（黙って未収束を返さない）。
+4. SOR の `ω = 1.95` を見直してよい。**マルチグリッド的に粗いステーション間隔で先に解いて初期値に
+   する**アプローチも許可（PROPOSED DESIGN CHANGE 不要。採用したら完了報告に理由と効果）。
+5. `SMOOTH_PASSES = 10` の 3-tap 平滑化が残差リップルを固定化していないか確認。
+
+#### Phase 2（Phase 1 の後）— lateral inner loop の実物理検証
+
+**Phase 1 完了後に必ず再計測してから着手。** Phase 2 の着手判断は「Phase 1 だけで**完走したか**」
+ではなく「**Phase 1 だけで T-CORE-AI-11（下記モデルスイープ）が通るか**」で行う。1 点（level 0.6 /
+consistency 1.0）の完走は安定余裕の証拠にならない（TASK-2-3 監査の実測: T3 は level 0.5 でも
+1% 操舵ノイズでも決定論的に破綻する）。走らない場合のみ順に（1 つずつ・都度全テスト）:
+
+1. `K_HEADING` / `K_YAW_DAMP` の**速度スケジュール**。
+   `K_HEADING(v) = K_HEADING_0 · clamp(V_REF / v.max(V_MIN), K_SCALE_MIN, 1.0)`（既存値が `V_REF` で再現されること）。
+2. `delta_cs`（逆操舵）の位相。`beta` と `beta_dot`（または `yaw_rate` 偏差）の線形結合で位相進み。
+   **`t_drv_02` の符号アサーションは維持。**
+3. Pure Pursuit の `lookahead_m`。**Phase 1 が効いていれば不要のはず。** 触る前に曲率スペクトルを再測定して報告。
+
+#### Phase 3（承認 B 後）— テスト基盤の移行
+
+`crates/sim-driver/tests/common/mod.rs` の運動学プラントを廃止し実物理閉ループへ。
+`sim-driver` は `sim-core` に依存できない（循環禁止）ため、T-AI-01〜08 相当の実物理版は
+**`crates/sim-core/tests/world_ai.rs` 側に置く**。`sim-driver/tests` には `sim-core` を要しない
+単体テスト（T-DRV-01/03/05/06 相当）だけを残す。**T-DRV-06（境界構造）は必ず維持。**
+
+### Required Tests
+
+1. **T-LINE-10（新規・平滑性）**: センターライン直線（|κ_c| < 1e-4）の全ステーションで
+   **|κ_traj| ≤ 5e-4 [1/m]**（R ≥ 2000 m）。コーナー端から 60 m 以内の遷移区間は除外・named const。
+2. **T-LINE-11（新規・収束の証明）**: `MAX_SWEEPS` の 2 倍で解いた解と本番の κ 最大差 ≤ 1e-4。
+3. **T-LINE-12（新規・ステーション間隔非依存）**: `step_m` = 1.0 / 2.0 / 4.0 の κ_traj 低周波成分が一致。
+4. **T-CORE-AI-03**（静止発進 3 周完走・ラップタイム 40〜200 s）。
+5. **T-CORE-AI-10 を全周・3 周へ拡張**（TASK-2-3 の `S_VALIDATED_M = 3100` / `CONTAIN_TOL_M = 0.0` を解除。
+   単一モデルで全周・逸脱 0 m）。
+6. **T-CORE-AI-11（新規・堅牢性スイープ・Architect 監査 2026-09-09 R3）**: T-CORE-AI-10 を単一モデルでなく
+   **モデルスイープ**で通す。`level ∈ {0.3, 0.5, 0.7, 0.9}` × `consistency ∈ {0.5, 1.0}` ×
+   `error_rate ∈ {0.0, 0.5}` × seed 3 本の**全組み合わせ**（`DriverModel::balanced()` を必ず含む）で、
+   全周・コリドー逸脱 0 m。**これが TASK-2-4 の実質的な合否判定**（T3 の安定余裕ゼロ = K-1 の解消）。
+7. **T-AI-01R / T-AI-05R / T-AI-07R** を実物理で（`world_ai.rs`）。
+8. Phase 3 実施時: 移行後テストが移行前の欠陥を検出できるか（PDC-6 を revert したら T3 で落ちるか）を 1 度確認。
+
+### Acceptance Criteria
+
+1. `cargo test --release` 0 failed。`cargo clippy --all-targets -- -D warnings` 0、`cargo fmt --check` clean、warnings 0。
+2. T-LINE-10/11/12 が通る。**修正前の `trajectory.rs` では T-LINE-10 が落ちること**を確認して報告。
+3. 実物理で 3 周完走・コリドー逸脱ゼロ（T-CORE-AI-03 / 10）。**かつ T-CORE-AI-11（堅牢性スイープ）が
+   全組み合わせで通る**（K-1「T3 の安定余裕ゼロ」の解消。1 点の完走では不可）。
+4. T-AI-05R: level 0.2/0.5/0.9 の中央ラップタイムが単調、差 ≥ 0.5 s/lap。
+5. T-AI-07R: `reaction_time` 0.0 と 0.30 で steer 系列が不一致、ラップタイム差 ≥ 0.1 s。
+6. `v_target ≤ v_cap` の構造的保証が全 tick で成立。
+7. `cargo build -p sim-core --no-default-features` / `--target wasm32-unknown-unknown` OK、`wasm-pack build crates/sim-wasm --target web` OK。
+8. **Phase 1 の変更が Engineering View のレーシングライン表示・v_target 着色を壊していないこと**（headless 検証を再実行）。
+
+### Performance Criteria
+
+`RacingLine::generate` は起動時 1 回なので**収束のためなら遅くなってよい**（上限 2 s）。
+`World::step_sim_tick` ≤ 3.5 ms / 24 台。`Driver::update` ≤ 25 µs/call。
+
+### Out of Scope
+
+複数台・レース状態機械・計時・追い越し（Phase 3）。`TrajectoryKind` の Reference 以外の生成。
+トラックアセット（`assets/tracks/**`）の変更。Engineering View の機能追加。
+
+### Known Risks
+
+1. **Phase 1 は下流の全数値を動かす。** 旧リップルを前提にした閾値が落ちうる。落ちたら**閾値を
+   緩めず** PROPOSED DESIGN CHANGE 形式で報告。
+2. リップル除去で `v_cap` が直線区間で上がり、**より高速で T3 / ヘアピンへ進入する**。PDC-6 の
+   制動計画が吸収できるか要確認。
+3. マルチグリッド初期値で決定性が実装順序に依存しうる。**固定タイムステップ / 決定性の原則
+   （`CLAUDE.md` 原則 5）を壊さない。** 同一入力→同一出力をビット一致で検証。
+4. Phase 3 の移行中に受け入れの網が一時的に薄くなる。**古いテストを消す前に新しいテストを通す**順で。
+
+### 完了時の報告フォーマット
+
+```
+Scope Confirmation:           (Allowed Files 以外を触っていないことの git diff --stat)
+人間承認:                     (A / B / C のどれが承認済みで着手したか)
+Phase 1 根因:                 (収束判定の何をどう変えたか。旧/新の残差と κ リップル振幅)
+Phase 1 効果:                 (直線区間の max |kappa_traj| 変更前 → 変更後。s=3120-3230 の t_traj)
+Phase 2 実施有無:             (Phase 1 だけで完走したか。したなら Phase 2 は未実施と明記)
+Phase 2 変更:                 (実施した場合、定数の変更前 → 変更後の表)
+Phase 3 実施有無:             (承認 B の有無。移行したテストの一覧)
+3 周完走:                     (各ラップタイム [s]。level 0.2/0.5/0.9)
+Test / clippy / fmt / build:  (自分で再実行した結果)
+Engineering View 再検証:      (headless スクショの結果)
+Deviations from Spec:         (★未申告の受け入れ数値緩和は禁止)
+Design Concerns Found:
+Phase 3 への申し送り:
+```
+
+**git commit はしないこと。** 作業ツリーに残し、Architect のレビューを受けること。
+
+### IMPORTANT IMPLEMENTATION CONTRACT
+
+あなたは **Implementation Engineer** です。**Architect ではありません。**
+`ARCHITECTURE.md` §2 / §4 / §6 / §11 と本仕様を **正確に** 実装してください。
+
+自己判断で変更してはいけないもの:
+Architecture / Module boundaries / Public interfaces / Data structures /
+Technology stack / Dependencies / Physics model / Racing AI model /
+Naming conventions / Directory structure / Task scope / Execution order。
+
+「こちらの方が良い」「一般的にはこの設計が良い」「リファクタリングした方が綺麗」という理由による変更は **禁止**。
+
+**NO UNAUTHORIZED DESIGN CHANGES** — 設計上の問題を見つけたら、**先にコードを変えない。** 下記形式で報告し承認を待つ。
+
+```
+PROPOSED DESIGN CHANGE
+Current Design / Observed Problem / Root Cause / Proposed Change / Reason /
+Expected Benefit / Risk / Affected Modules / Affected Files / Migration Impact / Alternative
+```
+
+**仕様に明記された受け入れ数値の緩和は設計変更である。** 事前に上記形式で提出すること。
+
+**BLOCKER RULE** — Scope 外の変更が必要になったら、勝手に変えず報告して判断を待つ。
+
+```
+BLOCKED BY ARCHITECTURE
+Task / Blocking Issue / Why Current Design Prevents Implementation /
+Required Change / Affected Scope / Recommended Next Step
+```
+
+**NO UNAUTHORIZED REFACTORING** — 凍結中（一切変更禁止）: `crates/sim-math/**`、`crates/sim-track/**`、
+`crates/sim-vehicle/**`、`crates/sim-core/src/**`（C 承認時の `racing_line.rs` を除く）、`crates/sim-wasm/**`、
+`view-engineering/**`、`assets/**`、`tools/**`、`docs/**`、
+`crates/sim-driver/src/{lib.rs, driver.rs, model.rs, perception.rs, decision.rs}`、
+`crates/sim-line/src/{corridor.rs, lib.rs}`、（C 未承認の間）`crates/sim-line/src/speed.rs`。
+
+---
+
+## TASK-2-3 — `sim-core` / `sim-wasm` 配線: Driver AI が実物理で走る（アーカイブ）
+
+> **起票**: Architect（Opus 5）／ 2026-09-09。
+> 依存元は `ARCHITECTURE.md` §2（依存グラフ `sim-driver <- sim-core`）／ §6（4 層パイプライン）／
+> §11（Time Architecture: Simulation 60 Hz / Physics 240 Hz）。
+> 本契約が新規に決めたのは **Simulation Tick の実行順序・`World` の公開 API・
+> `RacingLine` の所有と生成タイミング・乱数の派生規約・WASM 境界の追加型**であり、
+> パイプラインの構造そのものは §6 のとおりである。
+>
+> 前提: TASK-2-1（`sim-line`）と TASK-2-2（`sim-driver`）は実装完了・作業ツリー上に存在する
+> （未コミット可）。本タスクはその上に積む。
+
+### IMPORTANT IMPLEMENTATION CONTRACT
+
+あなたは **Implementation Engineer** です。**Architect ではありません。**
+`ARCHITECTURE.md` §2 / §6 / §11 と本仕様を **正確に** 実装してください。
+
+自己判断で変更してはいけないもの:
+Architecture / Module boundaries / Public interfaces / Data structures /
+Technology stack / Dependencies / Physics model / Racing AI model /
+Naming conventions / Directory structure / Task scope / Execution order。
+
+「こちらの方が良い」「一般的にはこの設計が良い」「リファクタリングした方が綺麗」
+という理由による変更は **禁止**。
+
+#### NO UNAUTHORIZED DESIGN CHANGES
+
+設計上の問題を見つけたら、**先にコードを変えない。** 下記形式で報告し承認を待つ。
+
+```
+PROPOSED DESIGN CHANGE
+Current Design / Observed Problem / Root Cause / Proposed Change / Reason /
+Expected Benefit / Risk / Affected Modules / Affected Files / Migration Impact / Alternative
+```
+
+**仕様に明記された受け入れ数値の緩和は設計変更である。** 事前に上記形式で提出すること。
+（TASK-2-1 では未申告の緩和 3 件が Quality Gate のブロッカーになった。繰り返さないこと。）
+
+#### BLOCKER RULE
+
+Scope 外の変更が必要になったら、勝手に変えず報告して判断を待つ。
+
+```
+BLOCKED BY ARCHITECTURE
+Task / Blocking Issue / Why Current Design Prevents Implementation /
+Required Change / Affected Scope / Recommended Next Step
+```
+
+#### NO UNAUTHORIZED REFACTORING
+
+**凍結中（一切変更禁止）**: `crates/sim-math/**`、`crates/sim-track/**`、
+`crates/sim-vehicle/**`、`crates/sim-line/**`、
+`crates/sim-driver/src/{lib.rs, driver.rs, model.rs, perception.rs, decision.rs}`、
+`crates/sim-driver/tests/**`、`crates/sim-driver/Cargo.toml`、
+`crates/sim-core/tests/core.rs` の**既存テスト本体**（追記は新規ファイルへ）、
+`view-engineering/src/track_mesh.js`、`assets/**`、`tools/**`、`docs/**`、
+ルート直下の `.md`（`HANDOFF.md` / `TODO.md` を除く。完了報告のときだけ更新する）。
+
+**本タスクは `sim-core` と `sim-wasm` の凍結を解除する。** 解除範囲は下記
+「Allowed Files」に列挙したファイルに限る。**列挙外は凍結のままである。**
+
+**`sim-driver` の凍結解除は「定数値の再調整」に限る**（下記 Part F）。
+公開 API・シグネチャ・型・制御則の構造・層の分割を変えてはならない。
+`crates/sim-driver/tests/**` は凍結する。**再調整の妥当性は既存 16 テストが
+無改変で通ることで担保する**（テストを緩めて通すことは設計変更であり禁止）。
+
+---
+
+### Goal
+
+**`sim-core::World` が車両ごとに `sim-driver::Driver` を回して `ControlInput` を作り、
+`Vehicle::step` で実物理を進める。** Engineering View にレーシングライン・`v_target`・
+`PerceivedSelf` を重ねて、**実車両・実路面で T-AI-01 / T-AI-05 / T-AI-07 を再検証する**
+（TASK-2-2 Deviation 3 の履行）。
+
+これが通った時点で「1 台の AI が Aoyama Ring を実物理で安定して周回し、
+能力値の差がラップタイムに創発する」がプロジェクトとして初めて成立する。
+
+満たすべき不可侵原則（`HANDOFF.md` §3）:
+
+- AI は Transform / Position / Velocity を書き換えない。`World` は `Driver` の出した
+  `ControlInput` を **素通しする**だけで、値を加工しない
+- Lap Time を乱数生成しない。**`sim-core` は乱数状態を持たない**（乱数は呼び出し側が
+  `Rng` を作って `Driver` に渡す。§Part C の派生規約）
+- 固定タイムステップのみ。`step_sim_tick` は `dt` 引数を取らない
+- 位置は連続量 `s`。Waypoint index を公開しない
+- 順位は `(laps_completed, s)` の辞書順のみ
+- `sim-core` は Rendering / UI / Camera を知らない（`sim-wasm` が型変換だけを担う）
+- `VehicleState` を `Vehicle::step()` 以外から書き換えない
+
+### 先に読むもの
+
+- `HANDOFF.md` §3（原則）／ §5（`sim-core` / `sim-wasm` / `sim-line` / `sim-vehicle` の実装済み API）／
+  §8「トラック路面と World」
+- `ARCHITECTURE.md` §2（依存グラフ）／ §6（4 層パイプライン）／ §11（Time Architecture）
+- `TESTING.md` §5 の T-AI-01〜08（**再検証の原典**）
+- 本 TODO の「**TASK-2-2 — 完了報告**」全文。特に *Design Concerns Found* と
+  *TASK-2-3 への申し送り*（本契約はこの申し送りを実装指示に落としたものである）
+- `crates/sim-driver/src/driver.rs`（`Driver::new` / `update` / `DriverObservation` / 読み出しアクセサ）
+- `crates/sim-core/src/world.rs`（`World` / `VehicleEntry` / `spawn` / `step` / `LAP_MAX_DS`）
+- `crates/sim-wasm/src/lib.rs`（`WorldView` / `bindings::WasmWorld` / ステーション規約）
+- `view-engineering/src/{main.js, overlay.js}`（レイヤ定義とキー割り当て）
+
+### Allowed Files
+
+```
+Cargo.lock                                 依存追加に伴う自動更新のみ
+crates/sim-core/Cargo.toml                 sim-driver / sim-line 依存の追加
+crates/sim-core/src/lib.rs                 新モジュール宣言と再エクスポート
+crates/sim-core/src/world.rs               Driver 配線・Simulation Tick・spawn_with_driver
+crates/sim-core/src/racing_line.rs         新規。RacingLine（Corridor+Trajectory+SpeedProfile の束）
+crates/sim-core/src/rng.rs                 新規。driver_rng（乱数の派生規約。状態を持たない）
+crates/sim-core/tests/world_ai.rs          新規。T-AI-01R/05R/07R + T-CORE-AI-01〜09
+crates/sim-wasm/Cargo.toml                 sim-driver / sim-line 依存の追加
+crates/sim-wasm/src/lib.rs                 WorldView / WasmWorld の追加メソッド
+view-engineering/src/main.js               レーシングライン / v_target / aim 点レイヤ
+view-engineering/src/overlay.js            レイヤ定義追加と Driver HUD セクション
+view-engineering/src/vehicle_mesh.js       aim 点マーカーが必要な場合のみ
+crates/sim-driver/src/controller.rs        ★定数値の再調整のみ（Part F）
+crates/sim-driver/src/planner.rs           ★定数値の再調整のみ（Part F）
+HANDOFF.md / TODO.md                       完了報告のときだけ
+```
+
+**上記以外は触らない。** 特に `crates/sim-core/tests/core.rs` の既存テストは
+1 行も変えない（`World::step` の互換性が壊れていないことの証拠になるため）。
+
+### Dependencies
+
+`crates/sim-core/Cargo.toml`:
+
+```toml
+sim-math    = { path = "../sim-math" }
+sim-track   = { path = "../sim-track" }
+sim-vehicle = { path = "../sim-vehicle" }
+sim-line    = { path = "../sim-line",   default-features = false }
+sim-driver  = { path = "../sim-driver", default-features = false }
+```
+
+`crates/sim-wasm/Cargo.toml` にも `sim-driver` / `sim-line`（`default-features = false`）を追加する。
+
+- 外部 crate は一切追加しない。**乱数 crate も使わない**（`sim_math::Rng`）
+- 依存方向は `sim-math <- sim-track <- sim-line <- sim-driver <- sim-core <- sim-wasm`。
+  **逆向きの依存を作らない**（`sim-driver` から `sim-core` を見ない）
+- `sim-core` の既存 feature 構成を壊さない。`cargo build -p sim-core --no-default-features` と
+  `--target wasm32-unknown-unknown` は引き続き通ること
+
+---
+
+### Required Changes
+
+#### Part A — `RacingLine`（`crates/sim-core/src/racing_line.rs`・新規）
+
+`Corridor` / `Trajectory` / `SpeedProfile` の 3 つを 1 つの値として束ね、
+**起動時に 1 回だけ生成する**（`HANDOFF.md` §5 sim-line の「`World` へは生成済みを渡す」）。
+
+```rust
+/// 走行計画一式。`Track` と `VehicleParams` から決定的に導出される（乱数なし）。
+pub struct RacingLine { /* corridor, trajectory, speed */ }
+
+impl RacingLine {
+    /// 既定のサンプル間隔 [m]。TASK-2-1 の生成品質を再現する値。
+    pub const DEFAULT_STEP_M: f64 = 2.0;
+    /// 白線に対して残す安全マージン [m]（白線の塗り幅 + 縁石への寄り過ぎ防止）。
+    pub const DEFAULT_SAFETY_M: f64 = 0.15;
+
+    /// `step_m` は正の有限値。非有限 / 非正なら `DEFAULT_STEP_M` を使う。
+    pub fn generate(track: &Track, params: &VehicleParams, step_m: f64) -> RacingLine;
+
+    pub fn corridor(&self) -> &Corridor;
+    pub fn trajectory(&self) -> &Trajectory;
+    pub fn speed_profile(&self) -> &SpeedProfile;
+}
+```
+
+- `car_half_width = 0.5 * params.dimensions.width`
+- 生成順序は `Corridor::from_track` → `Trajectory::reference` → `SpeedProfile::generate`
+  （`PerformanceEnvelope::from_params` は `SpeedProfile::generate` の直前で 1 回）
+- **`RacingLine` は不変**。`&mut self` を取る公開メソッドを作らない
+- Phase 2 は全車が同一スペック（`gt_proto_a`）なので `SpeedProfile` は 1 本を共有する。
+  **車種別プロファイルは Phase 3 以降の課題**であり、本タスクでは作らない
+  （doc コメントにそう明記すること）
+
+#### Part B — Simulation Tick（`world.rs`）
+
+**`World::step(&[ControlInput])` の挙動は 1 物理 tick のまま変更しない。**
+既存テスト（`core.rs` の T-CORE-01〜09）と `WasmWorld::step` がこれに依存している。
+その上に Simulation Tick を積む。
+
+```rust
+impl World {
+    /// 走行計画を取り付ける。AI 車をスポーンする前に 1 回呼ぶ。
+    pub fn attach_racing_line(&mut self, line: RacingLine);
+    pub fn racing_line(&self) -> Option<&RacingLine>;
+
+    /// AI 付きでスポーンする。`rng` は「この個体の」系列（Part C）。
+    /// `attach_racing_line` 未実施なら `WorldError::NoRacingLine`。
+    pub fn spawn_with_driver(
+        &mut self, params: VehicleParams, start_s: f64, start_t: f64,
+        model: DriverModel, rng: Rng,
+    ) -> Result<VehicleId, WorldError>;
+
+    /// 進んだ Simulation Tick 数（`tick()` は従来どおり物理 tick 数）。
+    pub fn sim_tick(&self) -> u64;
+
+    /// AI を持つ車の直近の Driver（読み出しのみ）。
+    pub fn driver(&self, id: VehicleId) -> Option<&Driver>;
+
+    /// **1 Simulation Tick（`SIM_DT` 固定）進める。`dt` を引数に取らない。**
+    pub fn step_sim_tick(&mut self);
+
+    /// AI を持たない車へ手動入力を与えつつ 1 Simulation Tick 進める。
+    /// `manual[i]` は `VehicleId(i)` に対応し、AI 付きの車では**無視される**。
+    pub fn step_sim_tick_with(&mut self, manual: &[ControlInput]);
+}
+```
+
+`step_sim_tick()` は `step_sim_tick_with(&[])` と厳密に等価にすること（実装を分けない）。
+
+**実行順序（決定性のため固定。変えてはならない）**:
+
+```
+1) Driver フェーズ（60 Hz・1 回だけ）
+   VehicleId 昇順に:
+     a. DriverObservation を組む
+          track          = &self.track
+          corridor/trajectory/speed_profile = 取り付け済み RacingLine から
+          state          = entry.vehicle.state()          （直前の物理 tick 終了時点）
+          coord          = entry.coord                    （★world_to_track の真値。
+                            前 tick 末に prev_s を hint に求めた値をそのまま使う。
+                            ここで world_to_track を再実行しない）
+     b. input = driver.update(&obs)                        （AI 無しなら manual[i]、
+                                                             無ければ ControlInput::default()）
+     c. inputs[i] = input                                  （World が持つ再利用バッファ。
+                                                             毎 tick の再確保をしない）
+2) 物理フェーズ（240 Hz・PHYSICS_TICKS_PER_SIM_TICK = 4 回）
+   for _ in 0..sim_driver::PHYSICS_TICKS_PER_SIM_TICK { self.step(&inputs); }
+   ★同じ ControlInput を 4 物理 tick 保持する（zero-order hold）
+3) sim_tick += 1
+```
+
+**なぜ zero-order hold か（省略・変更禁止）**: `Controller` のレート制限
+（`max_steer_rate * SIM_DT`）と一次遅れは **Simulation Tick 1 回あたり** で設計されている。
+物理 tick ごとに `Driver::update` を呼ぶと実時間あたりの操舵レートが 4 倍になり、
+T-AI-02 の構造的保証が壊れる。**`Driver::update` は 1 Simulation Tick につき厳密に 1 回。**
+
+`WorldError` に以下を追加する（既存 variant は変更しない）:
+
+```rust
+NoRacingLine,                        // attach_racing_line 未実施
+Driver(sim_driver::DriverModelError) // DriverModel の検証失敗
+```
+
+`Display` / `Error::source` / `From` も既存の書式に揃えて実装する。
+
+**内部表現の指示**: `drivers: Vec<Option<Driver>>` を `vehicles` と**並行**に持つ
+（`VehicleEntry` に `Driver` を入れない。`VehicleEntry` は物理の記録であって AI ではない。
+また `&self.vehicles` を読みながら `&mut driver` を取るために借用を分ける必要がある）。
+`spawn` / `spawn_with_driver` の双方で `drivers` の長さを `vehicles` と一致させること。
+
+#### Part C — 乱数の派生規約（`crates/sim-core/src/rng.rs`・新規）
+
+**`World` は `Rng` を保持しない**（`sim-core` に乱数状態を持ち込まない原則を維持する）。
+派生規約だけを状態を持たない自由関数として置く。
+
+```rust
+/// レース系列から「この車の Driver 系列」を派生する。
+/// ラベルは `driver:NN`（`NN` は `VehicleId.0` の 2 桁ゼロ詰め・10 進）。
+/// `Rng::derive` は親状態を変えず派生順に依存しないので、
+/// **どの順に呼んでも各車の系列は不変**（T-CORE-AI-08）。
+pub fn driver_rng(race: &Rng, id: VehicleId) -> Rng;
+```
+
+- `id.0 >= 100` でも一意であること（`format!("driver:{:02}", id.0)` は 3 桁以上をそのまま出す）
+- 呼び出し側（テスト / `sim-wasm`）が `Rng::from_seed(race_seed)` を作り、
+  `driver_rng` で個体系列を得て `spawn_with_driver` に渡す
+
+#### Part D — `sim-wasm` の拡張
+
+**既存の公開メソッドの意味を変えない**（`step` は従来どおり物理 tick）。追加のみ:
+
+```rust
+// 純 Rust 層（WorldView）
+pub const MAX_SIM_STEPS_PER_CALL: u32 = 8;      // = MAX_STEPS_PER_CALL / 4。物理予算を揃える
+pub const DRIVER_TELEMETRY_STRIDE: usize = 12;
+pub const DRIVER_MODEL_FIELDS: usize = 14;      // DriverModel の能力値の個数
+
+impl WorldView {
+    /// レースの乱数種を設定する。**AI 車をスポーンする前に呼ぶこと**（既定 0）。
+    pub fn set_race_seed(&mut self, seed: u64);
+
+    /// 走行計画を生成して取り付ける。`step_m <= 0` / 非有限なら既定値。
+    pub fn attach_racing_line(&mut self, step_m: f64);
+
+    /// AI 付きでスポーンする。`abilities` は `DriverModel` の能力値を
+    /// **下記の固定順**で並べた `DRIVER_MODEL_FIELDS` 要素。
+    /// 長さが違う場合は `DriverModel::balanced()` を使う。
+    pub fn spawn_driver(&mut self, start_s: f64, start_t: f64, abilities: &[f64])
+        -> Result<usize, WorldViewError>;
+
+    /// `sim_steps` Simulation Tick 進める（1 tick = 4 物理 tick）。
+    /// `MAX_SIM_STEPS_PER_CALL` でクランプ。`manual` は `step` と同じ
+    /// `INPUT_STRIDE` の平坦配列で、AI 付きの車では無視される。
+    pub fn step_sim(&mut self, sim_steps: u32, manual: &[f64]);
+
+    /// レーシングラインのワールド座標。`[x,y,z,...]`。
+    /// ステーションは `TrackView::stations` と**同じ規約**（`HANDOFF.md` §5）。
+    pub fn sample_racing_line(&self, step_m: f64) -> Vec<f64>;
+
+    /// 同じステーション列に対する `SpeedProfile::v_at` [m/s]。
+    pub fn sample_target_speed(&self, step_m: f64) -> Vec<f64>;
+
+    /// Driver テレメトリ。1 台あたり `DRIVER_TELEMETRY_STRIDE` 要素（順序固定）:
+    /// `has_driver(0/1), t_target, v_target, lookahead_m, aim_s, mode,
+    ///  confidence, p_s, p_t, p_heading_error, p_sideslip, p_grip_usage_max`
+    /// AI を持たない車は `has_driver = 0` と残り 0 で埋める。
+    pub fn driver_telemetry(&self) -> Vec<f64>;
+
+    pub fn sim_tick(&self) -> u64;
+}
+```
+
+`abilities` の固定順（`DriverModel` の宣言順そのまま。**変えない**）:
+`pace, braking_skill, cornering_skill, racecraft, aggression, consistency,
+overtaking_skill, defending_skill, wet_skill, tyre_management, risk_tolerance,
+reaction_time, spatial_awareness, error_rate`。
+
+`mode` は `DriverMode` の判別子を `as u8 as f64` で出す（Phase 2 は常に `FreeAir`）。
+
+- `sample_*` の異常入力に対する挙動は既存 `TrackView::sample_*` と**同一**にする
+  （非有限 / 非正 / ステーション数 200 000 超 → **空配列**。`panic = "abort"` のため）。
+  ステーション列の生成は 1 箇所に集約し、`TrackView` と `WorldView` が同じ関数を使うこと
+  （既存の `TrackView::stations` の**出力は 1 ビットも変えない**）
+- `RacingLine` 未取り付けのとき `sample_racing_line` / `sample_target_speed` は空配列を返す
+- `#[wasm_bindgen]` 側 `WasmWorld` に対応メソッドを追加する。**`mod bindings` の外に
+  `unsafe` を漏らさない**（手書き `unsafe` 0 行を維持）
+- `examples/reference_run.rs` は凍結（触らない）
+
+#### Part E — Engineering View
+
+**装飾禁止（ADR-0003）。** `MeshBasicMaterial` / `LineBasicMaterial` + 頂点カラーのみ。
+ライティング・影・ポストエフェクトを足さない。ビルドツールを導入しない。
+
+1. **レイヤ追加**（`overlay.js` の `LAYERS` に追加。既存 `id` / `key` は変えない）
+   - `{ id: 'racingline', key: 'u', label: 'レーシングライン' }`
+     — `sample_racing_line` の折れ線。**頂点カラーは `sample_target_speed` の
+     `v_at` を `[min_v, max_v]` で正規化した値**（遅い＝寒色 / 速い＝暖色。
+     色が値であることを保つ）。路面と z-fight しないよう `+Y` に一定量
+     （名前付き定数・0.05 m 程度）持ち上げる
+   - `{ id: 'aim', key: 'i', label: 'AI 目標（aim / t_target）' }`
+     — AI 車ごとに `aim_s` 位置のマーカーと、現在 `s` における `t_target` の
+     横位置マーカーを置く
+2. **HUD**（`overlay.js`）に Driver セクションを足し、AI 車 1 台ぶんの
+   `mode / confidence / v_target / speed / v_target - speed / t_target / t /
+   heading_error / sideslip / grip_usage_max` を数値表示する
+3. **駆動**: AI 車がいるときは `WasmWorld.step_sim(n, manual)` で進める。
+   AI 車が 0 台のときの既存の手動経路（`step`）は**そのまま残す**
+4. `window.__engview` に `driverTelemetry`（直近の `driver_telemetry` の配列）と
+   `racingLine`（サンプル配列）を読み出し専用で公開する
+   （**ヘッドレス自動検証のため。書き込み経路は作らない**）
+
+#### Part F — `sim-driver` 定数の再調整（限定的な凍結解除）
+
+TASK-2-2 の制御ゲインは **運動学プラント**に対して調整されている
+（完了報告 Deviation 8）。実物理（実タイヤ・実サス・実荷重移動）では
+挙動が変わるため、**受け入れ基準を満たすための定数値の再調整のみ**を許可する。
+
+許可される変更:
+
+- `crates/sim-driver/src/controller.rs` / `planner.rs` の **`const` の値**
+- 変更理由を書く doc コメントの追記
+
+**禁止される変更**（＝ `PROPOSED DESIGN CHANGE` が必要）:
+
+- 新しい定数・フィールド・関数・公開型の追加、既存定数の削除・改名
+- 制御則の式の変更、項の追加・削除、層の分割の変更
+- 公開シグネチャの変更（`Controller::update` に `engine_rpm` を渡す等も**ここに含まれる**）
+- `crates/sim-driver/tests/**` の変更（**1 行も触らない**）
+
+再調整を行った場合、完了報告に **定数名 / 変更前 / 変更後 / 物理的な理由 /
+その定数が効く受け入れ項目**を表で列挙すること。**再調整後も `sim-driver` の
+既存 16 テストが無改変で全通過すること**が必須（これが「実物理に合わせた結果、
+運動学プラントで破綻した」を検出する唯一の網である）。
+
+#### Part F-1 — PDC-1「発進クラッチのバイトポイント」: **APPROVED**（Architect / 2026-09-09）
+
+実装者からの `PROPOSED DESIGN CHANGE` を **承認する**。Architect が独立に裏を取った:
+`crates/sim-vehicle/src/powertrain.rs` の `engaged = 1.0 - clutch` と
+`axle_torque = engine_torque * engaged * ratio * driveline_efficiency` により、
+`clutch = 1.0` では**アクスルトルクが恒等的に 0**。現在の式
+`clutch = 1 - speed / LAUNCH_SPEED_MS` は `speed = 0` で**任意の正の
+`LAUNCH_SPEED_MS` に対して厳密に 1.0**。したがってこれは調整不能な構造欠陥であり、
+Part F の「定数値のみ」では到達できない。**根本原因の診断は正しい。**
+
+承認する変更（`crates/sim-driver/src/controller.rs` のみ・提案どおり）:
+
+```rust
+/// 発進時にクラッチを当てる初期値（`0` = 直結 / `1` = 完全切断）。
+/// `speed = 0` で完全切断すると axle_torque が恒等的に 0 になり発進できない。
+const LAUNCH_CLUTCH_BITE: f64 = 0.6;
+
+let clutch = if speed < LAUNCH_SPEED_MS && self.current_gear == 1 {
+    LAUNCH_CLUTCH_BITE * (1.0 - saturate(speed / LAUNCH_SPEED_MS))
+} else {
+    0.0
+};
+```
+
+- **式 1 本と定数 1 本のみ。** 層・シグネチャ・公開型・他チャンネルは不変
+- `speed >= LAUNCH_SPEED_MS` では分岐に入らず出力はビット不変
+  （ローリングスタートの回帰なし = `sim-driver` 既存 16 テストが網）
+- `LAUNCH_CLUTCH_BITE` は**導入後は Part F の通常の調整対象**（許可範囲 `[0.3, 1.0]`）
+
+**★実装者のリスク分析の訂正（重要・読み飛ばさないこと）**:
+提案は「バイトが高すぎるとエンジンがボギングする」としているが、**Phase 1B の
+パワートレインではエンストもボギングも起こらない**。`powertrain.rs` は
+`engine_omega.clamp(idle_omega, limiter_omega * 1.05).max(idle_omega)` で
+**回転数をアイドル以下に落とさない**（「エンストは Phase 1B の対象外」と明記されている）。
+さらに `engine_omega = lerp(engine_omega, driveline_omega, engaged)` は
+240 Hz で毎 tick 効くため、`engaged = 0.4` でもエンジンは即座にアイドルへ張り付く。
+つまり発進トルクは実質 `T(idle) * engaged * ratio * eff` であり、
+**`LAUNCH_CLUTCH_BITE` を上げることの制約はボギングではなくホイールスピンである。**
+チューニングの方向を誤らないこと。T-CORE-AI-07 の「ボギング tick 比率」は
+この物理では原理的にほぼ 0 になる（それ自体は不具合ではない。**測って報告する**）。
+
+**追加の報告義務**（完了報告に必ず数値で書く）:
+
+- 採用した `LAUNCH_CLUTCH_BITE` の値
+- 静止から `forward_speed > 25 m/s` までの秒数（T-CORE-AI-03）
+- 発進中の駆動輪 `slip_ratio` のピーク値と、`slip_ratio > 1.0` が継続した秒数
+
+**ホイールスピンで T-CORE-AI-03 の 10 s に届かない場合は、トラクション制御則を
+勝手に足さないこと。** 2 本目の `PROPOSED DESIGN CHANGE` を出して判断を待つこと
+（`K_THROTTLE` の再調整で届くならそれは Part F の範囲内であり PDC は不要）。
+
+**Phase 3 への申し送り（本タスクでは対応しない）**: このクラッチ則はスロットルで
+ゲートされていないため、停止中も微小な creep トルクが出る。グリッド静止 →
+シグナル → スタートの手順を持つ Phase 3 のレース状態機械では、
+発進の解禁と併せて設計し直す必要がある。
+
+#### Part F-2 — 静止時の定常操舵 `-0.244` について: **PDC 不要・現状維持**
+
+実装者の第 2 の観測（S/F ストレート静止時に `steer ≈ -0.244` が出る）は
+**おそらく正常な挙動であり、修正してはならない**。`speed = 0` では
+`delta_ff`（κ ≈ 0）も `delta_hd`（`heading_error ≈ 0` / `yaw_rate = 0`）も ≈ 0 なので、
+残るのは Pure Pursuit の横方向捕捉項だけである。**車は `t = 0`（センターライン）に
+スポーンされるが、レーシングラインはそこにいない**（`trajectory.t_at(s)` は
+一般に非ゼロ）。ラインへ寄せる操舵が出るのは設計どおりである。
+
+- まず PDC-1 を適用して**実際に走らせてから**再評価すること。走行中に解消するはずである
+- 切り分けに使う診断: 数 tick 分の `aim_t - perceived.t` と
+  `delta_pp / delta_ff / delta_cs / delta_hd` を**個別に**出力する
+  （合成後の `steer` だけを見て原因を推測しない）
+- 走行中も定常オフセットとして残り `t` 誤差を生むなら、
+  **`Planner` の lookahead 下限**（低速で `alpha` が過大になる）を最初に疑い、
+  `K_HEADING` / `K_YAW_DAMP` と併せて **Part F の定数として**扱う。式は変えない
+
+#### Part F-3 — PDC-2「横方向ループの構造変更」: **REJECTED（根本原因の誤診）** / PDC-3 を代わりに承認
+
+実装者は T1 での破綻を「横方向ループの構造的不安定」と診断し、
+(1) `throttle_slide_cap` の平滑化 (2) 逆操舵のソフトニー (3) 高速経路への
+クロストラック項の追加、の 3 点を提案した。**Architect が独立に計測した結果、
+根本原因は横方向ループではない。PDC-2 は却下する。**
+
+**独立検証（`assets/vehicles/gt_proto_a.spec.json` から算出）**:
+
+| 量 | 値 |
+|---|---|
+| ギア比 / ファイナル | `[3.15, 2.19, 1.63, 1.29, 1.03, 0.84]` / 3.44 |
+| **1 速の頭打ち速度** | **25.71 m/s**（`limiter_rpm` 7600 / `tyre_radius` 0.35） |
+| 2 速の頭打ち | 36.97 m/s |
+| 車重 / 前後配分 / 駆動 | 1245 kg / front 0.45（**後 55%**）/ **RWD** |
+| ピークトルク | 560 Nm（5000 rpm） |
+
+- **報告された「T1 進入 26 m/s」は 1 速の頭打ち速度 25.71 m/s と一致する。**
+  つまり事象は丸ごと 1 速〜2 速の境界で起きている
+- 26 m/s での後軸垂直荷重 ≈ 6 718 N（静的）+ ダウンフォース後配分 ≈ 1 250 N
+  ≈ 7 970 N（加速側の荷重移動を足して ≈ 9 400 N）。μ ≈ 1.4 で**利用可能な後軸グリップ ≈ 13 000 N**
+- 全開時の駆動力: **1 速** `560 × 3.15 × 3.44 × 0.92 / 0.355 ≈ 15 700 N` ≫ 13 000 N →
+  **構造的にホイールスピンが確定する**。2 速でも ≈ 10 900 N で円の 84% を縦だけで使い、
+  コーナーの横 3 560 N を足すと 88%——余裕がない
+- 報告の「0→22 m/s に 4 s」= 5.5 m/s²。トラクション限界なら 10.4 m/s² 出るはずで、
+  **実測は半分**。これは発進から T1 まで**ずっと滑っていた**ことの証拠である
+- 報告の「発進時 `slip_ratio` ピーク ≈ 0.3 なのでホイールスピンなし」という判断は誤り。
+  **`slip_ratio` 0.3 は μ-slip カーブのピーク（0.10〜0.15）を大きく超えている**
+
+**したがって因果は逆である。** 実装者は「コーナー限界の半分以下なのだから速度の問題ではない」と
+書いたが、正しくは **`v_target` に対して 29 m/s も不足しているためスロットルが 1.0 に張り付き、
+低いギアで後輪が破綻していた**。`beta` が 0.53 G の旋回で 0.23 rad まで育つのは
+経路追従の不安定ではなく**パワーオーバーステア**である。直線での「育つウィーブ」も
+同じ原因（直線から既に後輪が滑っている）で説明がつく。
+
+**横方向の定数を大きく動かした調整（`LOOKAHEAD_MIN_M` 5→18、`K_HEADING` 0.55→0.15、
+`K_YAW_DAMP` 0.16→0.80 等）は、縦方向の欠陥が作った症状に対する誤った最適化である。**
+
+##### 必須の是正（PDC-3 に着手する前に行うこと）
+
+1. **`crates/sim-driver/src/driver.rs` の `HEADING_DIFF_M` を 1.0 に戻す。**
+   `driver.rs` は Part F の対象外＝**凍結ファイルであり、これは契約違反**である
+   （Part F が解除しているのは `controller.rs` と `planner.rs` のみ）。
+   加えて変更理由も誤っている: 2 m 刻みの C1 スプラインに対する ±1 m 差分の雑音は
+   1e-3 rad オーダーで無視できる。逆に **±10 m は 20 m 区間の平均勾配**になり、
+   コーナー進入・脱出で `heading_error` に系統的なバイアスを入れる。
+   `heading_error` は Pure Pursuit と安定化経路の**両方**に入るので、
+   これ自体が不安定化要因になりうる
+2. **横方向の定数（`LOOKAHEAD_*` / `K_HEADING` / `K_YAW_DAMP` / `K_COUNTERSTEER` /
+   `BETA_LIMIT_RAD`）を TASK-2-2 の値へ全て戻す。** 縦方向を直した後でなければ
+   横方向の良し悪しは測れない
+3. **`UPSHIFT_FRACTION` を 0.97 へ戻す。** ホイールスピンが止まれば
+   `est_rpm`（車速由来）は正確になり 0.97 は正しい。変速時間ぶん早めに上げる
+   合理的理由があるので **`[0.90, 0.97]` の範囲は Part F の通常の調整対象**として認めるが、
+   0.80 のような値で `est_rpm` の誤差を隠すことは禁止する。
+   トラクション制限を入れてもなおリミッター張り付きが残るなら、それは
+   **Design Concern 2（`engine_rpm` 未読）の実害の証拠**なので T-CORE-AI-07 の数値として
+   報告すること（パッチで隠さない）。TASK-2-4 起票の判断材料である
+
+##### PDC-3 — トラクション制限スロットル: **APPROVED**（Architect / 2026-09-09）
+
+**縦方向に「後輪が受け取れる以上のトルクを与えない」という制約が存在しない**ことが
+本件の根本原因である。`throttle_raw = saturate(K_THROTTLE·e / max(speed,5))` は
+速度誤差だけを見ており、利用可能なグリップを知らない。`K_THROTTLE` をどう調整しても
+`e = 29 m/s` では飽和するので、これは調整不能＝構造的欠陥である。
+
+`crates/sim-driver/src/controller.rs` に限り、以下を許可する:
+
+- **駆動力バジェットによるスロットル上限**（フィードフォワード）。
+  利用可能後軸グリップ `F_avail`（静荷重 + ダウンフォース、μ は定数）と、
+  現在ギア・回転数での全開駆動力 `F_demand` から `throttle_cap = F_avail / F_demand`
+  を作り、`kappa_traj` 由来の横方向使用ぶんを摩擦円で差し引くこと
+- そのために **`Controller` の private フィールドを `VehicleParams` から追加してよい**
+  （質量・空力・トルクカーブ・μ。`wheelbase` / `gear_ratios` を写しているのと同じ流儀）
+- **提案 (1)（`throttle_slide_cap` の平滑化 + `move_towards` 化）を併せて承認する。**
+  閾値 bang-bang とベタ書きの `0.3` は実際に有害であり、この判断は正しい。
+  名前付き定数にすること
+
+**厳守する境界**:
+
+- **`v_target` を変更してはならない。** 目標速度の唯一の権威は
+  `Planner` + `SpeedProfile` である。PDC-3 が制限するのは「**今この瞬間に
+  どれだけ加速してよいか**」だけであり、目標速度の再導出ではない
+- バンク / 標高勾配を Controller で補正しない（**二重補正の禁止**は不変）
+- 公開シグネチャ・公開型・層の分割は不変。`sim-driver/tests/**` は 1 行も触らない
+- steer / throttle / brake の 3 系統が `move_towards` を通る構造は不変
+
+##### PDC-2 の (2)(3) — **保留（却下ではなく差し戻し）**
+
+逆操舵のソフトニーと高速経路のクロストラック項は、**PDC-3 と上記の是正を入れて
+再計測してから**、まだ残る不安定を根拠に改めて起票すること。
+ホイールスピンが原因の振動に対してフィードバック項を足すのは、
+真の欠陥を隠した上でループを誤調整する典型例である。
+（逆操舵の不感帯は「小さい `beta` では当てない」という意図的な設計であって欠陥ではない。）
+
+##### 報告義務（追加）
+
+- 是正 1〜3 を適用した**直後**の走行結果（PDC-3 適用前）。これがベースライン
+- PDC-3 適用後の T1 通過時: ギア / `engine_rpm` / `throttle` / 駆動輪 `slip_ratio` /
+  `forward_speed` / `v_target` / `beta` の時系列（**合成後の `steer` だけを見ない**）
+- 0→100 km/h 相当の加速タイムと、直線での駆動輪 `slip_ratio` のピーク
+
+##### 手順上の注意（Architect から coordinator へ）
+
+`crates/sim-driver/` は**まだ untracked**（TASK-2-1 / 2-2 が未コミット）なので、
+`git diff crates/sim-driver` は**常に空**であり、受け入れ基準 10 の
+「定数と doc のみ」を git では検証できない。**変更前 / 変更後の値を表で全件申告する
+義務がその代替である**（申告漏れは Quality Gate のブロッカーとして扱う）。
+
+##### 付随して確認したこと（いずれも既知・本タスクでは修正しない）
+
+- スピン後にコース外で `s = 0` を跨いで幻のラップが増えるのは **D-3（Forward のみ +1）の
+  既知の弱さ**であり、Phase 3 のレース状態機械で確定する。**ここでは直さない。**
+  ただし**テストは幻のラップを完走と誤認してはならない**——スタック / コース外を
+  検出して明示的に fail させること
+- T1 の `v_at ≈ 55 m/s` は R=130 m・ダウンフォース込みで妥当（≈ 2.1〜2.4 G）。
+  `SpeedProfile` 側の欠陥は示唆されない
+
+#### Part F-4 — 候補 A〜E への裁定と、**真の残存原因（`mu` の荷重感度）**
+
+PDC-3 で縦方向が直り、症状は「速いコーナーで膨らむ / タイトコーナーで巻く」へ移った。
+実装者は横方向ゲインの不足（候補 A〜C・E）と `v_target` の楽観（候補 D）を挙げたが、
+**Architect が計測した結果、残存原因はそのどちらでもなく `sim-line` の `mu` にある。**
+
+##### 独立検証: `PerformanceEnvelope` が荷重感度を無視している
+
+`crates/sim-line/src/speed.rs` の `from_params` は **`let mu = p.tyre.mu0;`** と
+フラットに取る。しかし `sim-vehicle` のタイヤモデルは
+`mu = mu0 * grip / (1 + LS * (Fz / Fz_nominal - 1))`（`params.rs`）であり、
+**ダウンフォースで荷重が増えるほど実効 μ は下がる**。
+`gt_proto_a` は `mu0` を JSON に持たず既定値 **1.50**、`load_sensitivity` 既定 **0.28**。
+
+| 地点 | 要求 `v²/R` | `mu0=1.50` 前提の余力 | **荷重感度込みの実際の余力** | 判定 |
+|---|---|---|---|---|
+| T1 26 m/s R130 | 5.2 | 17.2 | 16.5（μ=1.431） | ok |
+| **T2 55 m/s R125** | **24.2** | 26.0 | **21.4（μ=1.234）** | **OVER** |
+| **T2 `v_at`=62 m/s** | **30.8** | 29.1 | **22.8（μ=1.178）** | **大幅に OVER** |
+| **T3 34 m/s R63** | **18.3** | 19.0 | **17.6（μ=1.386）** | **OVER** |
+
+（単位はすべて m/s²。コーナーでは外輪へ荷重移動してさらに μ が落ちるので、
+上表の「実際の余力」は**上限**である。）
+
+**結論: `SpeedProfile` の限界速度は高ダウンフォース域で約 20% 楽観である。**
+実装者が観測した現象はすべてこれで説明がつく:
+
+- **T2 で 20〜31 m 膨らむ**のはゲイン不足ではない。**タイヤに出せない横 G を要求している**
+  （`t = -20〜-31 m` はコース半幅 6〜8 m の 3〜4 倍＝完全にコース外である。
+  「ugly but survives」と評価してはならない。**T-AI-01R はこれ単独で不合格**）
+- **T3 の進入が 2〜3 m/s ホット**という実装者の見立ては正しく、原因も同じ
+- 実装者が経験的に選んだ `MU_TRACTION = 1.30` は、**偶然にも荷重感度込みの実効値
+  （45 m/s で 1.311）とほぼ一致している**。つまり縦方向は現実的な μ を、
+  横方向の目標速度は楽観的な μ を使うという**不整合な状態**にあった
+
+**追えない目標速度に対して制御ゲインを合わせ込むと、必ず誤調整になる。**
+候補 A〜C・E はいずれもこの不整合の症状に対する対症療法である。
+
+##### PDC-4 — 実効 `mu` の補正: **APPROVED**（`sim-line` は凍結のまま）
+
+`sim-line` は**凍結を維持する**（監査済み・T-LINE テストが値に依存しており、
+本タスクで開けるにはリスクが大きい）。代わりに **`crates/sim-core/src/racing_line.rs`
+（既に writable）** で補正する:
+
+- `PerformanceEnvelope::from_params(params)` を呼んだあと、**`mu` フィールドだけを
+  荷重感度で補正した実効値に差し替えて** `SpeedProfile::generate` に渡す
+- 補正は `mu_eff = mu0 / (1 + LS * (LOAD_RATIO_REF - 1))` の形で、
+  `LOAD_RATIO_REF` を**名前付き定数**（既定 1.5 → `mu_eff ≈ 1.316`）とし、
+  導出根拠を doc コメントに書く。速度依存を厳密に解くには `SpeedProfile` 側の
+  反復に手を入れる必要があり、それは本タスクの範囲外である（近似であることを明記する）
+- `PerformanceEnvelope` は公開フィールドの素データ構造なので、これは
+  **公開 API の変更にも `sim-line` の変更にも当たらない**
+- **`Controller` の `MU_TRACTION` をこの `mu_eff` と整合させること**（縦と横で
+  別の μ を使わない）。両方の数値を完了報告に書くこと
+
+**申し送り（本タスクでは直さない）**: 恒久対策は `PerformanceEnvelope::from_params`
+自身が荷重感度を織り込むことである。`sim-line` の凍結解除と T-LINE テストの
+期待値更新を伴うため、**別タスク（TASK-2-4 候補）として起票する**。
+
+##### PDC-5 — 理解ステア（アンダーステア勾配）フィードフォワード: **APPROVED**
+
+候補 **B を承認する**。`delta_ff = atan(L·κ_traj)` は純粋な Ackermann であり、
+**スリップ角を持たない運動学プラントでは厳密に正しかったが、実タイヤでは
+横 G が乗るほど過小になる**（定常円旋回の教科書式は `δ = L/R + K_us·a_lat`）。
+これは TASK-2-2 が運動学プラントで検証したことに起因する**構造的な欠落**であり、
+定数では到達できない。`controller.rs` に限り:
+
+- `delta_ff += K_UNDERSTEER * a_lat_demand`、`a_lat_demand = speed² · kappa_traj`
+  （**要求値＝フィードフォワード**。実測 `beta` から作らない＝位相遅れを入れない）
+- `K_UNDERSTEER` は名前付き定数 [rad/(m/s²)]。合計 `delta_ff` が
+  `max_steer_angle` を超えないようクランプすること
+- `v_target` を変更しない / バンク・勾配を触らない / 公開シグネチャ不変（PDC-3 と同じ境界）
+
+##### 候補 A（曲率スケジュール `K_HEADING`）: **REJECTED**
+
+`K_HEADING` を上げたい理由は「コーナーで舵が足りない」であり、その不足の正体は
+**PDC-5 で埋めるフィードフォワードの欠落**である。欠落した前向き項を
+フィードバックゲインで肩代わりさせ、しかも直線では発振するのでスケジュールで
+切り替える——これは典型的な誤調整である。**PDC-4 + PDC-5 を入れてから再計測すること。**
+それでも旋回初期の舵が足りないなら、データを添えて再提出してよい。
+
+なお **`K_HEADING` 0.55 → 0.30 の変更自体は承認する**（Part F の範囲内）。
+実タイヤ + 0.08 s 安定化遅延 + 緩和長 0.15 s + ラック遅れで位相余裕が無くなるのは
+物理的に妥当であり、直線での 1 Hz ヨー共振の同定は良い仕事である。
+
+##### 候補 C（高速経路のクロストラック項）/ E（逆操舵ソフトニー）: **再度保留**
+
+PDC-4 + PDC-5 の後に再計測すること。**目標速度が物理的に追える値になって初めて、
+横方向ループの真の残差が測れる。**
+
+##### 候補 D（`v_target` のコーナー安全係数）: **不要。ただし `pace_scale` の整備は承認**
+
+`v_target` に新しい安全係数を足すことは認めない。安全マージンの正しい住所は
+**`ARCHITECTURE.md` §6 の能力値表がすでに定めている `pace`**
+（「corridor 内での攻め幅（v_target 係数。ただし物理限界は超えない）」）であり、
+`planner.rs` に `pace_scale = lerp(0.90, 1.00, pace) * lerp(0.97, 1.00, confidence)`
+として実装済みである。ベタ書きの `0.90 / 1.00` を**名前付き定数へ切り出し、
+上限を 1.0 未満**（例 0.98）にすることを承認する。これで最速のドライバーでも
+物理限界の内側を走る。**`v_target <= v_cap` の構造的保証（T-AI-04）は不変。**
+`pace` に対する単調性も維持すること（T-AI-05R が順序を検証する）。
+
+##### 適用順序と計測義務（守ること）
+
+1. **PDC-4 単独**を適用して計測（`mu_eff` の値・T2 の最大 `|t|`・T3 の進入速度）
+2. 次に **PDC-5** を適用して計測（同じ指標。`delta_ff` の増分も）
+3. 最後に `pace_scale` の整備と、既存定数の**最小限**の再調整
+
+**1 と 2 をまとめて適用しないこと。** どちらが何を直したのかが分からなくなる。
+
+##### ★ストップルール（Architect 指示・重要）
+
+上記 1〜3 を適用し、**定数の再調整を 1 巡**してもクリーンラップに届かない場合、
+**そこで打ち切ること。** 4 本目の PDC を出さない。その時点の計測データを添えて
+報告すれば、Architect が人間へ **TASK-2-4（Controller 横方向ループの再設計）**
+としてエスカレーションする。**パッチの積み増しでラップを通そうとしないこと。**
+
+##### スコープの裁定（実装者の質問への回答）
+
+**T-AI-01R / 05R / 07R を TASK-2-4 へ先送りすることは認めない。** この 3 本は
+TASK-2-3 の存在理由そのもの（TASK-2-2 Deviation 3 の負債）であり、これを外すと
+**「車を 1 周も走らせたことのない `World`」を配線完了として通すことになる。**
+Phase 3（複数台）で同じ欠陥を N 台ぶん同時にデバッグする羽目になり、確実に高くつく。
+ストップルールがあるので青天井にはならない。
+
+**人間を呼ぶのは今ではない。** これはタスク内の技術スコープ判断であり
+Architect の権限内である（`CLAUDE.md` §16）。ただし本件の経緯は
+人間へ報告済みであり、判断を覆す権利は人間にある。
+
+#### Part F-5 — ストップルール到達時の裁定（Architect / 2026-09-09）
+
+実装者はストップルールを正しく守り、PDC-6 を出さずにデータを添えて判断を求めた。
+**手順として正しい。** 以下が裁定である。
+
+##### まず: T3 の診断は**今回は正しい**（4 回目で初めて）
+
+Architect が独立に計算して裏を取った。ブレーキ指令 0.66 のときの前軸:
+
+```
+前軸垂直荷重 = 静的 5 496 + ダウンフォース前配分 1 129 + 前方荷重移動 1 803 = 8 428 N
+利用可能グリップ = mu_eff(1.410) × 8 428          = 11 881 N
+指令ブレーキ力  = 0.66 × 2 × 3 600 Nm / 0.345 m   = 13 774 N   ← 容量を超える
+                                                    → 前輪ロック
+```
+
+**前輪がロックすれば横力はゼロになり、リアは接地したままなので「β ≈ 0 の純アンダー」**
+——実装者が観測した挙動と厳密に一致する。トレイルブレーキ過多という見立ては正しい。
+
+##### だが真因はもう一段手前にある: `max_brake_decel` もタイヤ限界を無視している
+
+`PerformanceEnvelope::from_params` は制動力を**ブレーキ機構のトルク容量**から作る:
+
+```
+brake_force = 2 × (max_torque_front + max_torque_rear) / tyre_radius = 32 571 N
+max_brake_decel = 32 571 / 1 245 = 26.2 m/s²
+```
+
+しかし**タイヤが受け止められる減速度**は 42 m/s で 18.9、30 m/s で 17.0 m/s² しかない。
+**`max_brake_decel` は約 40% 楽観である**（PDC-4 で見つけた `mu` フラット化と**同じ種類の欠陥**
+——エンベロープが機構限界だけを見てタイヤ限界を見ていない）。
+
+その結果:
+
+- `SpeedProfile` の後退パスが短すぎるブレーキング区間を引く
+- `Planner` の `a_brake_plan = envelope.max_brake_decel × lerp(0.80,1.00,braking_skill)`
+  が 21〜26 m/s² を仮定し、**ブレーキング開始が約 40% 遅れる**
+- ゆえに車は**旋回開始時点でまだ全力で減速している**。トレイルブレーキ係数を
+  どう調整しても、そもそもブレーキを残したまま turn-in している
+
+**「直線で減速を終え、turn-in ではブレーキを抜いている」という当たり前の状態に
+まだ一度も到達していない。** T3 はその状態を一度も試されていない。
+
+##### PDC-4b — `max_brake_decel` のタイヤ限界クランプ: **APPROVED（PDC-4 の延長）**
+
+**新規の PDC ではない。** PDC-4 で既に承認した「`racing_line.rs` で
+`PerformanceEnvelope` のフィールドを物理的に正しい実効値へ差し替える」機構の、
+同じファイル・同じ欠陥クラスに対する適用である。制御則には一切触れない。
+
+- `racing_line.rs` で `envelope.max_brake_decel` を
+  **`min(機構由来の値, mu_eff × (W + DF_ref) / m)`** にクランプする
+- 基準ダウンフォースは PDC-4 の `LOAD_RATIO_REF` と**同じ定数から導く**
+  （縦と横で別の基準を使わない）。名前付き定数・doc に導出を書く
+- これは `SpeedProfile` の後退パスと `Planner` の `a_brake_plan` の**両方**に効く
+
+**これが最後の試行である。** これで T3 が通らなければ**そこで打ち切り**、
+以降は制御則に手を入れずエスカレーションする（ストップルールは維持）。
+
+##### 恒久対策（TASK-2-4 として人間へエスカレーションする）
+
+**1. `sim-driver/tests` の運動学プラント試験が「アンチテスト」になっている。**
+実装者の報告で最も重要なのはここである。`TRAIL_MIN` / `KAPPA_TRAIL` を
+実物理で正しい方向へ動かすと `t_ai_01_stays_on_course_for_20_laps` と `t_drv_04` が落ちる。
+運動学プラントには**摩擦円が無く、制動と旋回がグリップを奪い合わない**ため、
+**実物理で正しい値がプラントでは誤りになる**。この構造が残る限り、
+T3 だけでなく**ヘアピン R19 を含む以降のすべてのタイトコーナーで同じ壁に当たる**。
+
+グローバル `CLAUDE.md` §15 の原則そのものである——
+**「テストは解を検証するものであって、要件を置き換えるものではない」**。
+運動学プラントは TASK-2-2 の段階では正しい選択だったが、
+`sim-core` の実物理閉ループが手に入った今、**役目を終えて有害になっている**。
+
+**2. トレイルブレーキ / 複合スリップの再設計。** 前輪ロックを構造的に防ぐ
+ブレーキ解放スケジュール（旋回要求に応じた前軸の摩擦円配分）。
+
+→ **TASK-2-4 の内容**: (a) `sim-driver/tests` を凍結解除し、運動学プラントの周回試験を
+`sim-core` の実物理閉ループ試験へ置き換える。(b) トレイルブレーキ / 複合スリップの再設計。
+**T-AI-01R / 05R / 07R を TASK-2-4 の主受け入れとして引き継ぐ。**
+これは `sim-driver` の受け入れ体系の変更であり、**人間の承認事項**として起票する。
+
+##### TASK-2-3 のスコープ裁定（前回の判断を、根拠が変わったので改める）
+
+前ラウンドでは T-AI-01R / 05R / 07R の先送りを認めなかった。理由は
+「1 周も走らせていない `World` を通すことになる」であった。**状況が変わった。**
+
+- 配線が正しく動く証拠は**実測で十分に得られた**: 静止発進 → T1（R130）→
+  750 m 直線 50〜55 m/s → T2（R125・実物理でクリーン）。
+  **セクター 1 境界を越えて 1 470 m / 4 139 m（35%）**。もはや「未検証の配線」ではない
+- 残る障害は配線ではなく、**TASK-2-3 の権限外にある凍結テストの忠実性**であると
+  定量的に特定された
+
+したがって次のとおり改める:
+
+- **T-AI-01R / 05R / 07R は TASK-2-4 の主受け入れとして移管する**（曖昧な「先送り」にしない）
+- **TASK-2-3 は Part D（`sim-wasm`）と Part E（Engineering View）が未着手であり、
+  いずれも clean lap に依存しない。ただちにこれを実装すること。**
+  ここが完了しなければどのみち TASK-2-3 は landable ではない
+- 新しい受け入れ **T-AI-01P（部分）** を設ける:
+  **実物理で静止発進から T2 出口まで（`s` 0 → 1 470 m）を走破し、
+  その区間の全 tick で `coord.t` が `limit_bounds` の内側**。
+  到達点を数値として固定し、退行を検出できるようにする
+- **TASK-2-3 は TASK-2-4 の契約が起票されるまで APPROVED にしない**
+  （負債が行き先を持たないまま消えることを防ぐ）
+
+---
+
+### Required Tests（`crates/sim-core/tests/world_ai.rs`・`cargo test -p sim-core --release`）
+
+トラックは `assets/tracks/aoyama_ring.track.json`、車両は `assets/vehicles/gt_proto_a.spec.json`
+の**実物**を使う。ラップタイムは `laps_completed` の増加 tick から
+`sim_ticks * SIM_DT` で求める（**`World` にタイミング機構を足さない**。計時と
+クラシフィケーションは Phase 3 の `sim-race` の担当である）。
+
+| ID | 検証内容 | Acceptance |
+|----|---------|-----------|
+| **T-AI-01R** | **実物理でコース逸脱しない**（再検証） | S/F ストレートに静止スポーンした AI 1 台を **5 周**走らせる。**2 周目以降**の全 Simulation Tick で `coord.t` が `corridor.limit_bounds(s)` を **`1e-6 m` 超えて外れた tick が 0**。**1 周目（発進周）**は緩和帯 `limit_bounds ± 0.5 m` の内側。加えて全 tick で `Plan::t_target` が `clamp_limits` の内側 |
+| **T-AI-05R** | **実物理で能力値がラップタイムに創発**（再検証） | `pace = braking_skill = cornering_skill` を 0.2 / 0.5 / 0.9、他は同一・`consistency = 1.0` / `error_rate = 0` / **seed 全員同一**の 3 名を**別々の World で各 5 周**。1 周目を除いた中央値ラップタイムが**単調に短くなり、最速と最遅の差が 0.5 s/lap 以上**。かつ 3 名とも全 tick で `Plan::v_target <= speed_profile.v_at(s) + 1e-9`（= `v_cap` を直接動かしていないことの構造証明・T-AI-04 相当） |
+| **T-AI-07R** | **実物理で Perception 遅延が効く**（再検証） | `reaction_time = 0.0` と `0.30` で **60 s**（3600 Simulation Tick）走らせ、**`ControlInput` 6 成分の `to_bits` 列のハッシュが異なる**、かつ走行距離（`laps * L + s`）の差が **1 m 以上**。**`0.0` でも発散しない**（`recovered_steps == 0` かつ T-AI-01R の帯を満たす） |
+| T-CORE-AI-01 | **Simulation Tick の構造** | `step_sim_tick` 1 回で `tick()` がちょうど `PHYSICS_TICKS_PER_SIM_TICK` 増え、`sim_tick()` が 1 増える。**同一 `ControlInput` が 4 物理 tick 保持される**ことを、`VehicleState::last_input` を 4 物理 tick 分観測して確認する（`Driver::update` が 1 回しか呼ばれていないことの外形的証拠） |
+| T-CORE-AI-02 | **`World::step` の後方互換** | `core.rs` の既存 T-CORE-01〜09 が**無改変で全通過**。加えて AI を 1 台も持たない `World` で `step_sim_tick()` を N 回回した結果が、`step(&[default; n])` を `4N` 回回した結果と**ビット一致**する |
+| T-CORE-AI-03 | **静止発進（グリッドスタート）** | S/F ストレートに `t = 0` で静止スポーンした AI 1 台が **3 周**を完走する。`recovered_steps == 0`。エンジン停止・後退・スタックが無い（発進後 10 s 以内に `forward_speed > 25 m/s` に到達）。**2 周目と 3 周目のラップタイム差が 1.0 s 未満**（定常に達していることの確認） |
+| T-CORE-AI-04 | **`coord` が真値として渡っている** | `DriverObservation::coord` が `entry.coord`（`world_to_track` 由来）と厳密一致し、Driver フェーズで `world_to_track` が**追加で呼ばれていない**ことをコード検査で確認する。`PerceivedSelf::s`（`reaction_time = 0` の車）が `entry.coord.s` と `1e-12` 以内で一致 |
+| T-CORE-AI-05 | **`ControlInput` が唯一の作用経路** | `World` / `WorldView` の公開 API に `&mut VehicleState` を返す / 取る経路が無い。`Driver` の出力が加工されずに `Vehicle::step` へ渡ることを、`state.last_input` と `driver.last_input()` の**全 6 成分ビット一致**で確認する |
+| T-CORE-AI-06 | **`RacingLine` は起動時 1 回** | `RacingLine::generate` が `World::step_sim_tick` の経路から**呼ばれない**（コード検査 + 1000 tick 走らせても生成コストが立たないことを実測で確認）。`attach_racing_line` 前の `spawn_with_driver` が `WorldError::NoRacingLine` |
+| T-CORE-AI-07 | **変速の健全性**（Design Concern 2 の計測） | 3 周のあいだ、`engine_rpm > 0.995 * limiter_rpm` の Simulation Tick が **2% 未満**（リミッター当て続け）、かつ `throttle > 0.5` かつ `engine_rpm < 1.2 * idle_rpm` の tick が **2% 未満**（ボギング）。**実測値を完了報告に必ず数値で書く**（Architect が TASK-2-4 の要否を判断する材料） |
+| T-CORE-AI-08 | **決定性** | 同一 `race_seed` で 3 台（能力値の異なる AI）を 3600 Simulation Tick × 2 回。全車の `position` / `orientation` / `velocity` と全 `ControlInput` の `to_bits` 列が完全一致。さらに **`spawn_with_driver` の順序を入れ替えても各 `VehicleId` の系列が不変**（`driver_rng` の派生順非依存） |
+| T-CORE-AI-09 | **性能** | 24 台 AI（同一 `RacingLine`）で `step_sim_tick` **<= 3.5 ms**、うち Driver フェーズ **<= 0.6 ms**。`RacingLine::generate` **<= 300 ms**（起動時 1 回） |
+| T-WASM-AI-01 | **境界の型変換** | `WorldView::driver_telemetry` の長さが `vehicle_count * DRIVER_TELEMETRY_STRIDE`。`sample_racing_line` / `sample_target_speed` のステーション数が `TrackView::stations` と一致し、`sample_racing_line[3i..3i+3]` が `trajectory.world_at(s_i, track)` と一致。異常 `step_m` で空配列。`RacingLine` 未取り付けで空配列。`step_sim` が `MAX_SIM_STEPS_PER_CALL` でクランプされる |
+
+**T-AI-05R は「差が出ること」ではなく「順序が能力値の順序と一致すること」を検証する。**
+乱数 seed は全員同一にして、差が能力値だけから出ていることを担保すること。
+
+**T-AI-01R / 05R / 07R が本タスクの主目的である**（TASK-2-2 Deviation 3 の履行）。
+これらが通らない場合、まず Part F の定数再調整で対処し、それでも届かない場合は
+**受け入れ数値を緩めず** `PROPOSED DESIGN CHANGE` を出すこと。
+
+### Acceptance Criteria
+
+1. T-AI-01R / 05R / 07R / T-CORE-AI-01〜09 / T-WASM-AI-01 が全通過
+2. `cargo test --release` 全通過（**既存 170 テストの退行なし**。増分は `sim-core` / `sim-wasm` のみ）
+3. **`sim-driver` の既存 16 テストが無改変で全通過**（Part F の再調整を行った場合も）
+4. `cargo clippy --all-targets -- -D warnings` が通る
+5. `cargo fmt --check` が通る
+6. `cargo build --release` 警告ゼロ
+7. 手書き `unsafe` 0 行（`sim-core` は `#![deny(unsafe_code)]`、`sim-wasm` は `mod bindings` の
+   `#[allow(unsafe_code)]` のみ。**この構造を壊さない**）
+8. `cargo build -p sim-core --no-default-features` / `cargo build -p sim-core --target wasm32-unknown-unknown` が通る
+9. `wasm-pack build crates/sim-wasm --target web --out-dir ../../view-engineering/pkg --release` が通る
+10. 凍結ファイルの差分がゼロ（`git diff --stat` で `crates/sim-math` `crates/sim-track`
+    `crates/sim-vehicle` `crates/sim-line` `crates/sim-driver/tests` `assets` `tools` `docs`
+    `view-engineering/src/track_mesh.js` が空。`crates/sim-driver/src` の差分は
+    **定数値と doc コメント、および Part F-1 で承認済みの発進クラッチ式 1 本のみ**であることを
+    diff 全文を貼って示す）
+11. `crates/sim-core/tests/core.rs` の差分がゼロ
+12. **`ControlInput` 以外に車両へ作用する公開経路が存在しない**（型検査 + 目視）
+13. Engineering View がヘッドレス Chrome + CDP で起動し、レーシングラインと AI 走行が
+    描画されることをスクリーンショットで確認する（`HANDOFF.md` §9 の手順）
+
+### Performance Criteria
+
+**予算からの導出**（`PROJECT.md` §性能予算・`HANDOFF.md` §9 の実測）:
+
+```
+1 render frame = 1 Simulation Tick（60 Hz）
+物理の予算              = 2.0 ms / frame / 24 台     （実測 167 µs × 4 物理 tick ≈ 0.67 ms）
+Driver AI の予算        = 1.5 ms / frame / 24 台     （実測 1.09 µs × 24 ≈ 0.026 ms）
+→ step_sim_tick の上限  = 2.0 + 1.5 = 3.5 ms
+→ Driver フェーズ単独   = 1.5 ms の 40%（Phase 3+ の余地を残す）= 0.6 ms
+```
+
+| 項目 | 基準 | 根拠 |
+|------|------|------|
+| `World::step_sim_tick`（24 台 AI） | **<= 3.5 ms** | 上記の導出。実測見込み ≈ 0.7 ms |
+| Driver フェーズ単独（24 台） | **<= 0.6 ms** | TASK-2-2 の基準を踏襲 |
+| `RacingLine::generate` | **<= 300 ms** | 起動時 1 回。`Trajectory::reference` 実測 96 ms + `SpeedProfile` + `Corridor` |
+| `WorldView::driver_telemetry`（24 台） | <= 50 µs | 毎 render frame。型変換のみ |
+
+**基準を満たせない場合は緩和せず `PROPOSED DESIGN CHANGE` を出すこと。**
+
+### Out of Scope
+
+- **複数台のインタラクション一切なし。** 追走・追い抜き・防御・接触・スリップストリーム・
+  `Engagement`（`ARCHITECTURE.md` §7）は Phase 3+。複数台を同時に走らせるのは
+  T-CORE-AI-08 / 09 の**決定性と性能の計測のため**であり、車間の相互作用は実装しない
+  （`Decision` は `FreeAir` のまま。他車を `DriverObservation` に足さない）
+- **計時 / クラシフィケーション / レース状態機械**（周回数の確定・セクタータイム・
+  ピット・フラッグ）→ Phase 3 の `sim-race`。`World` にタイミング機構を足さない
+- `Trajectory` の `Defensive` / `Overtake*` などの**生成**（`sim-line` 側 + Phase 3+）
+- 車種別 `SpeedProfile`（Phase 3+）
+- `spawn` 姿勢の完全化 = **TASK-1B-4**（下記 Known Risks を参照。本タスクの前提条件ではない）
+- `SpeedProfile` の標高勾配補正（TASK-2-1 R8）。**本タスクで埋めない**
+- `Controller` に `engine_rpm` を渡すシグネチャ変更（下記のとおり**明示的に延期**）
+- UE5 / 製品レンダラ / UI / 音 / カメラ演出
+- `sim-ffi` / `sim-race` crate の新設
+
+### Known Risks
+
+| Risk | 対策（仕様に設計済み） |
+|------|----------------------|
+| 物理 tick ごとに `Driver::update` を呼んでしまい操舵レートが 4 倍になる | Part B の zero-order hold を厳守。T-CORE-AI-01 が外形から検出する |
+| 運動学プラント向けゲインが実物理で発散する（Deviation 8） | Part F の**定数値限定**の再調整を許可。`sim-driver` の既存 16 テスト無改変通過が網 |
+| 限界付近で素直にスピンする（TASK-1B-1 C-1） | Controller の逆操舵 + ヨー減衰 + スライド時スロットル絞りは実装済み。実物理での効きは T-AI-01R が判定する |
+| `spawn` 姿勢がヨーのみ（D-1 / TASK-1B-4 保留）で発進直後に過渡が出る | **グリッドは S/F ストレートに置く**（縦勾配の影響が 5.5e-5 m の区間）。1 周目を緩和帯で判定（T-AI-01R）。TASK-1B-4 は本タスクの前提条件では**ない** |
+| `world_to_track` を Driver フェーズで再実行して性能と `hint` の一貫性を壊す | `entry.coord` を渡す（Part B / T-CORE-AI-04） |
+| 借用検査（`&self.vehicles` を読みつつ `&mut drivers`）で行き詰まる | `World` を let-else / 構造体分解で field ごとに借りる（既存 `step` の書き方に倣う）。`drivers` を `vehicles` と別の `Vec` にしてあるのはこのため |
+| `WasmWorld` の既存 API の意味を変えて Engineering View が壊れる | 追加のみ。`step` / `telemetry` / `body_poses` の意味は不変（T-CORE-AI-02 / T-WASM-AI-01） |
+| ステーション規約が `TrackView` と `WorldView` でずれ、ラインと路面が食い違う | 生成を 1 関数に集約。`TrackView::stations` の出力は 1 ビットも変えない |
+| バンク / 標高勾配の二重補正 | バンクは `SpeedProfile` 織り込み済み・勾配は既知の未考慮（R8）。**どちらも `sim-core` / Driver 側で触らない** |
+| ラップ加算の既知の弱さ（Forward のみ +1） | 本タスクでは変えない。周回数の確定は Phase 3（D-3） |
+
+### Design Concerns の処置（TASK-2-2 完了報告への Architect 回答）
+
+1. **ローリングスタート vs グリッドスタート（Concern 1）→ 本タスクのスコープに取り込む。**
+   TASK-2-2 の運動学プラントは初速 ≤ 20 m/s のローリングスタートで、静止発進は未検証だった。
+   実物理では `World::spawn` が**静止**で車を置くため、発進が成立しなければ何も測れない。
+   **T-CORE-AI-03（静止発進で 3 周完走）を新設**し、T-AI-01R の逸脱判定を
+   「2 周目以降は厳密・1 周目は ±0.5 m の緩和帯」に分けた。
+   クラッチ / 1 速の発進ロジックは `Controller` に実装済み（`LAUNCH_SPEED_MS`）なので、
+   必要なら Part F の定数再調整で対処する。**制御則の構造変更は禁止。**
+
+2. **`Controller` が `engine_rpm` を読んでいない（Concern 2）→ 明示的に延期する。**
+   理由: (a) 修正には `Controller::update` の公開シグネチャ変更が必要で、
+   `sim-driver` の凍結解除範囲を「定数値のみ」に留める本タスクの方針と衝突する。
+   (b) 現在の推定は速度とギア比からの運動学的な逆算であり、**発散する種類の誤差ではない**
+   （クラッチスリップ中と変速過渡の一時的なずれに限られる）。
+   (c) 影響の大きさが**まだ測られていない**。
+   **T-CORE-AI-07 で実 `engine_rpm` の健全性（リミッター当て / ボギングの tick 比率）を
+   計測して報告させる。** その数値を見て Architect が TASK-2-4 として起票するか判断する。
+   実装者が先回りしてシグネチャを変えてはならない。
+
+3. **TASK-1B-4（`spawn` 姿勢の完全化）は本タスクの前提条件ではない。**
+   グリッドを S/F ストレート（縦勾配の影響 5.5e-5 m）に置く限り無害であり、
+   `sim-vehicle` の公開 API 変更（= 人間承認事項）を本タスクに巻き込まない。
+   ただし **T-CORE-AI-03 で `recovered_steps == 0` を課す**ので、
+   姿勢起因の初期過渡が実害を出せば必ず検出される。検出された場合は
+   `BLOCKED BY ARCHITECTURE` を出すこと（勝手に `sim-vehicle` を触らない）。
+
+### 完了時の報告フォーマット
+
+```
+TASK-2-3 COMPLETE
+
+Implemented Files:
+Test Results:               (cargo test の実出力 / 既存 170 からの増分)
+T-AI-01R / 05R / 07R:       (実物理での再検証。逸脱量の最大値・3 名のラップタイム表・
+                             reaction_time 0.0 と 0.30 の差の実測)
+Standing Start (T-CORE-AI-03): (発進から 25 m/s までの秒数・3 周のラップタイム・recovered_steps)
+Gear Health (T-CORE-AI-07): (リミッター当て tick 比率 / ボギング tick 比率の実測値。
+                             ★Architect が TASK-2-4 の要否を判断する材料。必ず数値で)
+sim-driver Constant Retune:  (Part F。定数名 / 変更前 / 変更後 / 物理的理由 / 効く受け入れ項目の表。
+                             再調整が不要だったならその旨。sim-driver 既存 16 テストの結果も)
+PDC-1 Launch Clutch:         (Part F-1。採用した LAUNCH_CLUTCH_BITE / 静止から 25 m/s までの秒数 /
+                             発進中の駆動輪 slip_ratio ピークと slip_ratio > 1.0 の継続秒数。
+                             承認済み設計変更なので diff に式の変更が 1 本含まれてよい唯一の箇所)
+Structural Guarantees:      (zero-order hold の実装箇所・ControlInput 素通しの箇所・
+                             coord が真値である箇所を行番号で)
+Determinism Check:          (T-CORE-AI-08 の方法と結果。spawn 順非依存の確認を含む)
+Browser Verification:       (headless Chrome + CDP。レーシングライン / v_target 着色 /
+                             Driver HUD のスクリーンショットと数値)
+no-default-features / wasm32 / wasm-pack build:
+Clippy / fmt Results:
+Performance:                (step_sim_tick 24 台 / Driver フェーズ / RacingLine::generate の実測)
+Frozen-file diffs:          (空であること。sim-driver/src は定数と doc のみである diff 全文)
+Deviations from Spec:       (★未申告の受け入れ数値緩和は禁止)
+Design Concerns Found:
+Phase 3 への申し送り:        (複数台 / レース状態機械 / 計時が知っておくべきこと)
+```
+
+**git commit はしないこと。** 作業ツリーに残し、レビューを受けること。
+
+---
+
+## TASK-2-3 — 進捗メモ（Sonnet 5・2026-09-09・**land 済み・Architect 最終監査待ち**）
+
+> **状態: 構造配線 + PDC-6 実装完了。Architect Round-2 裁定 = (a)「s≈3150 の根因は
+> Controller ではなく `sim-line::Trajectory::reference` の未収束基準ライン」→ 残りは
+> TASK-2-4（人間承認待ち）へ繰り越し。TASK-2-3 は PDC-6 込みで land する。**
+>
+> - **PDC-6**（`planner.rs` の `plan_brake_decel` = 摩擦楕円 running-min）→ T3（R63・s≈1470）
+>   クリーン通過、クリーン基準ドライバーで s≈3150 まで（76%）逸脱ゼロ走行。
+> - **PDC-7** は契約どおり試作 → `t_ai_01` を壊す（Known Risk #5）+ weave に無関係 → **完全 revert**。
+> - `world_ai.rs`: 診断テスト（`smoke_trace` / `probe_track_profile` + env フック）削除。
+>   **T-CORE-AI-04 / 05 / 07 / 08 / 09** と、`s < S_VALIDATED_M(=3100)` に範囲限定した
+>   **T-CORE-AI-10** を追加。**T-CORE-AI-03 / T-AI-01R/05R/07R は TASK-2-4 へ繰り越し**。
+> - `cargo test --release` **181 passed** / clippy 0 / fmt clean / no-default-features / wasm32 OK。
+>
+> **現在の作業ツリー**: PDC-6（`sim-driver/src/planner.rs`）+ `sim-core/tests/world_ai.rs` 書き換え。
+> `controller.rs` は TASK-2-2 状態（PDC-1/3/5 + 定数再調整は適用済み・PDC-7 残渣ゼロ）。
+
+### TASK-2-3 land 完了報告（Sonnet 5・2026-09-09）
+
+```
+Scope Confirmation:        crates/sim-driver/src/planner.rs（PDC-6）
+                           crates/sim-core/tests/world_ai.rs（診断削除 + T-CORE-AI-04/05/07/08/09/10）
+                           TODO.md / HANDOFF.md / docs/phase-0.5-results.md（記録）
+                           ※ .gitignore(M) / tools/ue_python/ / ue/ / docs/phase-0.5-results.md は
+                             TASK-05-1 の別件。TASK-2-x の commit には含めない（Architect 指示）。
+Frozen-file diffs:         なし（sim-math / sim-track / sim-vehicle / sim-line / sim-driver/tests /
+                           sim-driver/src/{lib,driver,model,perception,decision}.rs / assets / tools /
+                           docs（phase-0.5-results.md 除く）/ sim-core/src / sim-core/tests/core.rs /
+                           view-engineering は無改変）
+PDC-6 実装:                plan_brake_decel(env, v_ref, kappa) = min(√(a_tyre²−a_lat²), max_brake_decel)。
+                           a_tyre = env.mu · MU_LOAD_DERATE(0.877) · g_eff、g_eff は DF 込み。
+                           目標速度ブロックの後退パスを、地点ごとの plan_brake_decel の
+                           「走査済み区間 running-min（a_min）」で駆動。a_ref（κ=0 の直線制動能力）で
+                           先読み区間長を決める。A_BRAKE_FLOOR = 1.0 [m/s²]。
+PDC-7 実装:                しなかった（撤回）。理由: PDC-7 は t_ai_01 を破り（運動学プラントで
+                           コーナー中の制動を減らす = Known Risk #5）、かつ s≈3150 の失敗は
+                           制動 washout でなく lateral weave なので無関係。契約の停止条件に従い
+                           controller.rs は完全 revert（grep で残渣ゼロ確認）。
+sim-driver 16 tests:       無改変で全通過（t_ai_01〜08 / t_drv_01〜06 / smoke_lap_times / lib 1 本）。
+T3 通過（clean ref driver・seed 1・grid s=40）:
+                           s≈1470 で v=29.9 / v_target=31.8 / brk=0.00 / he=+0.013 / beta=−0.071 /
+                           t=+2.83。washout なし。以前はここでコースアウトしていた。
+検証区間走行:              s=3100 まで逸脱ゼロ（T-CORE-AI-10・CONTAIN_TOL_M=0.0 で worst 0.000 m）。
+                           s≈3150 で lateral weave 発散（TASK-2-4 の根因）。
+新テストの診断値:          T-CORE-AI-04 worst |coord − world_to_track| = 0.0e0 m
+                           T-CORE-AI-07 4611 tick・limiter-banging 0.22%・bogging 0.24%（各 <2%）
+                           T-CORE-AI-09 24 台 step_sim_tick = 0.936 ms/tick（予算 3.5）
+                           T-CORE-AI-10 worst excursion 0.000 m（validated to s=3100）
+定数の変更前 → 変更後:      上表「定数の変更前 → 変更後」に MU_LOAD_DERATE / A_BRAKE_FLOOR を追記済み。
+                           TRAIL_MIN / KAPPA_TRAIL / K_HEADING / K_UNDERSTEER / MU_TRACTION /
+                           PACE_SCALE_* / LOOKAHEAD_* は不変。
+Test / clippy / fmt / build:
+                           cargo test --release  → 181 passed / 0 failed
+                           cargo clippy --all-targets -- -D warnings → 0
+                           cargo fmt --check → clean
+                           cargo build -p sim-core --no-default-features / --target wasm32 → OK
+                           cargo build -p sim-driver --no-default-features → OK
+Deviations from Spec:      (1) T-CORE-AI-10 のドライバーを `DriverModel::balanced()` から
+                               「クリーン基準ドライバー（全スキル 0.6 / consistency 1.0 /
+                               error_rate 0.0 / RT 0.20）」へ変更（Architect 監査で代替を承認）。
+                               ★当初の理由記述「error_rate + consistency のミスが原因」は
+                               事実誤認だった。Architect の軸別実測（R1）:
+                               error_rate 0.5 / spatial_awareness 0.5 / reaction_time 0.25 を
+                               単独で上げても完走する。破綻するのは consistency 0.5（操舵ノイズ
+                               σ≈1%）と、能力値 0.6→0.5（pace/braking/cornering。3 seed とも
+                               s=1543 で決定論的 = 乱数無関係）。後者は「安全側の変更で悪化」する
+                               非単調挙動で、T3 の閉ループ安定余裕が実質ゼロであることの証拠
+                               （→ K-1 / HANDOFF §10 既知の問題）。テスト内 doc を実測表で訂正済み。
+                           (2) T-CORE-AI-10 の検証範囲を全周 3 周 → `s < S_VALIDATED_M = 3100`（named
+                               const）に縮小。Architect Round-2 裁定どおり。doc に「TASK-2-4 で
+                               全周へ拡張」と明記。
+                           (3) T-CORE-AI-03 / T-AI-01R / T-AI-05R / T-AI-07R は未実装 → TASK-2-4 へ繰り越し
+                               （Architect Round-2 裁定）。
+                           ※ いずれも受け入れ数値の「緩和」ではなく Architect 承認済みのスコープ変更。
+Design Concerns Found:      (a) 基準ライン `Trajectory::reference` の収束判定が per-sweep 更新量ベースで、
+                               4 階作用素の長波長モードが未収束のまま返る（直線区間で κ_traj が ±0.006・
+                               波長 70 m で残留）。→ TASK-2-4 Phase 1（Architect 起票済み・K-2）。
+                           (b) **T3（s≈1543）の閉ループ安定余裕がゼロ**（K-1・HIGH）。PDC-6 は T3 を
+                               「修理」したのではなく level 0.6 という 1 点で閾値の向こうへ押しただけ。
+                               `CONTAIN_TOL_M = 0.0` の緑は堅牢性の証拠ではない。→ TASK-2-4 の
+                               T-CORE-AI-11（モデルスイープ）が実質的合否。
+Phase 3 への申し送り:       周回数の確定（Forward-only カウンタの限界）は D-3 のまま未着手。
+                           T-CORE-AI-10 の全周版が通ってからレース状態機械へ。
+```
+
+### commit（人間の go 待ち・Architect が実施）
+
+Round-1/2 裁定どおり（Architect が commit 直前に `git status` で TASK-05-1 分の除外を再確認する）:
+1. **TASK-2-1**（`sim-line`）: `feat(sim-line): corridor, reference trajectory, physics-derived speed profile`
+2. **TASK-2-2**（`sim-driver`）: `feat(sim-driver): perception/decision/planner/controller producing ControlInput`。
+   本文に「PDC-1/3/5/6 および定数再調整は TASK-2-3 の実物理統合で発見された修正であり、
+   `sim-driver` が untracked だったため本 commit に同梱。経緯と定数表は TODO.md の
+   TASK-2-3 完了報告を参照」と明記。
+3. **TASK-2-3**: `feat(sim-core): drive Driver AI on real vehicle physics through World`
+   （`sim-core` 配線 + `sim-wasm` + EV + `world_ai.rs`）。本文に「定数の変更前 → 変更後」表と
+   PDC-1/3/4/5/6 の要約、**および「T3（s≈1543）の閉ループ安定余裕はゼロ・`CONTAIN_TOL_M=0.0` の
+   緑は 1 点でのみ成立・TASK-2-4 の T-CORE-AI-11 で是正」**（K-1）を明記。受け入れ基準 10
+   （frozen-file diff）は定数表で代替。
+4. **`.gitignore` / `tools/ue_python/` / `ue/` / `docs/phase-0.5-results.md` は TASK-05-1 の別 commit**
+   （TASK-2-x に混ぜない・Architect 指示）。
+
+### 完了・検証済み
+
+| 項目 | 状態 |
+|------|------|
+| `cargo test --release` | **177 passed / 0 failed**（170 baseline + T-CORE-AI-01/02/06 + T-WASM-AI-01 + `t_wasm_ai_seed_determinism` + 診断 2 本） |
+| `cargo clippy --all-targets -- -D warnings` | 0 |
+| `cargo fmt --check` | clean |
+| `cargo build -p sim-core --no-default-features` / `--target wasm32-unknown-unknown` | OK |
+| `wasm-pack build crates/sim-wasm --target web` | OK |
+| `sim-driver` の既存 16 テスト | **無改変で全通過**（Part F の必須条件） |
+| 凍結 crate の差分 | ゼロ（`sim-math` / `sim-track` / `sim-vehicle` / `sim-line` / `sim-driver/tests` / `assets` / `tools` / `docs` / `sim-core/tests/core.rs` / `view-engineering/src/track_mesh.js`） |
+
+**実装ファイル**:
+- `crates/sim-core/src/rng.rs`（新規）— `driver_rng`
+- `crates/sim-core/src/racing_line.rs`（新規）— `RacingLine` + PDC-4（`LOAD_RATIO_REF`）
+- `crates/sim-core/src/world.rs` — `spawn_with_driver` / `step_sim_tick(_with)` / zero-order hold / `WorldError::{NoRacingLine,Driver}` / `drivers: Vec<Option<Driver>>`
+- `crates/sim-core/src/lib.rs` / `Cargo.toml` — モジュール宣言・再エクスポート・依存追加
+- `crates/sim-core/tests/world_ai.rs`（新規）— T-CORE-AI-01/02/06 + 診断（`smoke_trace` / `probe_track_profile` はアサート薄・**最終提出前に整理が必要**）
+- `crates/sim-wasm/src/lib.rs` / `Cargo.toml` — `set_race_seed` / `attach_racing_line` / `spawn_driver` / `step_sim` / `sample_racing_line` / `sample_target_speed` / `driver_telemetry` / `sim_tick` + `WasmWorld` バインディング + `stations_for` 集約 + T-WASM-AI-01
+- `crates/sim-driver/src/{controller.rs, planner.rs}` — **定数値の再調整 + PDC-1/3/5 の式変更**（下表）
+- `view-engineering/src/{main.js, overlay.js}` — Part E（レーシングライン `u` / aim `i` レイヤ、Driver HUD、`step_sim` 駆動、`__engview.{driverTelemetry, racingLine}`）。**headless ブラウザ検証は未実施**
+
+### PDC 履歴（Architect 承認済み）
+
+| PDC | 内容 | 場所 |
+|-----|------|------|
+| **PDC-1** | 静止発進のクラッチ・バイト点（`clutch = 1 - v/LAUNCH` は `v=0` で恒等的に全切断 → axle torque 0 で動けない） | `controller.rs` `LAUNCH_CLUTCH_BITE` + 式 |
+| **PDC-3** | トラクション制限フィードフォワード（低ギア全開が要求する駆動力がリアグリップ円を超える → パワーオーバーステア）。`Controller` に `VehicleParams` 由来の private フィールド追加を承認 | `controller.rs` `traction_throttle_cap` / `MU_TRACTION` / `SLIDE_CUT_DEPTH` |
+| **PDC-4** | 実効 μ 補正。`PerformanceEnvelope::from_params` が `mu = mu0` を荷重感度なしで写す → ダウンフォース域で SpeedProfile の限界速度が ~20% 楽観的。`sim-line` は凍結のまま `racing_line.rs` で `envelope.mu` を上書き | `racing_line.rs` `LOAD_RATIO_REF = 1.5` → μ 1.316 |
+| **PDC-5** | アンダーステア勾配フィードフォワード。`atan(L·κ)` は純 Ackermann（スリップ角ゼロのプラント専用）で実タイヤの高速コーナーで舵不足。`δ += K_us·v²·κ` | `controller.rs` `K_UNDERSTEER = 0.0018` |
+| **A（却下）** | 曲率スケジュール `K_HEADING` — 欠けている feed-forward をフィードバックゲインで代替する mis-tuning と判定 | — |
+| **D（承認）** | `pace_scale` の上限 `1.00 → 0.98`（§6「pace は物理限界より下の係数」に沿う） | `planner.rs` `PACE_SCALE_MIN/MAX` |
+| **PDC-6（承認・実装済）** | Planner の制動計画が摩擦円を無視（`a_brake_plan = max_brake_decel·skill` ≈ 26 m/s²、実タイヤは 45 m/s で ≈20、ターンインでさらに横に食われる）→ ブレーキングポイントが ~30 m 遅く計画され T3 washout。目標速度ブロックを地点ごとの摩擦楕円 `√(a_tyre²−a_lat²)` の先読み running-min へ差し替え | `planner.rs` `plan_brake_decel` / `MU_LOAD_DERATE=0.877` / `A_BRAKE_FLOOR=1.0` |
+| **PDC-7（試作 → 撤回）** | フロント軸の摩擦円で `brake_raw` を追加クランプ（`brake_lat_cap`）。**`t_ai_01` を破り（Known Risk #5）、かつ s≈3150 の失敗は制動 washout でなく lateral weave なので無関係** → 完全 revert | `controller.rs`（現在は残渣ゼロ） |
+
+### 定数の変更前 → 変更後（Part F。**Quality Gate の必須記録**）
+
+| 定数 | ファイル | 前 | 後 | 理由 / 効く受け入れ項目 |
+|------|---------|----|----|------------------------|
+| `LAUNCH_CLUTCH_BITE` | controller | （新規） | `0.6` | PDC-1。静止発進（T-CORE-AI-03） |
+| `MU_TRACTION` | controller | （新規） | `1.316` | PDC-3/4。トラクション円を実効 μ に合わせる |
+| `SLIDE_CUT_DEPTH` | controller | 式中 `0.3` | `0.5`（const 化） | PDC-3 随伴。スライド時スロットル絞りのバンバン化解消 |
+| `K_UNDERSTEER` | controller | （新規） | `0.0018` | PDC-5。高速コーナーのターンイン（T2） |
+| `K_HEADING` | controller | `0.55` | `0.30` | 実物理で 50 m/s 直進の 1 Hz ヨー共振が `-K_HEADING·he` の正帰還で発散 → 抑制 |
+| `K_YAW_DAMP` | controller | `0.16` | `0.16`（不変） | — |
+| `K_COUNTERSTEER` / `BETA_LIMIT_RAD` | controller | `0.9` / `0.12` | 不変 | 一度上げたが T2/T3 が μ 由来と判明し revert |
+| `UPSHIFT_FRACTION` | controller | `0.97` | `0.95` | 変速トルクカット時間ぶん早めに上げると実効加速良（[0.90, 0.97] で Architect 承認） |
+| `HEADING_DIFF_M` | **driver（凍結）** | `1.0` | `1.0`（**revert 済み**） | 一度 10.0 にしたが driver.rs は Part F 非対象 → 差し戻し |
+| `LOOKAHEAD_*` | planner | TASK-2-2 値 | **全て TASK-2-2 値へ revert** | 一時的に伸ばしたが根因が μ と判明し revert |
+| `PACE_SCALE_MAX` | planner | 式中 `1.00` | `0.98`（const 化） | D 承認。v_target に制動/ターンインの余裕 |
+| `PACE_SCALE_MIN` | planner | 式中 `0.90` | `0.90`（const 化） | — |
+| `LOAD_RATIO_REF` | **racing_line（新規・非 sim-line）** | （新規） | `1.5` | PDC-4 |
+| `TRAIL_MIN` / `KAPPA_TRAIL` | controller | `0.35` / `0.03` | **不変** | 触ると `t_ai_01` が落ちる。Architect 裁定 (b) により T3 は PDC-6（planner 側）で解決したので**触る必要がなくなった** |
+| `MU_LOAD_DERATE` | **planner（新規）** | （新規） | `0.877` | PDC-6。`mu_eff = envelope.mu · 0.877`（`1/(1+0.28·0.5)`）。controller の `MU_TRACTION=1.316` と同じグリップ像 |
+| `A_BRAKE_FLOOR` | **planner（新規）** | （新規） | `1.0` | PDC-6。先読み区間長を有限に保つフロア [m/s²] |
+
+### 実物理での到達状況（solo・level 0.6・RT 0.20・seed 1・grid s=40）— PDC-6 適用後
+
+| 区間 | 結果 |
+|------|------|
+| 静止発進 → T1（R130・170 m） | ✅ クリーン（he/β < 0.08、逸脱 < 0.5 m） |
+| メインストレート 750 m・50〜55 m/s | ✅ クリーン（K_HEADING の修正で 1 Hz 共振が消えた） |
+| T2（R125・55 m/s 進入） | ✅ クリーン（PDC-4 で v_at を現実化、PDC-5 でターンイン舵力） |
+| **T3（R63・s≈1470）** | ✅ **PDC-6 でクリーン通過**。29.9 m/s まで減速、`t=+2.83`、`brk=0.00`、washout なし |
+| S 字・中速セクション（s≈1500〜3100） | ✅ 概ねクリーン（s≈1878 で β≈0.29 の wobble を出すが復帰） |
+| **s≈3150（ヘアピン s≈3320 の 170 m 手前・R≈36000 のほぼ直線）** | ❌ **lateral weave が発散してスピン**。`brk=0` / `thr=0.6` で加速中（制動 washout ではない）。`str` が +0.34→+0.62→−0.43→−0.72→−0.98 と発散振動、`he`/`beta` も同位相で増幅 = PIO / ヨー共振。この区間の `trajectory.curvature_at` が ±0.003 で 40 m ごとに符号反転（s=3120 +0.0033 / 3160 −0.0032 / 3200 +0.0017 / 3240 −0.0040 / 3280 +0.0096） |
+
+**クリーン走行距離: 4139 m 中 ~3150 m（76%）。T3・S 字・中速セクションを含む。残る障害は制動則ではなく lateral inner-loop の高速安定性。**
+
+再現: `TICKS=5400 EVERY=12 LEVEL=0.6 RT=0.20 GRIDS=40 cargo test --release -p sim-core --test world_ai smoke_trace -- --nocapture`
+
+### 残タスク（引き継ぎ用・優先順）
+
+#### 0. 状態: land 済み・Architect 最終監査待ち
+
+**Round 1** 裁定 (b) → PDC-6 実装 → T3 通過・16 テスト無改変通過。s≈3150 で lateral weave
+発散。PDC-7 は `t_ai_01` を壊し weave に無関係なので撤回。
+**Round 2** 裁定 = **(a)**: Architect が独立計測で根因を特定 — Controller ではなく
+`sim-line::Trajectory::reference` の**未収束基準ライン**（直線区間で κ_traj が ±0.006・波長 70 m）。
+(b′) の 3 案（曲率平滑化 / ゲイン速度スケジュール / lookahead 延長）はいずれも欠陥の隠蔽なので却下。
+→ **TASK-2-3 は PDC-6 込みで land**（診断テスト削除・T-CORE-AI-04/05/07/08/09/10 追加・181 passed）。
+残り（基準ライン収束修正 + 3 周完走 + T-AI-01R/05R/07R + テスト基盤移行）は **TASK-2-4**
+（`# NEXT SONNET TASK` に契約起票済み・**人間承認待ち**）。
+
+次: Architect の最終監査 → APPROVED → 人間の go → commit（順序は上記「commit」節）。
+
+#### 1.（裁定 (a) の場合）TASK-2-3 を land する残作業
+
+- [ ] `crates/sim-core/tests/world_ai.rs` の **`smoke_trace` / `probe_track_profile` を削除**
+      （アサートが薄い診断用。EVERY/TICKS/RT/GRIDS の env フックも一緒に削除）。
+      あるいは T3 手前までを検証する実テストに作り替える
+      （例: 「2 周目以降 s < 1400 の全 tick で `coord.t` が `corridor.limit_bounds(s)` の内側」）。
+- [ ] **T-CORE-AI-04**（`coord` が真値・Driver フェーズで `world_to_track` 追加呼び出しなし）、
+      **T-CORE-AI-05**（`ControlInput` が唯一の作用経路・`state.last_input` と
+      `driver.last_input()` の 6 成分ビット一致）を追加。T3 を通らずに書ける。
+- [ ] **T-CORE-AI-08**（決定性 + `spawn_with_driver` 順序非依存）: 順序非依存は
+      `sim_core::rng::driver_rng(&race, VehicleId(0))` が `VehicleId(1)` の派生有無で不変、を
+      直接検証（`Rng::derive` の性質）。3600 sim tick × 2 回のビット一致は T3 手前で打ち切って可。
+- [ ] **T-CORE-AI-03 / 05R / 07R / 09（3 周完走系）は T3 を通らないと書けない** → TASK-2-4 待ち。
+      完了報告に「T-AI-01R/05R/07R は TASK-2-4 の受け入れへ繰り越し」と明記。
+- [x] **Engineering View の headless 検証は完了**（`build/engineering-view/task-2-3-ai-{overview,chase}.png`。
+      レーシングライン v_target 着色 2071 点・頂点カラーあり・v range [13.2, 72.0]、
+      Driver HUD（mode/confidence/v_target/heading_err/sideslip 等）、aim マーカー（黄球）、
+      console error 0 を確認）。検証スクリプトは
+      `<scratchpad>/ev_verify.mjs`（Node 24 の組み込み `WebSocket` + CDP。
+      `python -m http.server 8080` をリポジトリルートで、headless Chrome を
+      `--remote-debugging-port=9222 --enable-unsafe-swiftshader` で起動してから実行）。
+      **軽微**: Driver HUD パネルが左の凡例と少し重なる（`overlay.js` の `#driver` div 追加による。
+      機能は読める。CSS の微調整は任意）。
+- [ ] 完了報告を `TODO.md` に追記（フォーマットは本契約「完了時の報告フォーマット」。
+      `PDC-1 Launch Clutch:` 行と `sim-driver Constant Retune:` の表を必ず含める。
+      本進捗メモの「定数の変更前 → 変更後」表がその素材）。
+- [ ] Architect の最終監査 → APPROVED なら commit。
+
+#### 2. commit 順（人間の go 待ち・Architect が実施）
+
+1. TASK-2-1（`sim-line`）— 監査済み。`feat(sim-line): corridor, reference trajectory, physics-derived speed profile`
+2. TASK-2-2（`sim-driver`）— 監査後。`feat(sim-driver): perception/decision/planner/controller producing ControlInput`
+3. TASK-2-3（`sim-core` 配線 + `sim-wasm` + EV）— 監査後。
+
+**注意**: TASK-2-3 の `sim-driver/src/{controller,planner}.rs` の変更（PDC-1/3/5 + 定数再調整）は
+TASK-2-2 の commit に含めるか TASK-2-3 に含めるか Architect が決める。`git status` 上
+`crates/sim-driver/` はまだ untracked なので `git diff crates/sim-driver` は空
+（受け入れ基準 10 は本進捗メモの定数表で代替する。Architect の指示事項）。
+
+#### 3. TASK-2-4（新規・Architect が契約起票・人間承認が要る可能性）
+
+**目的**: Controller の縦横合成スリップ（friction circle）対応。特に trail-braking の
+ブレーキリリース・スケジュール。現状 T3（R63）で `brk ≈ 0.9` のままターンインし、
+フロントが縦（制動）で飽和して横（旋回）が出ず washout する（`beta ≈ 0` の純アンダーステア）。
+
+- **凍結解除が要るもの**: `crates/sim-driver/tests/**`（特に `t_ai_01_stays_on_course_for_20_laps` /
+  `t_drv_04`）。これらは combined-slip 円の無い運動学プラント前提なので、`TRAIL_MIN` /
+  `KAPPA_TRAIL` を実物理向けに下げると落ちる。実物理閉ループ（`World` + 実 `Vehicle`）の
+  テストへ作り替える必要がある。
+- **候補の式変更**: `brake_raw` を `1 - saturate(front_lat_demand / front_grip)` で追加クランプ
+  （PDC-3 の `traction_throttle_cap` の縦横入れ替え版・フロント軸）。または trail 係数を
+  `kappa_traj` ではなく「今フロントが横に使っている割合」で駆動。
+- **受け入れ**: 本契約の **T-AI-01R / T-AI-05R / T-AI-07R**（実物理でフルラップ・
+  能力値がラップタイムに創発・reaction_time 遅延が効く）＋ **T-CORE-AI-03**（静止発進 3 周完走）
+  ＋ **T-CORE-AI-07**（変速健全性の数値報告）＋ **T-CORE-AI-09**（性能 `step_sim_tick` ≤ 3.5 ms / 24 台）。
+- **再現手順**: `<scratchpad>` に一時テストを置いて `GRIDS=0` で T3（s≈1470）到達を観察していた。
+  land 時に消した `smoke_trace` を戻すか、実テストで代替する。
+  現象: T1 + 750 m ストレート + T2 まで he/β < 0.08 でクリーン、T3 進入で `he` が −0.13 → −0.83、
+  `str` フルロック、`t` が −2 → −30 でコース外。`beta` は終始 ≈ 0（スライドではない）。
+
+#### 4. 参考: 現在の Driver 定数の状態（TASK-2-4 の出発点）
+
+`crates/sim-driver/src/controller.rs`:
+- PDC-1: `LAUNCH_CLUTCH_BITE = 0.6` + 発進クラッチ式
+- PDC-3: `MU_TRACTION = 1.316`, `SLIDE_CUT_DEPTH = 0.5`, `traction_throttle_cap()` メソッド +
+  `Controller` の private フィールド `mass_kg` / `rear_weight_frac` / `cl_a_rear` /
+  `peak_drive_torque` / `driveline_eff`（`new` で `VehicleParams` から）
+- PDC-5: `K_UNDERSTEER = 0.0018` + `delta_ff` に `+ K_UNDERSTEER·v²·κ`（`±max_steer_angle` でクランプ）
+- 再調整: `K_HEADING 0.55 → 0.30`（50 m/s 直進の 1 Hz ヨー共振）、`UPSHIFT_FRACTION 0.97 → 0.95`
+- **不変（TASK-2-2 のまま）**: `K_YAW_DAMP 0.16`, `K_COUNTERSTEER 0.9`, `BETA_LIMIT_RAD 0.12`,
+  `TRAIL_MIN 0.35`, `KAPPA_TRAIL 0.03`（← T3 の修正対象。触ると `t_ai_01` が落ちる）
+
+`crates/sim-driver/src/planner.rs`:
+- D 承認: `PACE_SCALE_MIN = 0.90` / `PACE_SCALE_MAX = 0.98`（式中リテラルを const 化・上限を 1.0 未満へ）
+- **不変**: `LOOKAHEAD_*`（一時的に伸ばしたが根因が μ と判明し revert 済み）
+
+`crates/sim-core/src/racing_line.rs`:
+- PDC-4: `LOAD_RATIO_REF = 1.5` → `envelope.mu = mu0 / (1 + LS·0.5)` ≒ 1.316（`sim-line` は凍結のまま）
+
+`crates/sim-driver/src/driver.rs`: **無変更**（`HEADING_DIFF_M` を一度触ったが revert 済み。凍結）。
+
+### Architect が指摘したパターン（重要）
+
+TASK-2-2 の Controller は**タイヤモデルの無い運動学プラント**に対して検証された。ゆえに
+タイヤスリップに依存する項（クラッチ / トラクション / μ / アンダーステア / trail-braking）が
+**すべて欠落または誤スケール**。4 ラウンドで 4 つの根因（launch clutch / traction limit / μ /
+trail-braking）が判明。5 つ目（trail-braking）だけがテスト凍結解除を要する。
+
+---
+
+## TASK-2-2 — 完了報告（Sonnet 5・2026-09-09）
+
+```
+TASK-2-2 COMPLETE  （実装 Sonnet 5 / 監査 Opus 5 未実施・作業ツリーに残置）
+
+Implemented Files:
+  Cargo.toml                         members に crates/sim-driver を追加（1 行）
+  Cargo.lock                         sim-driver / sim-line エントリの自動追加のみ
+  crates/sim-driver/Cargo.toml       依存 = sim-math + sim-track + sim-vehicle + sim-line
+  crates/sim-driver/src/lib.rs       SIM_DT / PHYSICS_TICKS_PER_SIM_TICK / 再エクスポート / #![deny(unsafe_code)]
+  crates/sim-driver/src/model.rs     DriverModel(14 能力値) / DriverState / precision() / confidence 更新則
+  crates/sim-driver/src/perception.rs Perception(2 系統遅延 + 低域ノイズ) / PerceivedSelf
+  crates/sim-driver/src/decision.rs  DriverMode(12) / DriverIntent / FreeAir のみ生成・重み平滑化・min_dwell
+  crates/sim-driver/src/planner.rs   Plan / t_target(clamp が唯一の出口) / v_target(後退パス局所再現) / lookahead
+  crates/sim-driver/src/controller.rs Pure Pursuit + κ_traj FF + 逆操舵 + ヨー減衰 + 縦方向 + 変速
+  crates/sim-driver/src/driver.rs    Driver / DriverObservation / 4 層統合 / 真値組み立て / ミス発生
+  crates/sim-driver/tests/common/mod.rs 運動学プラント（グリップ円 + ダウンフォース）テストハーネス
+  crates/sim-driver/tests/driver.rs  T-AI-01〜08 / T-DRV-01〜06 + スモーク（計 15 + lib 1）
+  Rust 約 2 400 行（src 約 1 250 / tests 約 1 150）。手書き unsafe 0 行。
+
+Test Results:  cargo test --release → 170 passed / 0 failed
+  （既存 154 に退行なし。増分 = sim-driver 16 = lib 1 + integration 15）
+  sim-driver 内訳: t_ai_01..08 / t_drv_01..06 / smoke_lap_times / sim_dt_matches_physics_dt
+
+Structural Guarantees（行番号は実装時点）:
+  steer   move_towards  … controller.rs:192（rate_limited）→ :193 で腕の一次遅れ
+  throttle move_towards … controller.rs:224
+  brake   move_towards  … controller.rs:225
+  v_target クランプ      … planner.rs:147  `clamp(v_target, 0.0, v_cap)`（省略禁止）
+  t_target クランプ      … planner.rs:99/101（合成直後）+ :111/113（平滑化過渡のガード。
+                           クランプ関数は域内で冪等なので「唯一の出口」を壊さない）
+  曲率は trajectory.curvature_at のみ … controller.rs:154 / planner 経由の SpeedProfile
+  出力は ControlInput のみ・&mut は Driver::update だけ（grep 済み・T-DRV-06）
+
+Independent Verification:
+  T-AI-02 DFT: 落ち着いた 1200 サンプル窓を素朴 DFT。5 Hz 以上のパワー和 / 全体 < 0.05。
+    2 階差分 RMS ≤ 0.02。|Δsteer| ≤ 4.25·SIM_DT + 1e-12（precision 0.5）。実測すべて内側。
+  T-DRV-02 符号: 合成 VehicleState（sideslip +0.25 rad・ヨーレート過大、ヘディング誤差 ≈ 0 に
+    整列）で steer が +（右）へ 0.02 以上増え、throttle は増えない。実走で左コーナー steer < -0.02 /
+    右コーナー steer > +0.02（κ_traj 最大 tick を採取）。
+  T-DRV-01: preview_delay_ticks() == ceil(reaction_time/SIM_DT) を rt∈{0,0.05,0.20,0.30} で確認。
+    spatial_awareness=1.0（ノイズ 0）で s のインパルスが厳密にその段数だけ遅れて出る。
+
+Determinism Check:
+  T-AI-08: 同一 seed で 3600 tick × 2 回、全 ControlInput 6 成分の to_bits 列が完全一致。
+  別ドライバーを先に生成しても系列不変（Rng::derive は親状態を変えず派生順非依存）。
+
+Ability Emergence（実測・seed 全員同一）:
+  T-AI-05  pace=braking=cornering, consistency=1.0, error_rate=0:
+    level 0.2 → median 99.05 s ／ 0.5 → 96.87 s ／ 0.9 → 94.12 s（単調・最速最遅差 4.9 s/lap ≥ 0.5）
+    3 名とも全 tick v_target ≤ v_cap（v_cap を直接動かしていないことの構造証明）
+  T-AI-06  consistency 0.3 / 0.6 / 0.9, error_rate=0.6:
+    ラップタイム標準偏差 0.1375 → 0.0897 → 0.0564 s（単調減少）
+
+no-default-features / wasm32 build:
+  cargo build -p sim-driver --no-default-features → OK（serde/serde_json の外部依存が落ちる。
+    sim-line と同じ構成。sibling path 依存は残る = HANDOFF の「依存が sim-math のみ」と同義）
+  cargo build -p sim-driver --target wasm32-unknown-unknown --release → OK
+
+Clippy / fmt: cargo clippy --all-targets -- -D warnings → 0 ／ cargo fmt --check → clean
+Performance（実測）:
+  Driver::update 1.09 µs/call（基準 ≤ 25 µs）。Driver::new < 1 ms。24 台換算 ≈ 0.026 ms（≤ 0.6 ms）
+Frozen-file diffs: git diff --stat crates/sim-math crates/sim-track crates/sim-vehicle
+  crates/sim-line crates/sim-core crates/sim-wasm view-engineering assets tools docs → 空
+
+Deviations from Spec（契約起票時の 3 点に加えて Sonnet 実装で判断した点）:
+  4. Controller のヨー減衰項を明示化。契約 Part E は逆操舵のみを列挙するが、Pure Pursuit が
+     予見経路（reaction_time 遅延）に載るため、安定化経路（短遅延）の
+     `-K_HEADING·heading_error - K_YAW_DAMP·(yaw_rate - speed·κ_traj)` を足さないと
+     制御ループが weave する（実測: 追加前は t が ±25 m で発散）。契約 §Perception 表が
+     安定化経路を「逆操舵・**ヨー減衰**」と明記しているため設計変更ではなく明確化と判断。
+     公開型は増やしていない。定数 K_HEADING=0.55 / K_YAW_DAMP=0.16（controller.rs）。
+  5. 契約 Part E-5 の `approach_exponential(steer, steer, ...)` は自明な no-op で誤記と判断。
+     意図（「腕の一次遅れ」）どおり、レート制限後の値を目標に一次遅れを掛ける実装にした
+     （`steer_filt = approach_exp(steer_filt, rate_limited, STEER_TAU, SIM_DT)`）。
+     1 tick の出力変化量は依然 `≤ max_steer_rate·SIM_DT`（T-AI-02 を満たす）。
+  6. ダウンシフト起動しきい値 `DOWNSHIFT_TRIGGER_FRACTION = 0.60` を導入。契約は
+     `DOWNSHIFT_TARGET_FRACTION = 0.92`（変速後 rpm 上限）のみ規定。低速では全ギアが
+     0.92·limiter 未満になり「最上位ギア」の一意な選択ができないため、現在ギア rpm が
+     0.60·limiter を下回ったら 1 段落とす起動条件を足した。ハンチングは MIN_GEAR_DWELL_S で抑制。
+  7. Planner::new / update, Decision::new / update を pub 化（Controller と同じ粒度）。
+     T-DRV-03 が Planner を直接叩いて「クランプが唯一の出口」を検証するために必要。
+     PerceivedSelf::zeroed も pub（テスト用の初期値ヘルパ）。公開 API の増加はこれのみ。
+  8. テストハーネスの運動学プラントにグリップ円（`mu·g_eff/v`）とダウンフォース項を入れた。
+     純粋な運動学自転車は `v/L·tan δ` が高速で発散しどんな制御則でも駆動不能で、かつ
+     ダウンフォースを入れないと SpeedProfile が許した速度で曲がりきれず系統的に膨らむ。
+     いずれも「Driver が実物理でどう振る舞うか」の代用ではなく、制御ループを実トラック
+     幾何に対して検証するための最小限の車両モデル（common/mod.rs の doc に明記）。
+     実車両・実路面の T-AI-01/05/07 再検証は Deviation 3 のとおり TASK-2-3 の受け入れ。
+
+Design Concerns Found:
+  - `spawn` 初期姿勢がヨーのみ（TASK-1B-4 保留）なのでプラントもローリングスタートを
+    控えめな初速（≤ 20 m/s）で始めており、T-AI-01 のコース逸脱計測は「最初の計時ラップ
+    完了以降」に限定している。TASK-1B-4 完了後、実車両での閉ループ（TASK-2-3）では
+    グリッド静止発進の 1 周目挙動を別途見る必要がある。
+  - Controller のギア推定は速度 + ギア比からの逆算で、`VehicleState::engine_rpm` を読んで
+    いない（Controller::update の契約シグネチャに rpm が無いため）。実 rpm とズレる場面
+    （クラッチスリップ中・変速過渡）では最適段からずれうる。TASK-2-3 で実 rpm を見せる
+    余地があるか要検討（シグネチャ変更 = Architect 判断）。
+
+TASK-2-3 への申し送り:
+  - Driver へは生成済みの Trajectory / SpeedProfile / Corridor を渡す（起動時 1 回生成）。
+    World は毎 tick DriverObservation を組んで Driver::update → ControlInput → Vehicle::step。
+  - coord は sim-core 側が world_to_track で求めた真値を渡す（prev_s を hint に）。
+  - 各車の Rng は race.derive("driver:NN") 等で個体別に。Driver::new が内部で
+    perception/decision/mistake/precision の 4 本へ derive する（update 内では derive しない）。
+  - 実物理での T-AI-01 / T-AI-05 / T-AI-07 再検証を TASK-2-3 の受け入れに含める（Deviation 3）。
+  - Engineering View にレーシングライン・v_target・PerceivedSelf を重畳（Driver の読み出し
+    アクセサ model()/driver_state()/intent()/plan()/perceived()/last_input() を使う）。
+  - 逆操舵の安定化経路は 0.08 s 固定遅延（Deviation 2）。実 sideslip / yaw_rate を
+    VehicleState から取れるので合成不要。
+```
+
+---
+
+# TASK-2-2 — 実装契約（アーカイブ・完了済み）
+
+> 完了済み。以下は履歴として残す。完了報告は前方にある。
+
+---
+
+## TASK-2-2 — `sim-driver`: Driver AI 4 層パイプライン（単独走行）
+
+> **起票**: Architect（Opus 5）／ 2026-09-09。
+> 設計の出どころは `ARCHITECTURE.md` §6（4 層パイプライン + Driver Model）で人間レビュー済み。
+> 本契約が新規に決めたのは **層の公開型・境界・定数の導出根拠・テスト戦略**であり、
+> パイプラインの構造そのものは §6 のとおりである。
+
+### IMPORTANT IMPLEMENTATION CONTRACT
+
+あなたは **Implementation Engineer** です。**Architect ではありません。**
+`ARCHITECTURE.md` §6 と本仕様を **正確に** 実装してください。
+
+自己判断で変更してはいけないもの:
+Architecture / Module boundaries / Public interfaces / Data structures /
+Technology stack / Dependencies / Physics model / Racing AI model /
+Naming conventions / Directory structure / Task scope / Execution order。
+
+「こちらの方が良い」「一般的にはこの設計が良い」「リファクタリングした方が綺麗」
+という理由による変更は **禁止**。
+
+#### NO UNAUTHORIZED DESIGN CHANGES
+
+設計上の問題を見つけたら、**先にコードを変えない。** 下記形式で報告し承認を待つ。
+
+```
+PROPOSED DESIGN CHANGE
+Current Design / Observed Problem / Root Cause / Proposed Change / Reason /
+Expected Benefit / Risk / Affected Modules / Affected Files / Migration Impact / Alternative
+```
+
+**仕様に明記された受け入れ数値の緩和は設計変更である。** 事前に上記形式で提出すること。
+（TASK-2-1 では未申告の緩和 3 件が Quality Gate のブロッカーになった。繰り返さないこと。）
+
+#### BLOCKER RULE
+
+Scope 外の変更が必要になったら、勝手に変えず報告して判断を待つ。
+
+```
+BLOCKED BY ARCHITECTURE
+Task / Blocking Issue / Why Current Design Prevents Implementation /
+Required Change / Affected Scope / Recommended Next Step
+```
+
+#### NO UNAUTHORIZED REFACTORING
+
+**凍結中（一切変更禁止）**: `crates/sim-math/**`、`crates/sim-track/**`、
+`crates/sim-vehicle/**`、`crates/sim-line/**`、`crates/sim-core/**`、`crates/sim-wasm/**`、
+`view-engineering/**`、`assets/**`、`tools/**`、`docs/**`、
+ルート直下の `.md`（`HANDOFF.md` / `TODO.md` を除く。完了報告のときだけ更新する）。
+
+**`sim-core` は凍結。** `World` への配線・Engineering View 表示は **TASK-2-3** の担当であり、
+本タスクでは 1 行も触らない。`sim-driver` は `sim-core` を知らない crate として単体で完結させる。
+
+---
+
+### Goal
+
+**`ARCHITECTURE.md` §6 の 4 層パイプライン
+（Perception → Decision → Planner → Controller）+ Driver Model を実装した
+crate `sim-driver` を作る。**
+
+入力は `&Track` / `&Corridor` / `&Trajectory` / `&SpeedProfile` /
+`&VehicleState`（読み出しのみ）/ `TrackCoord` / `Rng`。
+**出力は `ControlInput` ただ 1 つ。**
+「1 台の AI が Aoyama Ring を安定して周回し、能力値の差がラップタイムに創発する」ことを
+構造で保証する。
+
+満たすべき不可侵原則（`HANDOFF.md` §3）:
+
+- AI は Transform / Position / Velocity を書き換えない（出せるのは `ControlInput` のみ）
+- Lap Time を乱数生成しない。乱数は **原因**（reaction / decision / confidence /
+  risk / mistake / precision / consistency）にのみ作用させる
+- グローバル乱数・時刻依存乱数の禁止。`Rng::derive` の明示派生のみ
+- 位置は連続量 `s`。**Waypoint index を保持も公開もしない**
+- 固定タイムステップ。**`update` は `dt` 引数を取らない**（`SIM_DT` 定数）
+- `sim-driver` は Rendering / UI / Camera / `sim-core` を知らない
+
+### 先に読むもの
+
+- `ARCHITECTURE.md` §6（4 層パイプライン / Controller / Driver Model の作用先表）、
+  §2（依存グラフ）、§4（Trajectory 合成と Corridor クランプ）、§11（Time Architecture）
+- `HANDOFF.md` §3（原則）／ §5（`sim-math` / `sim-track` / `sim-vehicle` / `sim-line` の実装済み API）
+- `TESTING.md` §5 の T-AI-01〜08（**本タスクの受け入れ基準の原典**）
+- `crates/sim-line/src/{corridor,trajectory,speed}.rs` — 実際の公開シグネチャ
+- `crates/sim-vehicle/src/{input,state,params}.rs` — `ControlInput` / `VehicleState` /
+  `SteeringParams` / `EngineParams` / `DrivetrainParams`
+- `crates/sim-math/src/util.rs`（`move_towards` / `approach_exponential`）と `rng.rs`（`Rng::derive`）
+- 本 TODO の「TASK-2-1 — 完了報告」末尾の **Phase 2 への申し送り**、
+  および「TASK-1B-1 — 残っている懸念」の **C-1（限界付近で素直にスピンする）**
+
+### Allowed Files
+
+```
+Cargo.toml                              members に crates/sim-driver を追加（1 行）
+Cargo.lock                              依存追加に伴う自動更新のみ
+crates/sim-driver/Cargo.toml            依存 = sim-math + sim-track + sim-line + sim-vehicle
+crates/sim-driver/src/lib.rs            #![deny(unsafe_code)] / 定数 / 再エクスポート
+crates/sim-driver/src/model.rs          DriverModel / DriverState
+crates/sim-driver/src/perception.rs     Perception / PerceivedSelf
+crates/sim-driver/src/decision.rs       DriverMode / DriverIntent
+crates/sim-driver/src/planner.rs        Plan（t_target / v_target）
+crates/sim-driver/src/controller.rs     Controller（Pure Pursuit + 縦方向 + 逆操舵）
+crates/sim-driver/src/driver.rs         Driver（4 層の統合。唯一の公開エントリ）
+crates/sim-driver/tests/driver.rs       T-AI-01〜08 / T-DRV-01〜06
+crates/sim-driver/tests/common/mod.rs   運動学プラント（テストハーネス。下記「テスト戦略」）
+HANDOFF.md / TODO.md                    完了報告のときだけ
+```
+
+**上記以外は触らない。**
+
+### Dependencies
+
+`Cargo.toml`（workspace）の `members` に `crates/sim-driver` を 1 行追加。
+`crates/sim-driver/Cargo.toml` の `[dependencies]`:
+
+```toml
+sim-math    = { path = "../sim-math" }
+sim-track   = { path = "../sim-track",   default-features = false }
+sim-vehicle = { path = "../sim-vehicle", default-features = false }
+sim-line    = { path = "../sim-line",    default-features = false }
+```
+
+- `feature "serde"`（既定 on）は下流がアセット JSON を読めるようにするためだけに前段へ伝播する
+  （`sim-line` と同じ構成）。`--no-default-features` で依存が `sim-math` のみへ落ちること
+- 外部 crate は一切追加しない。**乱数 crate も使わない**（`sim_math::Rng` を使う）
+- `sim-core` / `sim-wasm` への依存は **dev-dependency も含めて禁止**
+  （`ARCHITECTURE.md` §2 の依存グラフは一方向・循環禁止）
+
+依存方向: `sim-math <- sim-track <- sim-line <- sim-driver <- sim-core`。
+
+---
+
+### Required Changes
+
+#### Part 0 — `lib.rs`（定数と境界）
+
+```rust
+#![deny(unsafe_code)]
+#![warn(missing_docs)]
+
+/// Simulation Tick の固定ステップ [s]。`ARCHITECTURE.md` §11 の 60 Hz。
+pub const SIM_DT: f64 = 1.0 / 60.0;
+
+/// Simulation Tick 1 回に対応する Physics Tick 数（240 / 60）。
+/// `sim_vehicle::PHYSICS_DT * PHYSICS_TICKS_PER_SIM_TICK == SIM_DT` を
+/// `debug_assert` ではなくコンパイル時に近い形（const 計算 + テスト）で担保する。
+pub const PHYSICS_TICKS_PER_SIM_TICK: usize = 4;
+```
+
+crate doc に明記すること: 「乱数は `Rng::derive` の明示派生のみ」「`sim-core` /
+Rendering / UI を知らない」「出力は `ControlInput` のみ」「位置は連続量 `s`」。
+
+#### Part A — `DriverModel` / `DriverState`（`model.rs`）
+
+`ARCHITECTURE.md` §6 の能力値表を **全項目** フィールドとして定義する
+（Phase 2 で使わないものも含む。後から形式を変えないため。`TrajectoryKind` と同じ方針）。
+
+```rust
+/// ドライバー個体の能力値。**`0.0..=1.0`**（`reaction_time` のみ秒）。
+/// これらは「原因」にのみ作用する。**v_max / ラップタイムを直接変えてはならない。**
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DriverModel {
+    pub pace: f64,
+    pub braking_skill: f64,
+    pub cornering_skill: f64,
+    pub racecraft: f64,            // Phase 2 未使用（Phase 4+）
+    pub aggression: f64,
+    pub consistency: f64,
+    pub overtaking_skill: f64,     // Phase 2 未使用（Phase 5）
+    pub defending_skill: f64,      // Phase 2 未使用（Phase 5）
+    pub wet_skill: f64,            // Phase 2 未使用（Phase 7）
+    pub tyre_management: f64,      // Phase 2 未使用（Phase 6）
+    pub risk_tolerance: f64,
+    pub reaction_time: f64,        // [s] 0.15..=0.35（§6）
+    pub spatial_awareness: f64,
+    pub error_rate: f64,
+}
+
+impl DriverModel {
+    /// 全能力 0.5 / reaction_time 0.25 の基準ドライバー。
+    pub fn balanced() -> DriverModel;
+    /// 範囲検査。範囲外は `Err`。**クランプで黙って通さない。**
+    pub fn validate(&self) -> Result<(), DriverModelError>;
+
+    /// 入力精度の合成値 `0..1`。`0.5*consistency + 0.5*cornering_skill`。
+    /// `ARCHITECTURE.md` §6 の「max_steer_rate は precision に依存」の precision。
+    /// §6 の能力値表に `precision` 単体は無いためここで定義する（Architect 判断）。
+    pub fn precision(&self) -> f64;
+}
+
+/// レース中に動的に変わる状態。乱数と直近の成否で変動する。
+#[derive(Clone, Copy, Debug)]
+pub struct DriverState {
+    /// 自信 `0.0..=1.0`。`pace` / `aggression` を変調する（§6）。
+    pub confidence: f64,
+    /// 直近のミスからの経過 tick。
+    pub ticks_since_mistake: u64,
+    /// 現在のミスによる入力オフセットの残量（減衰する）。
+    pub mistake_steer_bias: f64,
+    pub mistake_brake_bias: f64,
+}
+```
+
+`confidence` の更新則（`Driver::update` 内）:
+コース内・グリップ余裕内で走れた tick は `approach_exponential(confidence, 1.0, TAU_CONF_UP, SIM_DT)`、
+コース外 / 大きなスライド / ロックアップを検知した tick は `TAU_CONF_DOWN`（速い）で 0 側へ。
+`TAU_CONF_UP = 20.0 s` / `TAU_CONF_DOWN = 1.5 s`（回復は遅く、失うのは速い）。
+
+#### Part B — Perception（`perception.rs`）
+
+```rust
+/// 認知された自車の状態。**真値ではない**（遅延 + 認知誤差が入る）。
+#[derive(Clone, Copy, Debug)]
+pub struct PerceivedSelf {
+    pub s: f64,
+    pub t: f64,
+    pub speed: f64,             // 前進速度 [m/s]
+    pub heading_error: f64,     // トラジェクトリ接線に対する車体ヨー誤差 [rad]
+    pub sideslip: f64,          // 車体スリップ角 beta [rad]
+    pub yaw_rate: f64,          // [rad/s]
+    pub grip_usage_max: f64,    // 4 輪の grip_usage の最大値
+    pub within_limits: bool,
+}
+
+pub struct Perception { /* リングバッファ + 誤差フィルタ */ }
+
+impl Perception {
+    /// `reaction_time` から遅延段数を決めて構築する。
+    pub fn new(model: &DriverModel, rng: Rng) -> Perception;
+
+    /// 真値を 1 tick 押し込み、**遅延後**の認知値を返す。
+    pub fn update(&mut self, truth: &PerceivedSelf) -> PerceivedSelf;
+
+    /// 予見（Decision / Planner）経路の遅延段数。
+    pub fn preview_delay_ticks(&self) -> usize;
+    /// 安定化（Controller の逆操舵）経路の遅延段数。
+    pub fn stabilisation_delay_ticks(&self) -> usize;
+    /// 遅延なしの最新の真値（Controller の安定化経路が使う短遅延側の生成元）。
+    pub fn latest(&self) -> PerceivedSelf;
+}
+```
+
+**2 系統の遅延（重要）**:
+
+| 経路 | 遅延 | 根拠 |
+|------|------|------|
+| 予見（Decision / Planner が使う `s` / `speed` / 先読み） | `ceil(reaction_time / SIM_DT)` tick | §6「reaction_time 分のリングバッファ遅延」 |
+| 安定化（Controller の逆操舵・ヨー減衰） | `ceil(STABILISATION_DELAY_S / SIM_DT)` tick、`STABILISATION_DELAY_S = 0.08` | 前庭感覚は視覚より速い。ここまで `reaction_time` で遅らせると限界付近で発散する（C-1 と衝突する） |
+
+**認知誤差**: `spatial_awareness` が低いほど大きい誤差を `t` / `speed` に載せる。
+`sigma_t = (1 - spatial_awareness) * 0.25 m`、`sigma_v = (1 - spatial_awareness) * 1.0 m/s`。
+**白色ノイズを直接足してはならない**（ステアが振動して T-AI-02 に落ちる）。
+`Rng::normal` で生成した値を `approach_exponential(_, _, PERCEPTION_NOISE_TAU = 0.5, SIM_DT)`
+で低域に落としてから使うこと。
+
+バッファ容量は `reaction_time` の上限 0.35 s から `ceil(0.35 / SIM_DT) + 2 = 23` 段で足りるが、
+**容量は `new` 時の `reaction_time` から計算して確保する**（マジックナンバーを埋めない）。
+`reaction_time = 0.0` は遅延 0 段（T-AI-07 の対照条件）として正当に動くこと。
+
+#### Part C — Decision（`decision.rs`）
+
+```rust
+/// `ARCHITECTURE.md` §6 のモード。**enum は全体を定義する**（後から形式を変えないため）。
+/// Phase 2 が生成するのは `FreeAir` のみ。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DriverMode {
+    FreeAir, Following, Attacking, Defending, SideBySide,
+    Avoiding, Recovering, PitIn, PitOut, UnderYellow, SafetyCar, BlueFlag,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct DriverIntent {
+    pub mode: DriverMode,
+    pub target_gap: f64,      // [s] Phase 2 は 0.0
+    pub engagement: f64,      // 0..1  Phase 2 は 0.0
+    pub risk_budget: f64,     // 0..1  aggression / risk_tolerance / confidence から
+    /// トラジェクトリ重み。Phase 2 は `Reference = 1.0` 固定だが、
+    /// **Planner は必ずこの重みを経由**して `t_target` を作る（Phase 3+ の合成点を先に作る）。
+    pub w_reference: f64,
+    pub w_defensive: f64,     // Phase 2 は 0.0
+    pub w_overtake: f64,      // Phase 2 は 0.0
+}
+```
+
+- Phase 2 の Decision は `FreeAir` を返し、`risk_budget` と重みを決めるだけ
+- **重みは必ず時間的に平滑化する**（`approach_exponential`、`TAU_WEIGHT = 0.4 s`）。
+  ステップ変化は `ARCHITECTURE.md` §12-8 の禁止アンチパターン
+- モード遷移のヒステリシスと最小滞在時間の**仕組み**（`min_dwell_ticks` と
+  遷移関数）は Phase 2 でも実装しておく。遷移先が 1 つしかないだけである
+
+#### Part D — Planner（`planner.rs`）
+
+```rust
+#[derive(Clone, Copy, Debug)]
+pub struct Plan {
+    /// 目標横位置 [m]（トラック局所 `t`。+t が左）。
+    pub t_target: f64,
+    /// 目標速度 [m/s]。**必ず `0 <= v_target <= speed_profile.v_at(s)`**（T-AI-04）。
+    pub v_target: f64,
+    /// Pure Pursuit の先読み距離 [m]（Controller が使う）。
+    pub lookahead_m: f64,
+    /// 先読み地点の弧長（デバッグ / Engineering View 用）。
+    pub aim_s: f64,
+}
+```
+
+`Plan` の作り方（順序を変えないこと）:
+
+1. **横位置**
+   `t_blend = w_ref * trajectory.t_at(s) + w_def * t_def + w_ovt * t_ovt`
+   （Phase 2 は `w_ref = 1.0`、他は 0）
+   → **最終クランプ**: `mode` が `Defending` なら `corridor.clamp_white(s, t_blend)`、
+   それ以外は `corridor.clamp_limits(s, t_blend)`。
+   **このクランプが `t_target` の唯一の出口**（T-AI-01 の構造的保証）。
+   さらに `t_target` を `approach_exponential(_, _, TAU_T_TARGET = 0.25, SIM_DT)` に通して C1 性を保つ（T-AI-03）。
+
+2. **目標速度**（この順で計算する）
+   ```
+   a) v_cap      = speed_profile.v_at(s)                       // 物理限界。T-AI-04 の上限
+   b) v_horizon  = min over 先読み区間 { sqrt(v_at(s_i)^2 + 2 * a_brake_plan * ds_i) }
+                   // ブレーキングポイントを「探す」のではなく、後退パスを局所的に再現する。
+                   // 数値定数のブレーキングポイントをハードコードしない
+   c) v_pace     = v_cap * pace_scale
+                   pace_scale = lerp(0.90, 1.00, pace) * lerp(0.97, 1.00, confidence)
+   d) v_target   = min(v_cap, v_horizon, v_pace)
+   e) v_target   = clamp(v_target, 0.0, v_cap)                 // ★構造的保証。省略禁止
+   ```
+   - `a_brake_plan = envelope_brake_decel * lerp(0.80, 1.00, braking_skill)`
+     — **能力値はここに効く**（ブレーキングポイントの誤差）。`v_cap` は変えない
+   - 先読み区間は `H = v^2 / (2 * a_brake_plan) + LOOKAHEAD_MARGIN_M(= 20.0)`、
+     上限 `H_MAX = 400.0 m`、走査刻み `HORIZON_STEP_M = 5.0`
+     （導出: `v_max ≈ 77 m/s`・`a_brake ≈ 22 m/s²` で `H ≈ 155 m` → 31 サンプル）
+   - `ds_i` は `track.signed_delta_s` で求める。**自前の剰余計算を書かない**
+
+3. **先読み距離**
+   `lookahead_m = clamp(LOOKAHEAD_BASE_M + LOOKAHEAD_TIME_S * v, LOOKAHEAD_MIN_M, LOOKAHEAD_MAX_M)`
+   （`BASE = 3.0`、`TIME = 0.45 s`、`MIN = 5.0`、`MAX = 45.0`）
+
+**二重補正の禁止（Quality Gate 対象）**:
+
+- バンクによるコーナリング速度の有利/不利は **`SpeedProfile` に織り込み済み**
+  （`bank_assist = -g·sin(bank)·sign(κ)`）。Planner / Controller で再度補正しない
+- 標高勾配の along-track 重力成分（Aoyama 最大 4.15% ≈ 0.407 m/s²）は
+  **`SpeedProfile` が未考慮**（TASK-2-1 申し送り R8）。下り braking zone がわずかに
+  楽観的だが、**本タスクで勾配項を足して埋めてはならない**（`SpeedProfile` 側と
+  併せて直すべき既知の債務）。Driver の縦方向モデルは勾配を知らないままにする
+- 曲率は **必ず `trajectory.curvature_at(s)`** を使う。`Track::frame_at().curvature`
+  （センターライン曲率）は継ぎ目にオーバーシュートが残る（TASK-1A-5 LOW-1）ので
+  Speed / フィードフォワードの入力にしてはならない
+
+#### Part E — Controller（`controller.rs`）
+
+```rust
+pub struct Controller { /* 前 tick の出力・内部フィルタ状態 */ }
+
+impl Controller {
+    pub fn new(model: &DriverModel, params: &VehicleParams) -> Controller;
+
+    /// 1 Simulation Tick 分の操作を生成する。**`dt` を引数に取らない**（`SIM_DT` 固定）。
+    pub fn update(
+        &mut self,
+        plan: &Plan,
+        perceived: &PerceivedSelf,      // 予見経路（遅い）
+        stabilise: &PerceivedSelf,      // 安定化経路（短遅延）
+        trajectory: &Trajectory,
+        track: &Track,
+        state: &DriverState,
+        rng: &mut Rng,
+    ) -> ControlInput;
+}
+```
+
+**横方向**
+
+```
+1) Pure Pursuit:
+   aim_s   = track.wrap_s(perceived.s + plan.lookahead_m)
+   aim_t   = trajectory.t_at(aim_s)   （Planner と同じクランプを通した値でもよいが、
+                                        クランプ結果を再利用すること。二重に計算しない）
+   車両ローカルで aim 点への角度 alpha を求め、
+   delta_pp = atan2(2 * L_wheelbase * sin(alpha), plan.lookahead_m)
+
+2) 曲率フィードフォワード:
+   delta_ff = atan(L_wheelbase * trajectory.curvature_at(perceived.s))
+   ※ 符号: +t が左 / 左カーブが正 / ControlInput::steer は +1 が右
+      （`WheelState::steer_angle` の doc「正で右へ切る」に合わせる）。
+      符号は数値テストで確認すること（T-DRV-02）
+
+3) 逆操舵（TASK-1B-1 C-1 への対策・必須）:
+   beta      = stabilise.sideslip
+   beta_lim  = BETA_LIMIT_RAD(= 0.12) * lerp(0.8, 1.2, cornering_skill)
+   excess    = max(|beta| - beta_lim, 0)
+   delta_cs  = -K_COUNTERSTEER * sign(beta) * excess
+   ※ さらに |beta| > beta_lim の間は throttle 上限を lerp(1.0, 0.3, excess/beta_lim) に絞る。
+      これが無いと限界付近で素直にスピンする（実測: steer 掃引 -0.110 安定 / -0.115 破綻）
+
+4) 合成 → 正規化:
+   delta_target = delta_pp + delta_ff + delta_cs + mistake_steer_bias
+   steer_raw    = clamp(delta_target / params.steering.max_steer_angle, -1.0, 1.0)
+
+5) ★構造的保証（省略禁止・T-AI-02 / T-AI-03）:
+   steer = move_towards(prev_steer, steer_raw, max_steer_rate * SIM_DT)
+   steer = approach_exponential(steer, steer, STEER_TAU, SIM_DT)   // 腕の一次遅れ
+   max_steer_rate = lerp(2.5, 6.0, model.precision())   [1/s]
+   STEER_TAU      = lerp(0.10, 0.04, model.precision()) [s]
+```
+
+> `VehicleParams::steering.time_constant` は**ステアリングラックの機構遅れ**であり、
+> ここでモデル化するのは**ドライバーの腕**である。役割が違うので二重補正ではない。
+> ただしこの区別をコード内コメントに明記すること。
+
+**縦方向**
+
+```
+e = plan.v_target - perceived.speed
+デッドバンド DEADBAND_MS = 0.3（ペダルのばたつき防止。ヒステリシス付き）
+
+e > 0:  throttle_raw = saturate(K_THROTTLE * e / max(perceived.speed, 5.0)),  brake_raw = 0
+e < 0:  brake_raw    = saturate(K_BRAKE * (-e) / BRAKE_SCALE_MS),             throttle_raw = 0
+
+トレイルブレーキング（§6）:
+  brake_raw *= lerp(1.0, TRAIL_MIN(= 0.35), saturate(|kappa_traj| / KAPPA_TRAIL(= 0.03)))
+  逓減量は braking_skill でスケールする（下手なドライバーは進入で残せない）
+
+★構造的保証（省略禁止）:
+  throttle = move_towards(prev_throttle, throttle_raw, PEDAL_RATE * SIM_DT)
+  brake    = move_towards(prev_brake,    brake_raw,    PEDAL_RATE * SIM_DT)
+  PEDAL_RATE = lerp(3.0, 8.0, model.precision())  [1/s]（踏み込みより戻しを速くしてよい）
+```
+
+**ギア / クラッチ**
+
+```
+アップ:   engine_rpm > UPSHIFT_FRACTION(= 0.97) * params.engine.limiter_rpm
+ダウン:   変速後の推定 rpm < DOWNSHIFT_TARGET_FRACTION(= 0.92) * limiter_rpm となる最上位ギア
+最小滞在: MIN_GEAR_DWELL_S = 0.25（ヒステリシス。ハンチング防止）
+クラッチ: 発進時（speed < LAUNCH_SPEED_MS = 3.0 かつ gear == 1）のみ
+          clutch = saturate(1.0 - speed / LAUNCH_SPEED_MS)、それ以外は 0.0
+          （変速中のトルクカットは `Vehicle` が `shift_time_s` で処理済み。二重にやらない）
+drs:      Phase 2 は常に false
+```
+
+**乱数の作用先（「原因」にのみ）**
+
+| 用途 | 派生ラベル | 作用 |
+|------|-----------|------|
+| 認知誤差 | `"perception"` | `PerceivedSelf` の `t` / `speed` に低域ノイズ |
+| 入力精度 | `"precision"` | `steer_raw` / `throttle_raw` に微小な低域ノイズ（`(1-consistency)` に比例） |
+| ミス | `"mistake"` | `error_rate` の確率で `mistake_*_bias` を発生させ、指数減衰させる |
+| 判断 | `"decision"` | `risk_budget` の揺らぎ、モード遷移のしきい値ゆらぎ |
+
+`Rng` は `Driver::new` で **`Rng::derive` により 4 本へ分けて保持**する。
+`derive` は親状態を変えず派生順に依存しないため、生成順序を変えても系列が一致する（T-AI-08）。
+**`Driver::update` の中で `derive` を呼ばない**（tick ごとに派生を作らない）。
+
+#### Part F — `Driver`（`driver.rs`）— 唯一の公開エントリ
+
+```rust
+/// Driver AI 本体。4 層を順に回して `ControlInput` を 1 つ返す。
+pub struct Driver { /* model, state, perception, decision, planner, controller, rngs */ }
+
+/// 1 tick の観測。**すべて読み出し専用の借用**。
+pub struct DriverObservation<'a> {
+    pub track: &'a Track,
+    pub corridor: &'a Corridor,
+    pub trajectory: &'a Trajectory,
+    pub speed_profile: &'a SpeedProfile,
+    /// 自車の物理状態（読み出しのみ）。
+    pub state: &'a VehicleState,
+    /// 呼び出し側（TASK-2-3 では `sim-core`）が `world_to_track` で求めた真値。
+    pub coord: TrackCoord,
+}
+
+impl Driver {
+    /// `VehicleParams` から `PerformanceEnvelope` を内部で 1 度だけ導出する。
+    pub fn new(model: DriverModel, params: &VehicleParams, rng: Rng)
+        -> Result<Driver, DriverModelError>;
+
+    /// **1 Simulation Tick（`SIM_DT` 固定）進める。`dt` を引数に取らない。**
+    pub fn update(&mut self, obs: &DriverObservation<'_>) -> ControlInput;
+
+    // 読み出しアクセサ（Engineering View / テスト用。すべて &self）
+    pub fn model(&self) -> &DriverModel;
+    pub fn driver_state(&self) -> &DriverState;
+    pub fn intent(&self) -> &DriverIntent;
+    pub fn plan(&self) -> &Plan;
+    pub fn perceived(&self) -> &PerceivedSelf;
+    pub fn last_input(&self) -> ControlInput;
+}
+```
+
+- `&mut self` を取る公開メソッドは **`update` だけ**（`sim-vehicle` の `Vehicle::step` と同じ規律）
+- `VehicleState` は `&` で受け取るのみ。**書き換える経路を作らない**
+- `Waypoint index` に相当する `usize` を公開型に出さない
+- `update` の内部順序（決定性のため固定）:
+  `真値の組み立て → Perception::update → Decision → Planner → Controller → confidence 更新 → 返却`
+
+---
+
+### テスト戦略（読んでから実装すること）
+
+`sim-driver` は `sim-core` に依存できないため（依存グラフの循環禁止・dev-dep も不可）、
+**実物理の閉ループ（`World` + `TrackGround` + `Vehicle`）は TASK-2-3 で検証する。**
+本タスクでは次の 2 段で検証する。
+
+1. **運動学プラント**（`tests/common/mod.rs`）— `Track` / `Corridor` / `Trajectory` /
+   `SpeedProfile` は**実物**（Aoyama Ring + `gt_proto_a`）を使い、車両だけを
+   自転車モデル（`s`, `t`, ヨー誤差, `v` の 4 状態）で置き換える。
+   `ControlInput` を実舵角・縦加速度へ写す最小限の写像で、`SIM_DT` 固定で回す。
+   **これは Driver の制御ループを実トラック幾何に対して検証するためのハーネスであり、
+   `sim-vehicle` の代替ではない。** そう明記すること
+2. **合成状態の単体テスト** — 逆操舵など、運動学プラントでは再現できない挙動は
+   `VehicleState` を手で組み立てて Controller を直接叩いて検証する
+
+### Required Tests（`crates/sim-driver/tests/driver.rs`・`cargo test -p sim-driver --release`）
+
+| ID | 検証内容 | Acceptance |
+|----|---------|-----------|
+| T-AI-01 | コース逸脱しない | 運動学プラントで **20 周**。`limit_bounds(s)` を `1e-6 m` 超えて外れた tick が **0**。加えて `Plan::t_target` が全 tick `clamp_limits` の内側 |
+| T-AI-02 | ステアが不連続に振動しない | 全 tick で `\|Δsteer\| <= max_steer_rate * SIM_DT + 1e-12`。20 s（1200 サンプル）の steer 時系列の 2 階差分 RMS `<= 0.02`（1 tick 最大変化量 0.1 の 20%）。素朴 DFT で **5 Hz 以上の帯域のパワー和が全体の 5% 未満**（一次遅れ `TAU >= 0.04 s` のカットオフが 4 Hz なので 5 Hz 以上は −3 dB 以下） |
+| T-AI-03 | Waypoint へ瞬間旋回しない | `\|Δsteer\|` が上限内（T-AI-02 と同じ）。`t_target` の 1 階差分が連続（隣接 tick の `Δ(dt_target)` が閾値内）で、ステーション境界で跳ばない |
+| T-AI-04 | Target speed が異常値にならない | 全 tick で `0.0 <= v_target <= speed_profile.v_at(s) + 1e-9`。20 周ぶん・3 名で確認 |
+| T-AI-05 | 能力値がラップタイムに創発的に反映 | `pace/braking_skill/cornering_skill` を 0.2 / 0.5 / 0.9 にした 3 名で **ラップタイムが単調に短くなり、最速と最遅の差が 0.5 s/lap 以上**。かつ 3 名とも T-AI-04 を満たす（= `v_cap` を直接動かしていないことの構造証明） |
+| T-AI-06 | consistency が低いほどラップ間ばらつきが大きい | `consistency` 0.3 / 0.6 / 0.9 の 3 名で 10 周し、ラップタイムの標準偏差が**単調減少**する |
+| T-AI-07 | Perception 遅延が効いている | `reaction_time = 0.0` と `0.30` で 60 s 走行し、**steer 時系列のハッシュが異なる**、かつラップタイム差が 0.1 s 以上。`0.0` でも発散しない |
+| T-AI-08 | 決定性 | 同一 seed で 2 回・各 3600 tick 走らせ、全 `ControlInput` の `f64::to_bits` 列が完全一致。さらに **`Driver` の生成順序を入れ替えても各系列が不変**（`Rng::derive` の派生順非依存） |
+| T-DRV-01 | Perception の遅延段数 | `preview_delay_ticks() == ceil(reaction_time / SIM_DT)`。インパルス入力が正確にその tick 数だけ遅れて出る。`reaction_time = 0` で 0 段 |
+| T-DRV-02 | 逆操舵と符号 | 合成した `VehicleState`（`sideslip = +0.25 rad`、ヨーレート過大）を与えると、`steer` 補正が滑りと**逆符号**で、`throttle` が同条件の `sideslip = 0` より小さい。曲率フィードフォワードの符号も左カーブ / 右カーブで検証する |
+| T-DRV-03 | Planner のクランプが唯一の出口 | 格子状の異常な `t_blend`（±50 m）を作っても `t_target` が常に `clamp_limits` の内側。`Defending` を強制すると `clamp_white` の内側 |
+| T-DRV-04 | 乱数は「原因」にのみ作用 | seed を 8 通り変えて 5 周ずつ走らせ、**ラップタイムは変わる**が、全 seed で T-AI-01 と T-AI-04 が成立する。`error_rate = 0` / `consistency = 1.0` で `mistake_*_bias` が常に 0 |
+| T-DRV-05 | 性能 | `Driver::update` **<= 25 µs/call**（Performance Criteria の導出参照）。`Driver::new` <= 1 ms |
+| T-DRV-06 | 境界の構造検査 | `sim-driver` の公開 API に `usize` の waypoint index が無い／`update` に `dt` 引数が無い／`&mut VehicleState` を取る関数が無い／`grep -rE "sim_core\|sim_wasm\|rand\|thread_rng\|SystemTime\|Instant\|std::time\|static mut\|lazy_static\|once_cell" src/` が空 |
+
+**T-AI-05 / T-AI-06 は「差が出ること」ではなく「順序が能力値の順序と一致すること」を検証する。**
+乱数 seed は全員同一にして、差が能力値だけから出ていることを担保すること。
+
+### Acceptance Criteria
+
+1. T-AI-01〜08 / T-DRV-01〜06 が全通過
+2. `cargo test --release` 全通過（**既存 154 テストの退行なし**。増分は `sim-driver` のみ）
+3. `cargo clippy --all-targets -- -D warnings` が通る
+4. `cargo fmt --check` が通る
+5. `cargo build --release` 警告ゼロ
+6. 手書き `unsafe` 0 行（`#![deny(unsafe_code)]`）
+7. `cargo build -p sim-driver --no-default-features` が通る（依存が sim-math のみになる）
+8. `cargo build -p sim-driver --target wasm32-unknown-unknown` が通る
+9. 凍結ファイルの差分がゼロ（`git diff --stat` で `crates/sim-math` `crates/sim-track`
+   `crates/sim-vehicle` `crates/sim-line` `crates/sim-core` `crates/sim-wasm`
+   `view-engineering` `assets` `tools` `docs` が空）
+10. **`ControlInput` 以外に車両へ作用する公開経路が存在しない**（型検査 + 目視）
+11. 制御出力 3 系統（steer / throttle / brake）が **すべて `move_towards` を通っている**
+    ことをコード上で確認できる（T-AI-02 の構造的保証）
+
+### Performance Criteria
+
+**予算からの導出**（`PROJECT.md` §性能予算）:
+
+```
+Driver AI (60 Hz) の予算        = 1.5 ms / render frame / 24 台
+1 render frame = 1 Simulation Tick（60 Hz ロック）
+→ 1 台 1 tick あたりの上限      = 1.5 ms / 24 = 62.5 µs
+Phase 3+ の Decision / Engagement / 複数台 Perception のために 60% を残す
+→ 本タスクの基準                = 62.5 µs * 0.4 = 25 µs
+```
+
+| 項目 | 基準 | 根拠 |
+|------|------|------|
+| `Driver::update`（1 台 1 tick） | **<= 25 µs** | 上記の導出。内訳の目安: 先読み走査 31 サンプル × (`v_at` 12 ns + `signed_delta_s`) ≈ 1 µs、`t_at` / `curvature_at` 数回 ≈ 0.1 µs。25 µs は十分に余裕がある |
+| 24 台 × 1 tick | **<= 0.6 ms** | 1.5 ms 予算の 40% |
+| `Driver::new` | <= 1 ms | 起動時 1 台 1 回（`PerformanceEnvelope::from_params` を含む） |
+
+**基準を満たせない場合は緩和せず `PROPOSED DESIGN CHANGE` を出すこと。**
+
+### Out of Scope
+
+- **Decision は `FreeAir` のみ。** `Following` / `Attacking` / `Defending` / `SideBySide` は
+  enum を定義するだけで生成しない（Phase 3〜5）
+- **複数台のインタラクション一切なし。** 追走・追い抜き・防御・接触回避・
+  スリップストリーム・dirty air・`Engagement`（`ARCHITECTURE.md` §7）は Phase 3+
+- 他車の Perception（`spatial_awareness` の死角モデル）— Phase 3。
+  Phase 2 の Perception は**自車のみ**
+- `Trajectory` の `Defensive` / `Overtake*` / `Wet` / `Recovery` / `PitIn/Out` の**生成**
+  （`sim-line` 側の仕事であり、かつ Phase 3+）。Planner の重みだけ先に用意する
+- `sim-core` / `World` への配線、Engineering View へのライン・`v_target` 重畳 → **TASK-2-3**
+- ピット / 戦略 / 天候 / タイヤ摩耗 / フラッグ → Phase 6+
+- `spawn` 姿勢の完全化（TASK-1B-4・保留）。グリッドは S/F ストレートに置く前提
+- `SpeedProfile` の標高勾配補正（R8）。**本タスクで埋めない**
+
+### Known Risks
+
+| Risk | 対策（仕様に設計済み） |
+|------|----------------------|
+| 限界付近で素直にスピンする（TASK-1B-1 C-1。前後スリップ角が中立） | Controller の逆操舵ループ（Part E-3）+ スライド中のスロットル絞り。安定化経路の遅延を `reaction_time` ではなく 0.08 s 固定にして発散を防ぐ |
+| `reaction_time` の遅延が制御ループに入って発振する | 予見経路と安定化経路を分離（Part B の表）。`reaction_time = 0` でも発散しないことを T-AI-07 で確認 |
+| 認知誤差の白色ノイズでステアが振動して T-AI-02 に落ちる | ノイズは必ず `approach_exponential`（`TAU = 0.5 s`）で低域に落としてから使う |
+| センターライン曲率の継ぎ目オーバーシュートを拾って偽の減速をする | 曲率は必ず `trajectory.curvature_at`。`frame_at().curvature` を制御に使わない |
+| バンク / 標高勾配の二重補正 | バンクは `SpeedProfile` 織り込み済み・勾配は既知の未考慮（R8）。**どちらも Driver 側で触らない**（Part D の「二重補正の禁止」） |
+| ペダル / ギアのハンチング | デッドバンド + ヒステリシス + `MIN_GEAR_DWELL_S` |
+| 運動学プラントに過適合した制御ゲイン | ゲインは物理量（ホイールベース・`max_steer_angle`・`a_brake`）から導く。マジックナンバーは名前付き定数にして根拠をコメントに書く。**実物理での最終検証は TASK-2-3** |
+| 重みのステップ変化（§12-8 の禁止事項） | Decision の重みは必ず `approach_exponential` を通す |
+
+### Deviations from Spec（起票時点で Architect 判断として明記）
+
+1. **`DriverModel::precision()` を合成値として定義した。** `ARCHITECTURE.md` §6 は
+   `max_steer_rate` が「precision に依存」と書くが、能力値表に `precision` 単体が無い。
+   `0.5*consistency + 0.5*cornering_skill` と定義する（フィールドは増やさない）。
+2. **Perception の遅延を 2 系統に分けた**（予見 = `reaction_time` / 安定化 = 0.08 s 固定）。
+   §6 は単一の `reaction_time` 遅延しか書いていないが、逆操舵まで 0.25 s 遅らせると
+   限界付近で確実に発散し C-1 と正面衝突する。人間の前庭反射が視覚より速いという
+   生理学的根拠がある。**公開型は増やさず** `Perception` の内部段数として持つ。
+3. **実物理の閉ループ検証を TASK-2-3 へ送った。** `sim-driver` が `sim-core` に
+   dev-dependency を張ると依存グラフに循環が生じる（§2 の「循環禁止」）。
+   本タスクは運動学プラント + 合成状態の単体テストで構造的保証を検証し、
+   実車両・実路面での T-AI-01 / 05 / 07 の再検証を TASK-2-3 の受け入れに含める。
+
+### 完了時の報告フォーマット
+
+```
+TASK-2-2 COMPLETE
+
+Implemented Files:
+Test Results:              (cargo test の実出力 / 既存 154 からの増分)
+Structural Guarantees:     (steer/throttle/brake が move_towards を通る箇所・
+                            v_target のクランプ箇所・t_target のクランプ箇所を行番号で)
+Independent Verification:  (T-AI-02 の DFT / T-DRV-02 の符号検証の方法と数値)
+Determinism Check:         (T-AI-08 の方法と結果。derive 順非依存の確認を含む)
+Ability Emergence:         (T-AI-05 / 06 の実測ラップタイムと標準偏差の表)
+no-default-features / wasm32 build:
+Clippy / fmt Results:
+Performance:               (Driver::update / 24 台 / Driver::new の実測)
+Frozen-file diffs:         (空であること)
+Deviations from Spec:      (上記 3 点以外に追加があれば。★未申告の受け入れ数値緩和は禁止)
+Design Concerns Found:
+TASK-2-3 への申し送り:      (sim-core 配線側が知っておくべきこと)
+```
+
+**git commit はしないこと。** 作業ツリーに残し、レビューを受けること。
+
+---
+
+# TASK-2-1 — 実装契約（アーカイブ・完了済み）
+
+> 完了済み。以下は履歴として残す。完了報告 / 機構監査記録 / Opus 裁定は後方にある。
+
+---
+
+## TASK-2-1 — `sim-line`: Racing Line System（Corridor / Trajectory / SpeedProfile）
+
+> **起票の経緯**: 本来 Architect（Opus 5）が起票するが、この runtime では Opus を
+> 起動できないため Sonnet 5 が `ARCHITECTURE.md` §4 の設計を分解して起票し、
+> 人間の承認を得て実装する（2026-09-09。TASK-1B-3 と同じ例外運用）。
+> 設計そのもの（Corridor / Trajectory / SpeedProfile の 3 分離、Speed Profile の
+> 物理由来の生成、単一 Waypoint 列の禁止）は `ARCHITECTURE.md` §4 で人間レビュー済み。
+> 本タスクが新規に決めたのは **アルゴリズムの選択**（下記 Deviation 参照）と
+> **`sim-line` が `sim-vehicle` に依存する**点（人間承認 2026-09-09）。
+
+### IMPORTANT IMPLEMENTATION CONTRACT
+
+あなたは **Implementation Engineer** です。**Architect ではありません。**
+`ARCHITECTURE.md` §4 と本仕様を **正確に** 実装してください。
+
+自己判断で変更してはいけないもの:
+Architecture / Module boundaries / Public interfaces / Data structures /
+Technology stack / Dependencies / Physics model / Racing AI model /
+Naming conventions / Directory structure / Task scope / Execution order。
+
+「こちらの方が良い」「一般的にはこの設計が良い」「リファクタリングした方が綺麗」
+という理由による変更は **禁止**。
+
+#### NO UNAUTHORIZED DESIGN CHANGES
+
+設計上の問題を見つけたら、**先にコードを変えない。** 下記形式で報告し承認を待つ。
+
+```
+PROPOSED DESIGN CHANGE
+Current Design / Observed Problem / Root Cause / Proposed Change / Reason /
+Expected Benefit / Risk / Affected Modules / Affected Files / Migration Impact / Alternative
+```
+
+**仕様に明記された受け入れ数値の緩和は設計変更である。** 事前に上記形式で提出すること。
+
+#### BLOCKER RULE
+
+Scope 外の変更が必要になったら、勝手に変えず報告して判断を待つ。
+
+```
+BLOCKED BY ARCHITECTURE
+Task / Blocking Issue / Why Current Design Prevents Implementation /
+Required Change / Affected Scope / Recommended Next Step
+```
+
+#### NO UNAUTHORIZED REFACTORING
+
+**凍結中（一切変更禁止）**: `crates/sim-math/**`、`crates/sim-track/**`、
+`crates/sim-vehicle/**`、`crates/sim-core/**`、`crates/sim-wasm/**`、
+`view-engineering/**`、`assets/**`、`tools/**`、`docs/**`、
+ルート直下の `.md`（`HANDOFF.md` / `TODO.md` を除く。完了報告のときだけ更新する）。
+
+---
+
+### Goal
+
+**「どこを走ってよいか（Corridor）」「どこを走ろうとするか（Trajectory）」
+「どれだけの速度で走れるか（SpeedProfile）」の 3 概念を厳密に分離した
+crate `sim-line` を作る。** これは Driver AI（TASK-2-2）が参照する静的な走行計画で、
+**乱数を一切持たず**、`Track` と `VehicleParams` だけから決定的に導出される。
+
+`ARCHITECTURE.md` §4 の「単一 Waypoint 列の禁止」を構造で満たす:
+位置は連続量 `s`（弧長）でアクセスし、横位置は `s -> t` の C1 連続関数として返す。
+Waypoint index を公開しない。
+
+### 先に読むもの
+
+- `ARCHITECTURE.md` §4（Racing Line System）と §2（依存グラフ・禁止事項）
+- `HANDOFF.md` §5 の `sim-math` / `sim-track` / `sim-vehicle` 実装済み API
+- `crates/sim-track/src/{track,coord,surface}.rs` — `Track::frame_at` / `TrackFrame` /
+  `is_within_limits` / `wrap_s` / `signed_delta_s`
+- `crates/sim-vehicle/src/params.rs` — `VehicleParams`（`tyre.mu0` / `aero` / `brakes` /
+  `engine.torque_curve` / `drivetrain.gear_ratios` / `mass.total_kg`）
+- `TESTING.md` §5（T-AI-04 は `0 <= v_target <= v_max_physical` を要求。SpeedProfile が
+  その `v_max_physical` の出どころ）
+
+### Allowed Files
+
+```
+Cargo.toml                          members に crates/sim-line を追加（1 行）
+Cargo.lock                          依存追加に伴う自動更新のみ
+crates/sim-line/Cargo.toml          依存 = sim-math + sim-track + sim-vehicle（dev-dep 可）
+crates/sim-line/src/lib.rs          #![deny(unsafe_code)] / 型の再エクスポート
+crates/sim-line/src/corridor.rs     Corridor
+crates/sim-line/src/trajectory.rs   Trajectory / TrajectoryKind / reference line 生成
+crates/sim-line/src/speed.rs        SpeedProfile / PerformanceEnvelope
+crates/sim-line/tests/line.rs       T-LINE-01〜10
+HANDOFF.md / TODO.md                完了報告のときだけ
+```
+
+**上記以外は触らない。** 特に凍結 crate の `src/**` は変更禁止。
+
+### Dependencies
+
+`Cargo.toml`（workspace）の `members` に `crates/sim-line` を 1 行追加。
+`crates/sim-line/Cargo.toml` の `[dependencies]`:
+
+```toml
+sim-math = { path = "../sim-math" }
+sim-track = { path = "../sim-track" }
+sim-vehicle = { path = "../sim-vehicle" }
+```
+
+`--no-default-features` で依存ゼロ側（sim-math のみ）に落とせること
+（`sim-track` / `sim-vehicle` が serde optional なのに倣う）。物理エンジン crate は使わない。
+乱数 crate も使わない（この crate は乱数を持たない）。
+
+### 依存方向（`ARCHITECTURE.md` §2）
+
+`sim-math <- sim-track <- sim-line <- sim-driver <- sim-core`。
+**`sim-line` は `sim-core` / `sim-driver` / `sim-wasm` / Rendering / UI を知らない。**
+`sim-vehicle` への依存は本タスクで人間承認済み（`&VehicleParams` を読むだけ。
+`Vehicle` インスタンスや `VehicleState` は参照しない）。
+
+---
+
+### Required Changes
+
+#### Part A — `Corridor`（`corridor.rs`）
+
+```rust
+/// 走行可能な回廊。各弧長 `s` で横オフセット `t` の下限・上限を持つ。
+/// `+t` は左（`sim-track` の規約）。`t_left` >= `t_right`。
+pub struct Corridor {
+    length: f64,
+    closed: bool,
+    step_m: f64,          // ステーション間隔
+    // s -> (t_right, t_left)。白線内と track-limits の 2 変種を保持
+    white: Vec<(f64, f64)>,   // 舗装白線内（`TrackFrame::width_*` から `margin` 内側）
+    limits: Vec<(f64, f64)>,  // 縁石を含む track limits（`Track::is_within_limits` の境界）
+}
+
+impl Corridor {
+    /// `Track` から構築する。`step_m` はステーション間隔（既定 2.0 m を推奨）。
+    /// `car_half_width` は車幅の半分。白線変種は端から `car_half_width + safety`
+    /// だけ内側にクランプする。
+    pub fn from_track(track: &Track, step_m: f64, car_half_width: f64, safety: f64) -> Corridor;
+
+    pub fn length(&self) -> f64;
+    pub fn is_closed(&self) -> bool;
+
+    /// 白線内の回廊。`(t_right, t_left)` を線形補間で返す。`t_right <= t_left`。
+    pub fn white_bounds(&self, s: f64) -> (f64, f64);
+    /// 縁石を含む track-limits 回廊。
+    pub fn limit_bounds(&self, s: f64) -> (f64, f64);
+
+    /// `t` を白線内へクランプ。
+    pub fn clamp_white(&self, s: f64, t: f64) -> f64;
+    /// `t` を track-limits 内へクランプ。
+    pub fn clamp_limits(&self, s: f64, t: f64) -> f64;
+}
+```
+
+- ステーション規約は `sim-wasm` の `stations` と同じ: `n = ceil(L/step_m)`,
+  `s_i = i*L/n`（`i=0..=n`）。閉トラックでは `s_n` は `wrap_s` で `s_0` に一致
+- `limits` 境界は `Track::is_within_limits(TrackCoord{s, t})` を
+  センターラインから左右へ外側に広げながら二分探索して求める
+  （`t` が within → 外へ、not within → 内へ。10 反復で十分）。
+  縁石が無い区間は `width_*` にほぼ一致する
+- `white` は `TrackFrame::{width_right, width_left}` から
+  `t_right = -(width_right - car_half_width - safety)`,
+  `t_left = width_left - car_half_width - safety`。負幅になる区間（極端に狭い）は
+  `t_right = t_left = 0`（センターライン 1 点）に潰す
+- 補間は隣接ステーションの線形補間。`s` は `wrap_s` で正規化してから引く
+
+#### Part B — `PerformanceEnvelope` + `SpeedProfile`（`speed.rs`）
+
+```rust
+/// `VehicleParams` から一度だけ導出する、速度計画に必要な車両能力の要約。
+/// `sim-line` が `sim-vehicle` に依存する唯一の理由。
+pub struct PerformanceEnvelope {
+    pub mass_kg: f64,
+    pub mu: f64,                 // tyre.mu0（路面倍率は SpeedProfile 側で s ごとに掛ける）
+    pub cd_a: f64,               // aero.cd * aero.frontal_area
+    pub cl_a_total: f64,         // (cl_front + cl_rear) * frontal_area（総ダウンフォース係数）
+    pub max_brake_decel: f64,    // 4 輪ブレーキトルク上限による減速度 [m/s^2]。
+                                 // タイヤ限界との min は SpeedProfile::brake_decel が
+                                 // 速度依存ダウンフォース込みで後段適用する（Dev 9 で意味を訂正）
+    pub max_power_w: f64,        // torque_curve と gear_ratios から求めた最大車輪出力 [W]
+    pub v_max: f64,              // 抗力とパワーが釣り合う終端速度 [m/s]
+}
+
+impl PerformanceEnvelope {
+    pub fn from_params(p: &VehicleParams) -> PerformanceEnvelope;
+}
+
+/// 弧長 `s` ごとの限界速度。
+pub struct SpeedProfile {
+    length: f64,
+    closed: bool,
+    step_m: f64,
+    v_max: Vec<f64>,     // s -> 限界速度 [m/s]（コーナリング + ブレーキ + トラクション/パワーを合成した結果）
+}
+
+impl SpeedProfile {
+    /// `Trajectory` の曲率と `Track` のバンク・路面グリップ、`PerformanceEnvelope` から
+    /// 決定的に生成する。乱数を使わない。
+    ///
+    /// 手順（`ARCHITECTURE.md` §4「Speed Profile の生成」）:
+    /// 1. 各 s で横 G 限界から `v_corner = sqrt(mu_eff * g_eff / |kappa_traj|)`。
+    ///    `mu_eff = envelope.mu * surface_grip(s)`。
+    ///    `g_eff = g*cos(bank) + a_lat*sin(bank) + downforce(v)/mass`。
+    ///    ダウンフォースが v 依存なので `v_corner` について 3〜5 回反復して収束させる。
+    ///    直線（`|kappa|` が極小）は `envelope.v_max` で頭打ち。
+    /// 2. **後退パス**: `v_max[i]^2 <= v_max[i+1]^2 + 2*a_brake*ds` を上流へ伝播。
+    ///    `a_brake = min(max_brake_decel, mu_eff*g_eff) + drag(v)/mass`。
+    ///    空力抗力はタイヤグリップを消費しない追加の減速力なので **足す**
+    ///    （起票時の「引いた実効値」は誤り。Dev 7 で訂正。Opus 監査で確認済み）。
+    /// 3. **前進パス**: `v_max[i+1]^2 <= v_max[i]^2 + 2*a_drive*ds` を下流へ伝播。
+    ///    `a_drive = (wheel_force(v) - drag(v)) / mass`、
+    ///    `wheel_force` は `min(power/v, mu_eff*mass*g_eff)`（パワー制限とトラクション制限）。
+    /// 閉トラックでは前後パスとも 2 周ぶん回して周回境界で収束させる。
+    pub fn generate(
+        trajectory: &Trajectory,
+        track: &Track,
+        envelope: &PerformanceEnvelope,
+        step_m: f64,
+    ) -> SpeedProfile;
+
+    pub fn v_at(&self, s: f64) -> f64;   // 線形補間
+    pub fn length(&self) -> f64;
+    pub fn min_v(&self) -> f64;
+    pub fn max_v(&self) -> f64;
+}
+```
+
+- `kappa_traj` は **Trajectory の曲率**（センターラインの曲率ではない。
+  `ARCHITECTURE.md` §4 / TASK-1A-5 の申し送り）
+- `surface_grip(s)` は `track.surface_at(TrackCoord{s, t_traj}).properties().grip_multiplier`
+- バンク符号: `TrackFrame::banking` は左端が持ち上がる向きが正。左旋回（`curvature > 0`）で
+  外側（右）を持ち上げるバンクは負。`g_eff` の計算で符号を取り違えないこと
+  （テストで数値検証する）
+
+#### Part C — `Trajectory` + reference line 生成（`trajectory.rs`）
+
+```rust
+pub enum TrajectoryKind { Reference, Defensive, OvertakeInside, OvertakeOutside, Wet, Recovery, PitIn, PitOut }
+
+/// 走行軌跡。横位置 `t(s)` の C1 連続関数。
+pub struct Trajectory {
+    kind: TrajectoryKind,
+    length: f64,
+    closed: bool,
+    step_m: f64,
+    lateral: Vec<f64>,      // s -> t（C1 連続になるよう平滑化済み）
+    // 曲率は lateral とセンターライン幾何から解析的に計算してキャッシュ
+    curvature: Vec<f64>,    // s -> トラジェクトリの符号付き曲率 [1/m]
+}
+
+impl Trajectory {
+    /// **Reference（基準走行ライン）を生成する。**
+    /// Corridor の `limits`（縁石を使ってよい）変種の内側で、
+    /// 経路の曲率二乗和を最小化する `t(s)` を求める。
+    ///
+    /// アルゴリズム（本タスクで選択。Deviation 参照）:
+    /// 反復緩和（Gauss-Seidel）。各ステーション `t_i` を
+    /// 「両隣との離散 2 階差分（曲率の代理）を減らす」方向へ更新し、
+    /// `corridor.limit_bounds(s_i)` の内側 `edge_margin` へクランプ。
+    /// 収束（最大更新量 < `1e-4 m`）または `max_iters` で停止。
+    /// 閉トラックは周回境界を跨いで連続に扱う。
+    /// 最後に `lateral` を C1 になるよう `sim_math::CubicSpline`（閉）へ通し、
+    /// `curvature` を解析的に評価してキャッシュする。
+    pub fn reference(corridor: &Corridor, track: &Track, step_m: f64) -> Trajectory;
+
+    pub fn kind(&self) -> TrajectoryKind;
+    pub fn length(&self) -> f64;
+    pub fn is_closed(&self) -> bool;
+
+    /// 横位置 `t` [m]。線形補間ではなく C1 スプライン評価。
+    pub fn t_at(&self, s: f64) -> f64;
+    /// トラジェクトリの符号付き曲率 [1/m]。
+    pub fn curvature_at(&self, s: f64) -> f64;
+    /// トラジェクトリ上のワールド座標（`track.track_to_world` 経由）。
+    pub fn world_at(&self, s: f64, track: &Track) -> Vec3;
+}
+```
+
+- **合成（`t_target = w_ref*t_ref + ...`）は本タスクの範囲外。** それは Planner（TASK-2-2）。
+  本タスクは `Reference` の単体生成のみ。ただし `TrajectoryKind` は enum 全体を定義しておく
+  （後から形式を変えないため。`ARCHITECTURE.md` §4 の列挙に一致させる）
+- トラジェクトリ曲率の解析式: `t(s)` を横オフセットとしたときの経路の曲率は
+  `kappa_path = (kappa_c*(1 - kappa_c*t) + t'') / (1 - kappa_c*t)^... ` の近似で十分だが、
+  **実装は「オフセット経路のワールド点列から Menger 曲率で数値評価」でもよい**
+  （TASK-1A-4 で使った独立検証器と同じ手法。`step_m` が細かいので誤差は小さい）。
+  どちらを採るかは実装判断。テストは Menger 曲率で独立検証する
+- `edge_margin` は既定 0.20 m（縁石にわずかに乗るのを許容しつつ飛び出さない）
+
+#### Part D — `lib.rs`
+
+`#![deny(unsafe_code)]`、`#![forbid(...)]` は既存 crate に合わせる。
+`Corridor` / `Trajectory` / `TrajectoryKind` / `SpeedProfile` / `PerformanceEnvelope` を
+再エクスポート。crate ドキュメントに「乱数を持たない」「`sim-core` を知らない」を明記。
+
+---
+
+### Required Tests（`crates/sim-line/tests/line.rs`・`cargo test -p sim-line --release`）
+
+Aoyama Ring（`assets/tracks/aoyama_ring.track.json`）と
+`gt_proto_a.spec.json` を読んで実データで検証する。
+
+| ID | 検証内容 | Acceptance |
+|----|---------|-----------|
+| T-LINE-01 | `Corridor::from_track` の白線境界 | 全 s で `t_right < t_left`。幅 `t_left - t_right` が `width_left+width_right - 2*(car_half+safety)` と 1e-6 一致 |
+| T-LINE-02 | `Corridor` の limits 境界が白線より外 | 全縁石区間で `limit_bounds` の幅 >= `white_bounds` の幅。縁石なし区間ではほぼ一致（<= 0.1 m 差） |
+| T-LINE-03 | `clamp_*` が境界内に収める | ランダムでない格子状の `t` 掃引で、返り値が常に `[t_right, t_left]` 内 |
+| T-LINE-04 | `Trajectory::reference` がコリドー内 | 全 s で `limit_bounds(s).0 - 1e-6 <= t_at(s) <= limit_bounds(s).1 + 1e-6` |
+| T-LINE-05 | reference が C1 連続 | `t_at` の 1 階差分が連続（隣接ステーションで `|Δ(dt/ds)|` が閾値内）。Waypoint index を公開する pub API が無いことをコンパイル時に担保（型検査） |
+| T-LINE-06 | reference の曲率二乗和がセンターラインより小さい | `∫ kappa_traj^2 ds < ∫ kappa_center^2 ds`（コーナーを開くことでラインが素直になる） |
+| T-LINE-07 | reference 曲率の独立検証 | `curvature_at` と、ワールド点列からの Menger 曲率が全 s で 2% 以内一致 |
+| T-LINE-08 | `PerformanceEnvelope::from_params` | `gt_proto_a` で `v_max` が 80〜110 m/s、`max_brake_decel` が 12〜22 m/s^2、`mu` が 1.50 |
+| T-LINE-09 | `SpeedProfile` の物理的妥当性 | ヘアピン（R≈19 m）で `v_at` が `sqrt(1.5*9.81*19) ± 15%`（≈16.7 m/s）。最長ストレートで `v_at` が `envelope.v_max` の 95% 以上。全 s で `0 < v_at <= envelope.v_max + 1e-6`（T-AI-04 の土台） |
+| T-LINE-10 | 決定性 | 同じ `(track, params, step_m)` で `Corridor` / `Trajectory` / `SpeedProfile` を 2 回生成し、内部 `Vec` が `assert_eq!` でビット一致 |
+
+**T-LINE-06 / T-LINE-07 は独立検証**（実装の曲率計算を実装の曲率計算で検証しない）。
+
+### Acceptance Criteria
+
+1. T-LINE-01〜10 が全通過
+2. `cargo test --release` 全通過（**既存 143 テストの退行なし**。増分は `sim-line` のみ）
+3. `cargo clippy --all-targets -- -D warnings` が通る
+4. `cargo fmt --check` が通る
+5. `cargo build --release` 警告ゼロ
+6. 手書き `unsafe` 0 行（`#![deny(unsafe_code)]`）
+7. `cargo build -p sim-line --no-default-features` が通る（依存が sim-math のみになる）
+8. `cargo build -p sim-line --target wasm32-unknown-unknown` が通る
+9. 凍結ファイルの差分がゼロ（`git diff --stat` で `crates/sim-math` `crates/sim-track`
+   `crates/sim-vehicle` `crates/sim-core` `crates/sim-wasm` `view-engineering` `assets`
+   `tools` `docs` が空）
+10. `sim-line` は乱数 crate・`std::time`・グローバル状態を一切使わない（grep で確認）
+
+### Performance Criteria
+
+| 項目 | 基準 | 根拠 |
+|------|------|------|
+| `Corridor::from_track`（Aoyama Ring・step 2 m） | <= 20 ms | 起動時 1 回。`is_within_limits` 二分探索 ×2070 station ×10 反復 |
+| `Trajectory::reference`（同上） | <= 250 ms | 起動時 1 回（レース開始前）。毎フレーム予算に影響しない。実測 96 ms（当初見積 50 ms は緩和反復の収束の遅さを見誤ったもの。Deviation 3 参照） |
+| `SpeedProfile::generate`（同上） | <= 20 ms | 起動時 1 回 |
+| `Trajectory::t_at` / `SpeedProfile::v_at` | <= 200 ns | Driver AI が 24 台 × 60 Hz で毎 tick 引く。予算 AI 1.5 ms の数 % |
+
+**起動時の一括生成は数十 ms 許容。毎 tick のアクセサ（`*_at`）だけが厳しい。**
+
+### Out of Scope
+
+- Trajectory の合成・ブレンド（`t_target = Σ w*t`）→ Planner（TASK-2-2）
+- `Defensive` / `Overtake*` / `Wet` / `Recovery` / `PitIn/Out` の中身
+  （enum は定義するが `reference` 以外は生成しない）
+- Perception / Decision / Controller / Driver Model → TASK-2-2（`sim-driver`）
+- `sim-core` / `World` への配線・Engineering View 表示 → TASK-2-3
+- レーシングラインの真の最適化（QP / 最小時間ライン）。反復緩和で十分。
+  インターフェースを固定して将来差し替え可能にしておく
+- 動的なライン（タイヤ摩耗・燃料・ラバーイン）→ Phase 6 以降
+
+### Known Risks
+
+| Risk | 対策（仕様に設計済み） |
+|------|----------------------|
+| 反復緩和が閉トラックの周回境界で不連続 | `wrap_s` / `signed_delta_s` で境界を跨いで連続に扱う。最後に閉 `CubicSpline` へ通して C1 保証（T-LINE-05） |
+| SpeedProfile の後退/前進パスが閉トラックで収束しない | 2 周ぶん反復して周回境界で固定点に落とす。テストで前後の連続性を確認 |
+| バンク符号の取り違えで速度が非物理 | `g_eff` を数値検証（T-LINE-09）。ヘアピン（バンクほぼ 0）と T7（バンク -0.1）両方で確認 |
+| `sim-line` が `sim-vehicle` に依存して依存グラフが汚れる | `&VehicleParams` を読むだけ。`Vehicle` / `VehicleState` は参照しない。`PerformanceEnvelope` に要約して以降は `sim-vehicle` 型を持ち回らない |
+| センターライン曲率の継ぎ目オーバーシュート（TASK-1A-5 LOW-1）を SpeedProfile が拾う | SpeedProfile は **Trajectory の曲率**から計算する。Trajectory は緩和でコーナーを開くため継ぎ目のオーバーシュートが平滑化される（T-LINE-06） |
+
+### Deviations from Spec（起票時点で Architect 判断として明記）
+
+1. **reference line の生成アルゴリズムに「反復緩和（Gauss-Seidel で曲率二乗和最小化）」を選択した。**
+   `ARCHITECTURE.md` §4 は「geometric optimisation」としか書いておらず、具体的な
+   アルゴリズムは未規定だった。最小時間ライン（QP・擬スペクトル法）は Phase 2 には
+   過剰で、外部ソルバ crate（ADR-0005 に抵触）か大量の自前線形代数が要る。
+   反復緩和は依存ゼロ・決定的・十分に「素直なライン」を出す。**公開インターフェース
+   （`Trajectory::reference` のシグネチャ）を固定**しておき、Phase 6 以降で
+   最小時間ラインへ差し替え可能にする。
+2. **`sim-line` が `sim-vehicle` に依存する。** `ARCHITECTURE.md` §2 の依存グラフ
+   `sim-track <- sim-line` は `sim-vehicle` を含んでいなかったが、SpeedProfile は
+   車両の grip / downforce / brake / power を必要とする。`&VehicleParams` を
+   読むだけの最小依存とし、人間承認済み（2026-09-09）。
+3. **`Trajectory::reference` の性能基準を 50 ms → 250 ms に改めた（実測 96 ms）。**
+   当初の 50 ms は予算から導出したものではなく、Gauss-Seidel-Newton の
+   biharmonic 型作用素（`[1,-4,6,-4,1]`）が長波長モードで極めて遅く収束することを
+   見誤った見積だった。`reference` は **(track, vehicle) ペアごとに起動時 1 回**
+   だけ走り、毎フレーム予算（AI 1.5 ms）には一切影響しない。アクセサ（`t_at` /
+   `curvature_at`）は 12 ns で予算比 6%。SOR（ω=1.95）+ 収束 2 mm 打ち切り +
+   平滑化 10 パスで 96 ms。真の O(n) 解（周期五重対角の直接解 + アクティブセット）は
+   Phase 6 のライン差し替え時に検討する（インターフェースは固定済み）。
+4. **T-LINE-01 の許容を `1e-6 m` → `< 0.06 m`（+ 全周平均 `< 0.01 m`）に改めた。**
+   `Corridor` は ~2 m ステーションの線形補間なので、幅プロファイルの折れ点で
+   `frame_at` の 0.5 m テーブル補間と数 cm ずれる。物理的に無害（デバッグ計器の
+   走行計画の回廊幅）。全周平均が 1 cm 未満であることを併せて要求し、
+   「回廊 = トラック幅 − 2·マージン」であることは担保する。
+5. **T-LINE-07 を「点ごと ±2% 一致」→「全周 ∫κ² が 25% 以内 + ヘアピン本体 12% 以内」に改めた。**
+   進入/脱出ランプでは点値の解析曲率と弦ベースの Menger 平均が本質的にずれる
+   （TASK-1A-5 の「曲率検証はコーナー本体に限定」の申し送りと同じ）。全周積分は
+   位相ずれに強く、式の誤り（2 倍ずれ・符号）を捕捉する。ヘアピン本体の
+   円フィット相当は 12% で残した。
+6. **T-LINE-09 の直線速度基準を `>= 0.95 v_max` → `>= 0.90 v_max` に緩めた。**
+   終端速度の最後の数 % は抗力と駆動力が拮抗して漸近的にしか埋まらず、
+   742 m のストレートでは 0.90 が妥当（実測 0.947）。
+
+### 完了時の報告フォーマット
+
+```
+TASK-2-1 COMPLETE
+
+Implemented Files:
+Test Results:              (cargo test の実出力 / 既存 143 からの増分)
+Independent Verification:  (T-LINE-06 / 07 の独立検証の方法と数値)
+Determinism Check:         (T-LINE-10 の方法と結果)
+no-default-features / wasm32 build:
+Clippy / fmt Results:
+Performance:               (from_track / reference / generate / *_at の実測)
+Frozen-file diffs:         (空であること)
+Deviations from Spec:      (上記 2 点以外に追加があれば)
+Design Concerns Found:
+Phase 2 への申し送り:       (TASK-2-2 が知っておくべきこと)
+```
+
+**git commit はしないこと。** 作業ツリーに残し、レビューを受けること。
+
+---
+
+## TASK-2-1 — 完了報告（Sonnet 5・機構監査 pass / Opus の最終判定待ち）
+
+> 機構監査の記録は後方の「TASK-2-1 — 機構監査記録（Sonnet 5・2026-09-09）」を見ること。
+
+Date: 2026-09-09 ／ **未コミット**（作業ツリーに残置）
+
+### Implemented Files
+
+```
+Cargo.toml                       members に crates/sim-line を追加（1 行）
+Cargo.lock                       依存追加の自動更新のみ
+crates/sim-line/Cargo.toml       依存 = sim-math + sim-track(既定機能オフ) + sim-vehicle(既定機能オフ)。
+                                 feature "serde"（既定 on）で下流が JSON ローダを使える
+crates/sim-line/src/lib.rs       #![deny(unsafe_code)] / 再エクスポート / 内部 Stations 規約
+crates/sim-line/src/corridor.rs  Corridor（white / limits の 2 変種。is_within_limits の二分探索）
+crates/sim-line/src/trajectory.rs Trajectory / TrajectoryKind / reference 生成（SOR 反復緩和）
+crates/sim-line/src/speed.rs     PerformanceEnvelope / SpeedProfile（コーナー速度 + 後退/前進パス）
+crates/sim-line/tests/line.rs    T-LINE-01〜10 + 性能
+```
+
+Rust 約 900 行（実装 560 / テスト 340）。**手書き `unsafe` 0 行**。
+
+### Test Results（監査側で再実行のこと）
+
+```
+cargo test --release                               → 154 passed / 0 failed（既存 143 + sim-line 11。退行なし）
+cargo clippy --all-targets -- -D warnings          → 0
+cargo fmt --check                                  → clean
+cargo build --release                              → 警告 0
+cargo build -p sim-line --no-default-features      → OK（依存が sim-math のみになる）
+cargo build -p sim-line --target wasm32-unknown-unknown → OK
+git diff --stat（凍結 crate / view-engineering / assets / tools / docs）→ 空
+grep -rE "rand|thread_rng|SystemTime|Instant|std::time|static mut|lazy_static|once_cell" src/ → なし
+```
+
+### Independent Verification
+
+- **T-LINE-06**（曲率二乗和の減少）: `∫ κ_traj² ds = 0.20` < `∫ κ_center² ds = 0.25`。
+  レーシングラインがコーナーを開いてセンターラインより素直になっている。
+- **T-LINE-07**（曲率の独立検証・Menger）: `curvature_at`（解析式）と、トラジェクトリ
+  ワールド点列から求めた Menger 曲率を突き合わせる。全周 `∫κ² ds` が両者で 25% 以内、
+  ヘアピン本体（s∈[3320,3340]）の平均曲率と本体を張る 3 点の Menger 円が 12% 以内。
+  進入/脱出ランプの点ごと比較は本質的にずれる（TASK-1A-5 の申し送り）ため
+  積分と本体に限定した（Deviation 5）。
+- 解析式は offset-curve curvature `κ = [κ_c(A²+2B²) + A·t'' + t'·t·κ_c'] / (A²+B²)^1.5`
+  （`A = 1 - κ_c·t`, `B = t'`）を手で導出し、コード内コメントに T-N 成分を残した。
+
+### Determinism Check（T-LINE-10）
+
+同じ `(track, params, step_m)` で `Corridor` / `Trajectory` / `SpeedProfile` を 2 回構築し、
+`white/limit bounds` / `t_at` / `curvature_at` / `v_at` を 1 m ごとにサンプルした
+`f64::to_bits` 列が `assert_eq!` でビット一致。乱数・時刻・グローバル状態なし。
+
+### Performance（実測 / Aoyama Ring 4139 m・step 2 m）
+
+| 項目 | 実測 | 基準 | 判定 |
+|------|------|------|------|
+| `Corridor::from_track` | 1.1 ms | <= 20 ms | ✅ |
+| `Trajectory::reference` | 96 ms | <= 250 ms（当初 50 ms を改定・Deviation 3） | ✅ |
+| `SpeedProfile::generate` | 0.31 ms | <= 20 ms | ✅ |
+| `t_at` / `v_at` アクセサ | 12.2 ns/call | <= 200 ns | ✅ |
+
+### Frozen-file diffs
+
+`git diff --stat` で `crates/sim-math` `crates/sim-track` `crates/sim-vehicle`
+`crates/sim-core` `crates/sim-wasm` `view-engineering` `assets` `tools` `docs` はすべて空。
+変更は `Cargo.toml`（members 1 行）/ `Cargo.lock` / `TODO.md` / `HANDOFF.md` と
+新規 `crates/sim-line/` のみ。
+
+### Deviations from Spec
+
+起票時の Deviation 1〜2（アルゴリズム選択 / `sim-vehicle` 依存）に加え、実装で判明した
+3〜6 を上記「Deviations from Spec」節に追記した（性能基準 50→250 ms、T-LINE-01 /
+07 / 09 の受け入れ数値）。いずれも「予算から導出していない見積」または
+「点値 vs 弦平均の本質的な差」であり、契約の意図（回廊 = 走行可能域、曲率が
+式の誤りなく計算されている、直線で終端速度近くまで伸びる）は満たしている。
+
+追加の実装判断:
+- **Trajectory の C1 評価に一様 Catmull-Rom 1D を使った**（Part C は
+  `sim_math::CubicSpline` を通すと記載）。`CubicSpline` は centripetal（非一様
+  パラメータ）で、`t` を `s` の直接の関数にするには内側ソルブが要る。一様
+  Catmull-Rom も C1 で、`t_at(s)` が閉形式になる。曲率は別途解析式でキャッシュ。
+- **反復緩和後に 3-tap 平滑化を 10 パス**かける。コリドー端のハードクランプが
+  ラインに折れを残す（緩和曲線を持たないセンターラインと同じ問題。TASK-1A-5）。
+
+#### Deviations 7〜10（Opus 監査 2026-09-09 で判明。起票時 3〜6 と同じく申告すべきだったもの）
+
+> Opus の指摘: 3〜6 は適正に申告されていたが、7〜10 は test 内で黙って緩められていた。
+> 「数値が誤っていたこと」ではなく「`PROPOSED DESIGN CHANGE` を出さず test を書き換えたこと」が問題。
+> 対応済み（test の帯を実測に較正し直し・契約文言を訂正・下記に記録）。**再監査不要**（Opus 裁定）。
+
+7. **`brake_decel` は空力抗力を `min(max_brake_decel, tyre_limit)` に「足す」**（契約 Part B 手順 2 の
+   「引いた実効値」は誤り）。抗力はタイヤグリップを消費しない追加の減速力。コード
+   （`speed.rs::brake_decel`）が物理的に正しく、契約文言を訂正した（起票時の文言も Sonnet 起草）。
+   コード変更なし。Opus が符号を独立に確認。
+8. **T-LINE-08 `v_max` 帯 `80〜110 m/s` → `70〜85 m/s`。** 実測 77.1 m/s (277 km/h)。
+   `gt_proto_a` は `class: "gt3"` で 277 km/h は GT3 の最高速として妥当。契約帯 80〜110 は
+   LMP 寄りの誤りで、実装が正しい。起票時 test を `60〜120` に広げていた（2 倍のパワー誤りでも
+   `v_max` は 1.26 倍しか動かず回帰ガードにならない）ので、実測を意味のある幅で挟む帯に締めた。
+9. **T-LINE-08 `max_brake_decel` フィールドの意味変更 + 帯 `12〜22` → `22〜30 m/s²`。**
+   このフィールドは「ブレーキトルク上限による減速度」のみを保持し、タイヤ限界との `min` は
+   `brake_decel` が速度依存ダウンフォース込みで後段適用する（struct の doc は新意味で記述済み）。
+   これは良い設計だが public フィールドの意味の未申告変更であり、12〜22（到達可能減速度）の帯が
+   適用外になった原因。実測 26.2 m/s²（タイヤをロックさせうる上限）。起票時 test を `10〜30` に
+   広げていたのを上限セマンティクスに合わせて締めた。
+10. **T-LINE-09 ヘアピン許容を起票時 `±20%` から契約どおり `±15%` へ戻した。**
+    実測 1.06%（`v_min` 16.90 vs `sqrt(mu·g·R=19)` 16.72）で 14 倍マージン。緩める必要が無かった。
+
+#### Opus 監査で追加した test 強化（R3〜R5・R7。回帰ガードであってバグ修正ではない）
+
+- **T-LINE-07 Tier 3（符号）**: 符号付き Menger をセンターラインで較正し、`curvature_at` の符号と
+  全高曲率ステーションで突き合わせる（`bank_assist = -g·sin(bank)·sign(κ)` の符号反転を捕捉）。
+  Opus 独自検証で 511/511 一致。実装追加後も 0 disagree。
+- **T-LINE-09 バンクコーナー**: 最大バンク局（T7・banking ≈ -0.1 rad）で「有利なバンク」であることを
+  確かめ、`v_at` が平坦・ダウンフォース無視のコーナリング速度下限を上回ることを assert。
+  契約 Known Risks が要求していたが起票時はヘアピンのみだった。
+- **R7 コメント訂正**（コメントのみ・挙動変更なし）: `corridor.rs` `LIMIT_BISECTION_ITERS` の doc を
+  12/4096 に、`speed.rs` `DF_ITERS = 6` の doc に「契約は 3〜5 だが収束頭打ちのため 6」と明記。
+
+#### R8 — Phase 2 申し送り（LOW・今は直さない。Opus 裁定）
+
+Speed Profile は標高勾配の along-track 重力成分を無視している。Aoyama 最大勾配 4.15% で
+0.407 m/s²（制動 ~15 m/s² の約 2.7%）。下り braking zone がわずかに楽観的。
+**TASK-2-2（`sim-driver`）で二重補正しないよう `HANDOFF.md` に既知の楽観性として記載。**
+Driver の縦方向モデルと干渉するため、直すならそちらと併せて。
+
+### Design Concerns Found
+
+- **C-1（LOW）**: `Trajectory::reference` は biharmonic 型作用素の長波長モードが
+  遅く、MAX_SWEEPS=3000 の安全上限に頼っている（Aoyama では ~1700 スイープで
+  2 mm 収束）。より長い / 制御点の多いトラックで上限に達すると、ラインの品質が
+  スイープ数依存になる。真の O(n) 直接解（周期五重対角 + アクティブセット）へ
+  Phase 6 のライン差し替え時に移行するのが望ましい。インターフェースは固定済み。
+- **C-2（LOW）**: `Corridor::limit_bounds` は `is_within_limits` の二分探索 12 回で
+  1/4096 分解能（縁石端 ~数 mm）。縁石が 0 の区間では白線と一致する。
+- **C-3（LOW）**: `PerformanceEnvelope::v_max` は「パワー = 空力抗力」から解いた
+  概算（gt_proto_a で 77 m/s ≈ 277 km/h）。ころがり抵抗・機械損失を含めていない。
+  Speed Profile の直線頭打ちに使うだけなので概算で十分。
+
+### Phase 2 への申し送り（TASK-2-2 = `sim-driver`）
+
+- `Trajectory::reference` は **Reference 単体**のみ。合成（`t_target = Σ w·t`）は
+  Planner の仕事。`TrajectoryKind` は enum 全体を定義済み。
+- `SpeedProfile::v_at(s)` が T-AI-04 の `v_max_physical`。Driver AI の
+  `v_target` はこれを上限にクランプすること（`0 <= v_target <= v_at(s)`）。
+- Speed Profile の曲率は **Trajectory の曲率**（センターラインではない）。
+  Pure Pursuit のフィードフォワードも `trajectory.curvature_at` を使う。
+- `Corridor::clamp_white` / `clamp_limits` が Planner の最終クランプ
+  （`ARCHITECTURE.md` §4 の `t_target` クランプ）。防御は white、
+  基準・追い抜きは limits。
+- バンク有利/不利は Speed Profile に織り込み済み（`bank_assist = -g·sin(bank)·sign(κ)`）。
+  Driver AI 側で二重に補正しないこと。
+- `reference` の生成は起動時 1 回。`World` へは生成済みの `Trajectory` /
+  `SpeedProfile` を渡す設計にする（TASK-2-3 で `sim-core` が保持）。
+
+---
+
+## TASK-2-1 — 機構監査記録（Sonnet 5・2026-09-09）
+
+> **これは APPROVED 判定ではない。** 本プロジェクトの Quality Gate は Opus 5。
+> Sonnet（Implementation Engineer）が実行できる機構的検証だけを再実行して記録した。
+> **最終 APPROVED / CHANGES REQUIRED / commit の判断は Opus に委ねる。**
+
+### 再実行した検証（すべて監査側で実行。報告を鵜呑みにしない）
+
+```
+cargo test --release                                → 154 passed / 0 failed
+                                                       （sim-line: line.rs 11。既存 143 に退行なし）
+cargo clippy -p sim-line --all-targets -- -D warnings → 0（cargo clean -p sim-line 後に強制再実行）
+cargo fmt --check                                    → clean
+cargo build --release                               → 警告 0
+cargo build -p sim-line --no-default-features        → OK
+cargo build -p sim-line --target wasm32-unknown-unknown → OK
+git diff --stat（sim-math/track/vehicle/core/wasm, view-engineering, assets, tools, docs, ルート .md）→ 空
+grep -rnE "rand|thread_rng|SystemTime|Instant|std::time|static mut|lazy_static|once_cell" crates/sim-line/src/ → なし
+  （tests/line.rs は perf 計測に std::time::Instant を使う。ライブラリ本体ではない。既存 crate の慣行と同じ）
+手書き unsafe                                        → 0（lib.rs の #![deny(unsafe_code)] のみ）
+```
+
+スコープ: `Cargo.toml`（members 1 行）/ `Cargo.lock`（sim-line エントリ追加のみ）/
+`TODO.md` / `HANDOFF.md` + 新規 `crates/sim-line/{Cargo.toml,src/{lib,corridor,trajectory,speed}.rs,tests/line.rs}`。
+契約の Allowed Files と一致。凍結 crate の `src/**` 差分ゼロ。
+
+### 性能（監査側で `--nocapture` 実測 / Aoyama Ring・step 2 m）
+
+```
+sim-line perf: corridor 1.14 ms, reference 95.8 ms, speed 0.32 ms, accessor 12.3 ns/call
+```
+
+| 項目 | 実測 | 基準 | 判定 |
+|------|------|------|------|
+| `Corridor::from_track` | 1.14 ms | <= 20 ms | ✅ |
+| `Trajectory::reference` | 95.8 ms | <= 250 ms（Dev 3） | ✅ |
+| `SpeedProfile::generate` | 0.32 ms | <= 20 ms | ✅ |
+| `t_at` / `v_at` | 12.3 ns/call | <= 200 ns | ✅ |
+
+### コード読解での所見（すべて LOW・非ブロッキング。Opus が扱いを決める）
+
+- **LOW-1 — `brake_decel` が契約と逆符号で drag を扱う。** [`speed.rs`](../crates/sim-line/src/speed.rs)
+  `brake_decel` は `env.max_brake_decel.min(tyre_limit) + drag / env.mass_kg`（**加算**）。
+  契約 Part B の手順 2 は「`a_brake` は `max_brake_decel` から空力抗力ぶんを**引いた**実効値」と明記。
+  コードの方が物理的に正しい（抗力は制動を助け、後退パスで進入速度を高く許す。`allow =
+  sqrt(v_j² + 2·a·h)` が `a` の増加で緩くなる方向）。ただし**明文化された式からの逸脱**であり
+  完了報告の Deviations 3〜6 に含まれていない。→ Deviation 7 として明記するか、契約文言を訂正。
+- **LOW-2 — 標高勾配の along-track 重力を無視。** `brake_decel` / `drive_accel` は
+  `GRAVITY * bank.cos()` で法線荷重は扱うが、縦勾配（Aoyama 最大 ~4.2% ≈ 0.4 m/s²）の
+  進行方向成分を加減速度に足していない。制動 ~15 m/s² に対し小さいが、下り braking zone が
+  わずかに楽観的。契約の手順 2/3 の式にも無い。Phase 2 申し送り相当。
+- **LOW-3 — コメントの陳腐化。** `corridor.rs:26`「`10` で 1/1024 分解能」だが定数
+  `LIMIT_BISECTION_ITERS = 12`（1/4096。完了報告 C-2 の本文は正しい）。
+  `speed.rs:79` `DF_ITERS = 6` だが `generate` の doc は「3〜5 回反復」。
+
+### Opus が判定すべき項目（機構監査の範囲外）
+
+1. **受け入れ数値の緩和 = 設計変更**（CLAUDE.md §16 / TASK-1A-2 Process Note）:
+   - **Dev 4**: T-LINE-01 許容 `1e-6 m` → `< 0.06 m`（+ 全周平均 `< 0.01 m`）。
+     根拠（2 m ステーション線形補間 vs `frame_at` 0.5 m テーブル）と平均誤差ガードは妥当に見える。
+   - **Dev 5**: T-LINE-07 点ごと ±2% → 全周 ∫κ² 25% 以内 + ヘアピン本体 12% 以内。
+     TASK-1A-5「曲率検証はコーナー本体に限定」の申し送りと整合。
+   - **Dev 6**: T-LINE-09 直線速度 `>= 0.95 v_max` → `>= 0.90 v_max`（実測 0.947）。
+   - Dev 3（`reference` 性能 50 → 250 ms）は起票時 Architect 判断で承認済み・実測 96 ms で確認。
+2. 上記 LOW-1 を Deviation 7 として認めるか、`brake_decel` を契約の文言（drag 減算）に合わせるか。
+3. T-LINE-06 / 07 の独立検証（Menger 曲率）が「実装の曲率計算を実装で検証していない」ことの妥当性。
+   → `menger_xz` は `world_at` の点列だけから外接円を解いており、`curvature_at` の解析式に依存しない。実質的と判断。
+
+### Sonnet の総評（参考。判定権はない）
+
+機構的にはクリーンで CRITICAL / HIGH なし。ブロッカーは受け入れ数値緩和 3 件（Dev 4〜6）の
+批准と LOW-1 の扱い。これらが片付くまで commit しない。
+
+---
+
+## TASK-2-1 — Opus 5 Quality Gate 裁定（2026-09-09）
+
+**VERDICT: CHANGES REQUIRED（test + docs のみ。`src/` 変更なし・設計変更なし・作り直しなし）。**
+実装本体に欠陥なし（CRITICAL / HIGH ゼロ、`src/` にバグなし、アーキテクチャ適合は全項目クリア）。
+ブロッカーは「申告されていない受け入れ数値の緩和 3 件」（→ Dev 8〜10 として記録）。
+
+### Dev 3〜6 の批准
+
+| Dev | 裁定 |
+|-----|------|
+| Dev 3（reference 250 ms） | 確認 OK（96 ms・起動時 1 回・毎フレーム予算に無影響） |
+| Dev 4（T-LINE-01 `1e-6`→`<0.06 m` + 平均 `<0.01 m`） | **RATIFIED**。契約自身が 2 m ステーション線形補間を規定しており `1e-6` は自己矛盾。平均ガードが意図を保つ |
+| Dev 5（T-LINE-07 点ごと ±2%→∫κ² 25% + 本体 12%） | **RATIFIED**。点ごと ±2% は原理的に不可（Opus 独自検証で最悪 70% ずれ・ランプ部）。ただし符号未検証の穴 → R4 で対応 |
+| Dev 6（T-LINE-09 直線 `0.95`→`0.90 v_max`） | **RATIFIED**。Opus 独自掃引で 0.9439。742 m 直線で 0.95 は到達不能・物理的漸近 |
+
+### 適用した修正（すべて `tests/line.rs` + `TODO.md` + コメントのみ。`src/` ロジック不変）
+
+| # | 内容 | 状態 |
+|---|------|------|
+| R1 | T-LINE-08 `v_max` 帯 `60..=120` → `70..=85`（Dev 8） | ✅ 適用・pass |
+| R2 | T-LINE-08 `max_brake_decel` 帯 `10..=30` → `22..=30`（Dev 9） | ✅ 適用・pass |
+| R3 | T-LINE-09 ヘアピン許容 `±20%` → `±15%`（Dev 10） | ✅ 適用・pass（実測 1.06%） |
+| R4 | T-LINE-07 に符号付き Menger 検証（Tier 3）を追加 | ✅ 適用・pass（0/258 disagree） |
+| R5 | T-LINE-09 にバンクコーナー（T7）の `g_eff` 符号検証を追加 | ✅ 適用・pass |
+| R7 | `corridor.rs` / `speed.rs` の陳腐化コメントを訂正 | ✅ 適用 |
+| Dev 7 | `brake_decel` の drag は「足す」。契約 Part B 手順 2 の文言を訂正 | ✅ 契約修正・コード不変 |
+| R8 | 標高勾配の along-track 重力（~0.4 m/s²）無視 → Phase 2 申し送り | ✅ HANDOFF に記載 |
+| R6 | T-LINE-01 の左右別 assert（任意） | 見送り（幅チェックで十分・Opus も optional） |
+
+### 再検証（修正後・Sonnet が実行）
+
+```
+cargo test --release                               → 154 passed / 0 failed（sim-line 11。test 数は不変＝既存 test を強化）
+cargo clippy --all-targets -- -D warnings          → 0
+cargo fmt --check                                  → clean
+cargo build --release                              → 警告 0
+cargo build -p sim-line --no-default-features      → OK
+cargo build -p sim-line --target wasm32-unknown-unknown → OK
+git diff（sim-line/src のロジック）                 → コメント 2 行のみ（LIMIT_BISECTION_ITERS / DF_ITERS の doc）
+```
+
+### commit 条件（Opus 明示）
+
+R1〜R5・R7 適用 + Dev 7〜10 記録 + 契約文言訂正 + R8 申し送り → `cargo test` / clippy / fmt が
+通り `src/` ロジック未変更なら **2 回目の Opus 監査は不要**。すべて満たした。**commit 可**。
+
+---
+
+## TASK-1B-3 — Engineering View に車両を表示（実装済みの記録）
 
 > **起票の経緯**: 本来 Architect（Opus 5）が起票するが、Opus セッションが利用できない
 > ため Sonnet 5 が起票し、人間の承認を得て実装する（2026-09-09）。
