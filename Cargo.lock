@@ -127,6 +127,27 @@ dependencies = [
 name = "sim-core"
 version = "0.1.0"
 dependencies = [
+ "sim-driver",
+ "sim-line",
+ "sim-math",
+ "sim-track",
+ "sim-vehicle",
+]
+
+[[package]]
+name = "sim-driver"
+version = "0.1.0"
+dependencies = [
+ "sim-line",
+ "sim-math",
+ "sim-track",
+ "sim-vehicle",
+]
+
+[[package]]
+name = "sim-line"
+version = "0.1.0"
+dependencies = [
  "sim-math",
  "sim-track",
  "sim-vehicle",
@@ -164,6 +185,8 @@ name = "sim-wasm"
 version = "0.1.0"
 dependencies = [
  "sim-core",
+ "sim-driver",
+ "sim-line",
  "sim-math",
  "sim-track",
  "sim-vehicle",
