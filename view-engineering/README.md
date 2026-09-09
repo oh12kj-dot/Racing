@@ -83,6 +83,50 @@ python -m http.server 8080
 
 ---
 
+## 車両表示（TASK-1B-3）
+
+`crates/sim-wasm` の `WasmWorld`（= `sim-core` の `World` を保持する境界）越しに
+Aoyama Ring 上で 1 台を走らせ、姿勢・サスペンション・テレメトリを表示する。
+
+- 車体はプリミティブ（箱 + 円柱 4 個）で組む。**GLB（Blender 生成メッシュ）は
+  読み込まない。** ライティング・影・エフェクトも付けない（ADR-0003）
+- 右上のパネルに速度 / rpm / gear / 入力 / lap / `s` / `t` / セクター /
+  4 輪の荷重・スリップ比・スリップ角・摩擦円使用率を数値で表示する
+- 位置・姿勢は **すべて `WasmWorld` から読む**（`body_poses` / `wheel_poses`）。
+  ビューア側で座標変換や物理量の再計算をしない
+- 駆動は固定タイムステップ（`PHYSICS_DT = 1/240`）のアキュムレータ。
+  1 フレームで進める tick は 32 で頭打ち（タブ復帰時のフリーズ防止）
+
+### 暫定入力について
+
+現在の操作入力は **プレースホルダのスクリプト**（既定 `throttle 0.35` /
+`steer 0` / rpm に応じた簡易ギア選択のみ）であり、**Driver AI ではない**。
+ライン追従などの操舵ロジックはここには書かない（Phase 2 の `sim-driver` で実装する）。
+そのため車はコーナーで自然にコースアウトする。track limits は Phase 2 で扱う。
+
+### spawn の姿勢の制約
+
+`World::spawn` の姿勢はヨーのみで、縦勾配・バンク区間では 1 step 後の
+サスペンション縮み量が最大 38 mm ずれる過渡が出る（減衰する・`recovered_steps` は増えない）。
+グリッド用途の S/F ストレートでは無害（5.5e-5 m）。`TrackFrame` 由来の
+ピッチ/ロール込みへの拡張は `sim-vehicle` の凍結解除が要るため別タスク（`HANDOFF.md` D-1）。
+
+### `window.__engview`（自動検証用）
+
+読み出し・視点操作・`ControlInput` の指定のみ。位置や速度を直接書く API はない。
+
+| メンバ | 用途 |
+|--------|------|
+| `world` | `WasmWorld` ハンドル（`body_poses` / `wheel_poses` / `telemetry` / `standings`） |
+| `car` | 車両メッシュ（`chassis` / `wheels[4]` / `group`） |
+| `stepOnce()` | 1 物理 tick 進めて描画も更新する |
+| `setInput({steer, throttle, brake, gear, autoShift})` | 暫定入力の上書き |
+| `vehicle.{bodyPose, wheelPoses, telemetry}` | 現在値のスナップショット |
+| `followCar(on)` | 車体後方からのチェイスカメラ（OrbitControls と排他） |
+| `WasmWorld` / `__trackJson` / `__specText` | ネイティブ参照と突き合わせる別 World を組む用 |
+
+---
+
 ## 曲率カラーマップの読み方
 
 負 = 青 / 0 = 灰 / 正 = 赤。**本規約では左カーブが正**。
@@ -103,14 +147,17 @@ Phase 2 の Speed Profile ではニセの減速になる
 
 ```
 index.html            import map と CSS。ビルドツールなし
-src/main.js           シーン構築・入力・ホバー読み取り
+src/main.js           シーン構築・入力・ホバー読み取り・World の駆動
 src/track_mesh.js     WasmTrack -> Three.js オブジェクト。カラーマップ
-src/overlay.js        数値 HUD（諸元・凡例・ホバー表示）
+src/vehicle_mesh.js   車両スペック -> プリミティブ。pose の適用
+src/overlay.js        数値 HUD（諸元・凡例・ホバー表示・車両テレメトリ）
 pkg/                  wasm-pack の生成物（gitignore）
 node_modules/         three（gitignore）
 ```
 
-幾何の唯一の正は `sim-track` にある。ビューア側で曲率やバンクを
-計算し直してはならない。すべて `crates/sim-wasm` 経由で読み出す。
-`sim-wasm` は **読み出し専用** であり、書き込み用のメソッドを持たない
+幾何の唯一の正は `sim-track` / `sim-core` にある。ビューア側で曲率・バンク・
+車両姿勢を計算し直してはならない。すべて `crates/sim-wasm` 経由で読み出す。
+`sim-wasm` のトラック境界（`WasmTrack`）は **読み出し専用**。
+`WasmWorld` は `World` を保持して進めるが、外部から渡せるのは `ControlInput`
+相当の数値列だけで、Transform を書く経路は持たない
 （Presentation が Simulation を書き換える経路を作らないため）。

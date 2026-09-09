@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Engineering View — Track</title>
+    <title>Engineering View — Track + Vehicle</title>
     <!--
       これはデバッグ用計測器であり、製品レンダラではない（DECISIONS.md ADR-0003）。
       装飾のための CSS を足さないこと。数値が読めることだけを目的にする。
@@ -105,6 +105,40 @@
         text-align: center;
         border: 1px solid #444e59;
         background: #1b2027;
+      }
+      #telemetry {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        width: 280px;
+        padding: 8px;
+        background: rgba(0, 0, 0, 0.72);
+        border: 1px solid #333c46;
+      }
+      #telemetry table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 3px;
+      }
+      #telemetry th {
+        text-align: left;
+        font-weight: normal;
+        color: #8b95a1;
+        padding-right: 4px;
+        white-space: nowrap;
+      }
+      #telemetry td {
+        text-align: right;
+        padding-right: 8px;
+      }
+      #telemetry table.wheels {
+        margin-top: 6px;
+        border-top: 1px solid #2a3038;
+        padding-top: 4px;
+      }
+      #telemetry table.wheels th {
+        text-align: right;
+        padding-right: 8px;
       }
       #readout {
         position: absolute;

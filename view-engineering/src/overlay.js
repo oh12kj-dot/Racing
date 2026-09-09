@@ -30,13 +30,52 @@ export class Overlay {
         <div class="section" id="modes"></div>
         <div class="section" id="layers"></div>
       </div>
+      <div id="telemetry">車両テレメトリ待機中</div>
       <div id="readout">カーソルを路面に合わせると数値を表示</div>
     `;
     this.info = this.root.querySelector('#track-info');
     this.legend = this.root.querySelector('#legend');
     this.modes = this.root.querySelector('#modes');
     this.layers = this.root.querySelector('#layers');
+    this.telemetry = this.root.querySelector('#telemetry');
     this.readout = this.root.querySelector('#readout');
+  }
+
+  /// 車両テレメトリ。main.js の readTelemetry が返す形をそのまま受ける。
+  /// 計測器なので数値だけ。色分け・グラフは付けない（ADR-0003）。
+  setTelemetry(v) {
+    if (!v) {
+      this.telemetry.textContent = '車両テレメトリ待機中';
+      return;
+    }
+    const wheelRows = v.wheels
+      .map(
+        (w) =>
+          `<tr><th>${w.label}</th>` +
+          `<td>${w.load.toFixed(0)} N</td>` +
+          `<td>${w.slipRatio.toFixed(3)}</td>` +
+          `<td>${((w.slipAngle * 180) / Math.PI).toFixed(2)}°</td>` +
+          `<td>${(w.gripUsage * 100).toFixed(0)}%</td></tr>`
+      )
+      .join('');
+    this.telemetry.innerHTML = `
+      <div class="label">車両テレメトリ（${v.standing}）</div>
+      <table>
+        <tr><th>速度</th><td>${v.speedKmh.toFixed(1)} km/h</td>
+            <th>rpm</th><td>${v.rpm.toFixed(0)}</td>
+            <th>gear</th><td>${v.gear === 0 ? 'N' : v.gear < 0 ? 'R' : v.gear}</td></tr>
+        <tr><th>throttle</th><td>${v.inThrottle.toFixed(2)}</td>
+            <th>brake</th><td>${v.inBrake.toFixed(2)}</td>
+            <th>steer</th><td>${v.inSteer.toFixed(2)}</td></tr>
+        <tr><th>lap</th><td>${v.laps}</td>
+            <th>s</th><td>${v.s.toFixed(1)} m</td>
+            <th>t</th><td>${v.t.toFixed(2)} m</td></tr>
+        <tr><th>sector</th><td>${v.sector}</td><th></th><td></td><th></th><td></td></tr>
+      </table>
+      <table class="wheels">
+        <tr><th></th><th>load</th><th>slipR</th><th>slipA</th><th>grip</th></tr>
+        ${wheelRows}
+      </table>`;
   }
 
   /// トラックの基本諸元。起動時に一度だけ書く。

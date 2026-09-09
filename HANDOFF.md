@@ -1,6 +1,6 @@
 # HANDOFF.md — 引き継ぎ資料
 
-Last updated: 2026-09-08 / HEAD `3a4ba0a` + 未コミットの TASK-1A-5
+Last updated: 2026-09-09 / TASK-1B-1 `b7a7084` / 1B-2 `4968e61` / 1B-3（3 本目 = 現在の HEAD）を commit 済み
 **このファイル 1 本で作業を再開できるように書いてある。**
 他の文書は「必要になったときだけ」開けばよい（どこに何があるかは §2 に記載）。
 
@@ -11,16 +11,16 @@ Last updated: 2026-09-08 / HEAD `3a4ba0a` + 未コミットの TASK-1A-5
 | | |
 |---|---|
 | **何を作っているか** | Realistic Race Spectator Simulator。プレイヤーは運転せず**観戦**する。「実際のモータースポーツ中継に見え、よく見ると各 AI が本当にレースをしている」ことが目標 |
-| **今どこか** | **Phase 1A（Track Foundation）は完了**（1A-1〜1A-5）。Phase 0.5 の TASK-05-2（Blender）も完了。次は Phase 1B |
-| **次に何をするか** | **TASK-1B-1（`sim-vehicle` 車両物理）**。物理の全文仕様は `docs/phase-1b-vehicle.md`、タスク契約は `TODO.md` の `# NEXT SONNET TASK` |
+| **今どこか** | **Phase 1B 完了。TASK-1B-1（`sim-vehicle`）/ 1B-2（`sim-core`）/ 1B-3（Engineering View 車両表示）がすべて APPROVED・commit 済み（3 本）。** 車はトラック上を走り、Engineering View で見える。Phase 0.5 の TASK-05-2（Blender）も完了 |
+| **次に何をするか** | **Phase 2（レーシングライン + 単独 Driver AI）へ。** Architect（Opus 5）が `TODO.md` の `# NEXT SONNET TASK` に実装契約を起票する必要がある（現状は 1B-3 の記録のまま）。D-1 フル版は TASK-1B-4 として保留（§11）。TASK-05-1（UE5）は並行着手可 |
 | **役割** | Opus 5 = Architect / Reviewer / Quality Gate。Sonnet 5 = Implementation Engineer。重大な技術変更は人間承認が必要 |
-| **健全性確認** | `cargo test --release` → **76 passed / 0 failed** |
+| **健全性確認** | `cargo test --release` → **143 passed / 0 failed** |
 
 ### 最初にやること
 
 ```bash
 cd /c/AI/App_Dev/Racing
-cargo test --release      # 76 passed が期待値。下回ったら先に原因を特定する
+cargo test --release      # 143 passed が期待値。下回ったら先に原因を特定する
 ```
 
 これが通れば、リポジトリは既知の健全な状態にある。
@@ -39,10 +39,12 @@ cargo test --release      # 76 passed が期待値。下回ったら先に原因
 | TASK-05-2 | Blender 車両生成パイプライン（**M9 達成**） | ✅ APPROVED | `2ec80c9` |
 | Phase 1B 仕様 | `sim-vehicle` 実装仕様 | ✅ 作成済 | `60c1577` |
 | TASK-1A-4 | Engineering View（`sim-wasm` + ビューア） | ✅ APPROVED | `3a4ba0a` |
-| TASK-1A-5 | 曲率リップル解消と平滑性テスト | ✅ APPROVED | **未コミット** |
-| **TASK-1B-1** | **`sim-vehicle`（車両物理）** | ⬅ **次。仕様済** | — |
+| TASK-1A-5 | 曲率リップル解消と平滑性テスト | ✅ APPROVED | `16ec799` |
+| TASK-1B-1 | `sim-vehicle`（車両物理） | ✅ APPROVED | `b7a7084` |
+| TASK-1B-2 | `sim-core`（トラック路面 + 固定ステップ World） | ✅ APPROVED（監査 2 ラウンド） | `4968e61` |
+| TASK-1B-3 | Engineering View 車両表示（`sim-wasm` に `WasmWorld` + ビューア） | ✅ APPROVED | 3 本目（HEAD） |
+| **TASK-1B-4** | `spawn` 姿勢の完全化（D-1 フル版。`sim-vehicle` 凍結解除が前提） | ⬅ 保留。Architect / 人間承認事項 | — |
 | TASK-05-1 | UE5 Code-First 構築 + M1〜M9 実測 | 📄 仕様済 | — |
-| Phase 1B | `sim-vehicle` 実装 | 📄 仕様済 | — |
 
 ### ファイル構成（全体。これがすべて）
 
@@ -52,8 +54,10 @@ docs/phase-0.5-tasks.md      TASK-05-1(UE5) / TASK-05-2(Blender) の実装仕様
 docs/phase-1b-vehicle.md     Phase 1B (sim-vehicle) の実装仕様
 crates/sim-math/             Vec2/Vec3, Quat, CubicSpline, ArcLengthSpline, Rng, util
 crates/sim-track/            TrackCoord, TrackFrame, Track, SurfaceKind, io(JSON), lap
-crates/sim-wasm/             読み出し専用 WASM 境界（TrackView / WasmTrack）
-view-engineering/            デバッグ用計測器（Three.js）。製品レンダラではない
+crates/sim-vehicle/          ControlInput, GroundProbe, VehicleParams, Vehicle（車両物理）
+crates/sim-core/             TrackGround（GroundProbe 実装）, World（固定ステップ）, VehicleEntry
+crates/sim-wasm/             WASM 境界。TrackView/WasmTrack（読み出し専用）+ WorldView/WasmWorld（World を進める）
+view-engineering/            デバッグ用計測器（Three.js）。トラック + 走る車両を表示。製品レンダラではない
 assets/tracks/               aoyama_ring.track.json（オリジナル 4 139 m サーキット）
 assets/vehicles/             gt_proto_a.spec.json（見た目と物理の共通仕様）
 tools/blender/               車両メッシュ生成パイプライン（稼働中）
@@ -61,7 +65,7 @@ tools/tracks/                トラックの制御点を詰め直すツール（
 build/                       生成物。gitignore 済み。コミットしない
 ```
 
-Rust 約 5 900 行 / Python 約 1 800 行 / JS 約 900 行。
+Rust 約 9 400 行 / Python 約 1 800 行 / JS 約 900 行。
 
 ---
 
@@ -71,7 +75,7 @@ Rust 約 5 900 行 / Python 約 1 800 行 / JS 約 900 行。
 |------|------------|
 | `TODO.md` | **次のタスクを実装するとき**（NEXT SONNET TASK に全文仕様）／過去のレビュー記録を見たいとき |
 | `docs/phase-0.5-tasks.md` | UE5（TASK-05-1）に着手するとき |
-| `docs/phase-1b-vehicle.md` | 車両物理（Phase 1B）に着手するとき |
+| `docs/phase-1b-vehicle.md` | 車両物理を触るとき。**実装後の追記（実装ノート / 制動距離の帯の改定）が末尾にある** |
 | `PROJECT.md` | 性能予算・決定性契約の数値を確認したいとき |
 | `ARCHITECTURE.md` | 新しい crate を足す／モジュール境界を判断するとき |
 | `DECISIONS.md` | 「なぜこの技術なのか」を問われたとき（ADR-0000〜0006） |
@@ -126,7 +130,7 @@ Rust 約 5 900 行 / Python 約 1 800 行 / JS 約 900 行。
 
 ## 5. 実装済み API（ソースを読まずに済むように）
 
-> 以下は TASK-1A-4 完了時点のスナップショット。**正はソース**だが、
+> 以下は TASK-1B-2 完了時点のスナップショット。**正はソース**だが、
 > 通常はこれで足りる。詳細な doc comment は各 `.rs` にある。
 
 ### `sim-math`（依存ゼロ / unsafe ゼロ / wasm32 ビルド確認済み）
@@ -219,9 +223,128 @@ track_from_json_str / track_from_json_file / load_track / track_to_json_string
   // ★読み込み時に Track::build を実行して検証する。不正データは後段へ流れない
 ```
 
-### `sim-wasm`（依存は sim-math + sim-track + wasm-bindgen）
+### `sim-vehicle`（依存は sim-math + optional serde。**`sim-track` に依存しない**）
 
-**読み出し専用の境界。ロジックを持たない。書き込み用メソッドは存在しない。**
+路面は [`GroundProbe`] トレイト経由で受け取る。これにより平面上で単体テストできる。
+`sim-track` との接続は `sim-core`（TASK-1B-2）が行う。
+
+```rust
+// lib.rs
+PHYSICS_DT = 1.0/240.0   WHEEL_SUBSTEPS = 4（車輪とタイヤのみ 960 Hz）
+GRAVITY = 9.80665        AIR_DENSITY = 1.225
+
+// input.rs
+struct ControlInput { steer, throttle, brake, clutch, gear: i8, drs: bool }
+  sanitized(gear_count) -> ControlInput   // NaN/inf を安全側へ。brake の非有限は 1.0（全制動）
+
+// ground.rs — ★この crate が路面について知っている唯一のこと
+trait GroundProbe { fn probe(&self, from: Vec3, max_distance: f64) -> Option<GroundHit>; }
+struct GroundHit { point, normal, grip, rolling_resistance, roughness }  // 物理量のみ。SurfaceKind を渡さない
+struct FlatGround { height, grip, rolling_resistance, roughness }
+  FlatGround::asphalt(height)             // SurfaceKind::Asphalt の既定値と一致させてある
+
+// params.rs（feature "serde" が既定。--no-default-features で依存ゼロになる）
+VEHICLE_SCHEMA_VERSION = 1
+struct VehicleParams { name dimensions mass tyre engine drivetrain aero brakes suspension steering }
+  from_json_str / from_json_file          // ★読み込み時に validate する。不正データは後段へ流れない
+  validate() -> Result<(), VehicleParamsError>
+  static_wheel_load(w) spring_rate(w) tyre_radius(w) rest_length() static_compression(w)
+  wheel_mount_local(w) -> Vec3            // ★静的つり合いで重心が cg_height に来る高さを逆算する
+enum VehicleParamsError { Parse Io UnsupportedVersion NonPositive OutOfRange
+                          NotMonotonic Empty SuspensionBottomsOut }
+
+// state.rs — ★フィールドは公開だが書き換えてはならない
+enum WheelIndex { FrontLeft=0, FrontRight=1, RearLeft=2, RearRight=3 }
+  ALL is_front is_left opposite            // ALL の反復順は固定（決定性）
+struct WheelState { compression compression_velocity spin rotation steer_angle load
+                    slip_ratio slip_angle grounded force_long force_lat
+                    friction_limit grip_usage }
+  // friction_limit = mu * load。grip_usage は 1.0 で飽和するので摩擦円の検証にはこちらを使う
+struct VehicleState { position orientation velocity angular_velocity wheels[4]
+                      engine_rpm gear last_input aero_downforce recovered_steps }
+  forward up right yaw pitch roll forward_speed total_load
+  // ★pitch は正で機首上げ、roll は正で右側が沈む。基底ベクトルから導いている（下記の罠を参照）
+  // ★recovered_steps は保険であって、増えること自体が不具合
+
+// vehicle.rs
+struct Vehicle
+  new(params, position, yaw)                        // position は重心
+  new_with_velocity(params, position, yaw, velocity) // 初期条件の指定。ローリングスタート用
+  step(&input, &dyn GroundProbe, dt)                 // ★状態を変える唯一の経路。dt は PHYSICS_DT 固定
+  state() params() wheel_mount_local(w) suspension_rest_length()
+  wheel_world_transform(w) -> (Vec3, Quat)           // ★Visual Suspension はこれを使う
+COMPRESSION_VELOCITY_TIME_CONSTANT = 0.005  DAMPER_FORCE_LIMIT_RATIO = 8.0
+MAX_SPEED = 200.0  MAX_ANGULAR_SPEED = 50.0          // 破綻検知のしきい値
+
+// tyre.rs
+LOW_SPEED_BLEND = 2.0     // スリップの分母の下限。低速ブレンドの上端も兼ねる
+RELAXATION_MIN_SPEED = 1.0
+```
+
+**`step()` 以外に `&mut self` を取る公開メソッドは存在しない。** この構造を壊さないこと。
+
+### `sim-core`（依存は sim-math + sim-track + sim-vehicle。dev-dep なし）
+
+**車（`sim-vehicle`）とトラック（`sim-track`）を繋ぐ層。** 乱数を持たない。
+Rendering / UI / Camera を知らない。可変 dt を受け取らない。
+
+```rust
+// ground.rs — sim-track を使う GroundProbe 実装
+struct TrackGround<'a>
+  new(&'a Track)  track()  hint()->Option<f64>
+  set_hint(s)                                 // ★world_to_track の探索ヒント。毎 tick 更新する
+impl GroundProbe for TrackGround
+  // probe: GroundProbe の「鉛直下方へ探索」契約を守る。
+  //   接地点 = 鉛直線 (from.x, *, from.z) と s の路面平面（点 position・法線 normal）の交点。
+  //   drop = ((from - P)·n) / n.y。n.y.abs() < 1e-6 で None。
+  //   勾配で world_to_track の投影先 s がずれるため、接地高さ付近まで下ろした点で
+  //   再投影する反復（上限 4 回）で補正する。センターライン近傍 2 反復で 1e-9 未満、
+  //   高曲率+大 |t| は上限到達・残差 1e-8 m オーダー（物理的に無害）。
+  //   ★垂線投影ではない（バンクで h·sin²θ ぶん drop が縮み、ばね荷重が約 +38% になる）
+  //   normal は TrackFrame の normal をそのまま（Gram-Schmidt 済み・自前で作り直さない）。
+  //   grip/rolling_resistance/roughness は surface_at(coord).properties() から詰める
+  //   （sim-vehicle に SurfaceKind を渡さない）。max_distance 超で None。
+
+// world.rs — 固定タイムステップのシミュレーション本体
+struct VehicleId(pub usize)                    // vehicles() / spawn の添字
+struct VehicleEntry { vehicle, coord: TrackCoord, laps_completed: u32, last_crossing: LapCrossing }
+  sync_track_position(&mut self, &Track, new_coord, max_ds) -> LapCrossing
+    // ★World::step が毎 tick 呼ぶ経路。テスト用に pub（World からは Suspect を作れない）
+enum WorldError { Params(VehicleParamsError), InvalidSpawn { field, value } }
+const LAP_MAX_DS = sim_vehicle::vehicle::MAX_SPEED * PHYSICS_DT * 3.0   // ≈ 2.5 m
+  // ★比較対象はセンターライン弧長 ds であって世界変位ではない。
+  //   ds = dl_path / (1 - κt) でカーブ内側は MAX_SPEED·dt を超える。係数 3 は
+  //   Aoyama Ring 最悪の曲率増幅 ≈2.5×（κ≈0.075, t≈8 m）にマージン。オンコース前提。
+
+struct World
+  new(Track)  track()  tick()->u64  vehicles()->&[VehicleEntry]
+  spawn(VehicleParams, start_s, start_t) -> Result<VehicleId, WorldError>
+    // start_s は wrap_s で正規化。ヨーはセンターラインの接線から。静止状態で構築。
+    // ★車高は静的つり合い（グリッドの S/F ストレートでは誤差 5.5e-5 m。
+    //   縦勾配区間では最大 38 mm ずれる。姿勢はヨーのみ = TASK-1B-3 で拡張予定）
+  step(&mut self, inputs: &[ControlInput])
+    // ★dt は PHYSICS_DT 固定・引数に取らない。inputs[i] が VehicleId(i)。
+    //   足りない分は ControlInput::default()。
+    //   1 台の順序（決定性のため固定）:
+    //   ヒント更新 → Vehicle::step → world_to_track で coord 更新
+    //   → detect_lap_crossing → Forward のみ laps +1（Suspect / Backward は加算しない）
+  standings() -> Vec<VehicleId>
+    // ★(laps_completed, s) の辞書順の降順のみ。ワールド距離で並べない。同着はスポーン順
+```
+
+**周回数について**: `Backward` では減算しない（Forward のみ +1）。ライン上で振動する車は
+1 往復ごとに +1 されうる（対称カウンタは逆に「後方発進 → 逆走 → 前進」で幻の +1）。
+**どちらも単独では正しくない。周回数の確定は Phase 3 のレース状態機械で
+セクター通過順と併せて設計する**（TODO.md D-3）。
+
+`&mut self` を取る公開メソッドは `World::{spawn, step}` と `VehicleEntry::sync_track_position` のみ。
+車両状態を変えるのは `Vehicle::step` だけ（`sim-core` は AI 出力を素通しするだけ）。
+
+### `sim-wasm`（依存は sim-math + sim-track + sim-core + sim-vehicle + wasm-bindgen）
+
+**ロジックを持たない型変換だけの境界。** トラック幾何（`WasmTrack`）は読み出し専用。
+`WasmWorld` は `sim-core` の `World` を保持して進めるが、**外部が渡せるのは
+`ControlInput` 相当の数値列だけ**で、Transform を書く公開メソッドは存在しない。
 
 ```rust
 // 純 Rust 層（wasm_bindgen 非依存。テストはこちらに書く）
@@ -234,12 +357,33 @@ struct TrackView
   sample_curvature / sample_banking(step_m)->Vec<f64>
   world_to_track(Vec3)->TrackCoord
 
+struct WorldView                        // TASK-1B-3。sim-core::World を保持
+  from_json(track_json, vehicle_spec_json)->Result<WorldView, WorldViewError>
+  spawn(start_s, start_t)->Result<usize, WorldViewError>   // 添字を返す
+  step(steps: u32, inputs: &[f64])      // 入力は 1 台 6 要素 [steer,throttle,brake,clutch,gear,drs]
+                                        // steps は MAX_STEPS_PER_CALL=32 でクランプ。dt=PHYSICS_DT 固定
+  tick() vehicle_count() track_length() standings()->Vec<usize>
+  body_poses()->Vec<f64>               // 7/台 [px,py,pz, qx,qy,qz,qw]（重心姿勢）
+  wheel_poses()->Vec<f64>              // 28/台 = 4輪×7。FL,FR,RL,RR。wheel_world_transform そのまま
+  telemetry()->Vec<f64>               // 25/台: s,t,laps,fwd_speed,rpm,gear,in_steer,in_throttle,
+                                       //   in_brake, then 4×[load,slip_ratio,slip_angle,grip_usage]
+  world()->&World                      // 検証用の読み出しアクセサ
+  MAX_STEPS_PER_CALL=32  INPUT_STRIDE=6
+
 // 境界層（型変換のみ。JS からはこちらが見える）
 #[wasm_bindgen] struct WasmTrack
   new(track_json) name length sector_boundaries start_finish_s
   sample_line sample_surface sample_curvature sample_banking
   world_to_track(x,y,z)->Vec<f64>       // [s, t]
+
+#[wasm_bindgen] struct WasmWorld
+  new(track_json, vehicle_spec_json) spawn(s,t) step(steps, Float64Array)
+  tick()->f64 vehicle_count() track_length()
+  body_poses() wheel_poses() telemetry() standings()
 ```
+
+ネイティブ参照ラン: `cargo run -p sim-wasm --release --example reference_run -- <s> <steps> <throttle> <gear>`
+（ブラウザ WASM の結果と突き合わせる。位置はビット一致した）。
 
 **ステーションの規約**（全 `sample_*` が共有する）:
 `n = ceil(L / step_m)`、`s_i = i * L / n`（`i = 0..=n`）。ステーション数は `n + 1`、
@@ -414,6 +558,67 @@ Severity は `CRITICAL / HIGH / MEDIUM / LOW`。
   「保存→再読込でビット一致」と仮定しないこと。アセット JSON が唯一の正であり
   実行時に再生成しないため、決定性契約には影響しない
 
+### 車両物理（TASK-1B-1 で判明したこと）
+
+- **緩和長は「タイヤの過渡特性」であると同時に「陽解法を安定させる仕掛け」でもある。**
+  車輪回転を陽解法で解くと、低速（`v = 2 m/s`）では `dFx/dspin ≈ 13 700 N/(rad/s)` となり
+  1 サブステップの利得が 2.9 に達して**発散する**。これを止めているのが緩和長で、
+  緩和の時定数 `L_relax / max(|v|, 1) = 0.15 s` はサブステップ `1/960 s` よりはるかに長いため、
+  実効利得が `2.9 × 0.0069 = 0.02` に落ちる。
+  **`relaxation_length` を小さくすると低速で破綻する。触ったら必ず T-VEH-06 を回すこと**
+- **`Quat::to_euler_yxz` の "pitch" は `+X` まわりであり、車両ローカル（`+X` 前方）では
+  ロールに相当する。** そのまま使うとピッチとロールが入れ替わる。
+  `VehicleState::{pitch, roll}` は基底ベクトルから導いてあるので**そちらを使うこと**
+- **静的つり合いは幾何で作り込める。** 車輪取り付け点の高さを
+  `tyre_radius + rest_length - static_compression - cg_height` と置くと、
+  静止状態で重心がちょうど `cg_height` に来る。T-VEH-01 / 02 が誤差 0.00000% で通るのは
+  偶然ではなくこの設計による。**初 step で差分速度に偽のスパイクが出ないよう
+  `initialized` フラグで初回の `compression_velocity` を 0 にしている**
+- **摩擦円は等方なので `mu0` は縦と横のグリップを同時に動かす。**
+  「100-0 で 30〜40 m」と「R=50 m で 1.4 G 以上」は同時に満たせなかった。
+  掃引の実測と採用理由は `docs/phase-1b-vehicle.md`。**帯を 25〜40 m へ改定した**
+- **車両の能力を測るときは、入力を全開固定にしない。** ブレーキ全開では 4 輪ロックで 43 m、
+  スロットル全開では 1 速でホイールスピンして 8 s になる。
+  受け入れテストはペダル掃引とスリップ制御で測っている（`tests/common/mod.rs`）。
+  **これはテストハーネスであって Driver AI ではない**
+- **惰行減速を照合するときは車輪の回転慣性を等価質量として足すこと。**
+  `I / r^2 = factor * m_unsprung`（半径によらない）で 1 輪 14.7 kg、4 輪で 58.8 kg。
+  忘れると実測が 5% ずれて見える（実際にそう見えた。**モデルではなく検証式の誤りだった**）
+- **仕様の式に上限が無いところは実装時に必ず頭打ちを入れる。**
+  静止摩擦ばね（減衰項が無いと停車中に自励振動）と LSD ロックトルク
+  （差回転に比例したまま発散）で実際に必要になった
+- **限界を超えると素直にスピンする。** ステア掃引で `-0.110` まで安定、`-0.115` で破綻。
+  限界付近の前後スリップ角がほぼ等しい（中立）ため、Driver AI 側に修正操舵が要る
+
+### トラック路面と World（TASK-1B-2 で判明したこと）
+
+- **`GroundProbe` は「鉛直下方へ探索」する契約。** 接地点を `world_to_track` の
+  垂線投影で作ると、`from`（路面から鉛直に持ち上げた点）の投影先が路面法線方向に
+  ずれ、鉛直落差が `h·sin²(bank)` ぶん縮む。バンク 0.1 rad で 6.45 mm、
+  `static_compression`（16.5〜18 mm）比で**ばね荷重が約 +38%**。バンクコーナーだけ
+  不自然に速くなる。**鉛直線と s の路面平面の交点**（`drop = ((from-P)·n)/n.y`）で解く。
+  監査は旧/新実装を外部に再実装して 56,000 点で掃引し、10.95 mm → 3.83e-8 m を確認した
+- **勾配があると `world_to_track` の投影先 s が接地点の s からずれる**（接線に直交する
+  平面へ落とすため、鉛直に持ち上げた点は別 station に落ちる）。**接地高さ付近まで
+  下ろした点で `world_to_track` を引き直す反復**（上限 4 回）で二次以下に落ちる。
+  センターライン近傍は 2 反復で 1e-9 未満、高曲率+大 |t| は上限到達・残差 1e-8 m
+  オーダー（38 nm 相当・物理的に無害）
+- **`set_hint` は性能だけでなく正しさに効く。** hint を半周ぶん外すと、標高差のある
+  区間で 16 m 上の別デッキを掴み grip も 1.00→0.35 になる。`World::step` は毎 tick
+  `prev_s` を渡すので安全だが、単発構築する側（Engineering View 等）は注意
+- **`LAP_MAX_DS` はセンターライン弧長 `ds` のしきい値であって世界変位ではない。**
+  オフセット `t` の車の弧長変化は `ds = dl_path/(1-κt)` で、カーブ内側では
+  `MAX_SPEED·dt`（≈0.83 m）を超える。Aoyama Ring 最悪 ≈2.5×（κ≈0.075, t≈8 m）。
+  係数 3（≈2.5 m）でマージン。**オンコース前提**——コース外へ数百 m 飛ぶと ds/tick が
+  6.9 m に達し `Suspect` になる（track limits が入る Phase 2 までは無視してよい）
+- **周回数は Forward のみ +1。** `Backward` で減算する対称カウンタは u32 が 0 で
+  飽和するため「ライン後方発進 → 逆走 → 前進」で幻の +1 を生む。Forward-only は
+  逆に「ライン上で振動する車が 1 往復ごとに +1」。**どちらも単独では不正**で、
+  周回数の確定は Phase 3 のレース状態機械でセクター通過順と併せて設計する
+- **`spawn` の姿勢はヨーのみ。** 縦勾配区間（最大 4.2%）で 1 step 後の compression が
+  最大 38 mm ずれる（減衰する過渡）。グリッドを並べる S/F ストレートでは 5.5e-5 m で
+  無害だが、TASK-1B-3 で `TrackFrame` 由来のピッチ/ロール込みへ拡張する
+
 ### 性能基準の考え方
 
 **性能基準は予算から導出すること。恣意的な数値を置かない。**
@@ -440,15 +645,19 @@ Severity は `CRITICAL / HIGH / MEDIUM / LOW`。
 ```bash
 cd /c/AI/App_Dev/Racing
 
-# Rust（期待値: 76 passed / clippy 0 / warnings 0 / fmt clean）
+# Rust（期待値: 143 passed / clippy 0 / warnings 0 / fmt clean）
 cargo test --release
 cargo clippy --all-targets -- -D warnings
 cargo build --release
 cargo fmt --check
 
 # 依存ゼロの core が壊れていないか（WASM/FFI 向け）
-cargo build -p sim-track --no-default-features       # 依存が sim-math のみになる
+cargo build -p sim-track   --no-default-features     # 依存が sim-math のみになる
+cargo build -p sim-vehicle --no-default-features     # 同上
+cargo build -p sim-core    --no-default-features     # 同上（sim-math + sim-track + sim-vehicle）
 cargo build -p sim-track --target wasm32-unknown-unknown
+cargo build -p sim-vehicle --target wasm32-unknown-unknown
+cargo build -p sim-core --target wasm32-unknown-unknown
 cargo build -p sim-wasm  --target wasm32-unknown-unknown --release
 
 # Engineering View（詳細は view-engineering/README.md）
@@ -482,7 +691,14 @@ git status --short
 | `load_track`（4 km） | 7.0 ms | < 50 ms |
 | 車両 GLB 生成 | 2.7 s / 71 178 tri | 60k〜150k tri |
 | `WasmTrack::sample_surface(1.0)`（4 km） | 0.3 ms | < 50 ms |
+| `Vehicle::step`（1 台 1 tick・平面上） | 1.5 µs | < 8 µs |
+| 24 台 × 4 tick / render frame（平面上） | 0.144 ms | <= 2.0 ms |
+| `World::step`（24 台 1 tick・実トラック上、`TrackGround` 込み） | 167 µs | <= 2.0 ms |
 | Engineering View の表示 | 60.6 fps（**SwiftShader**。実 GPU ではさらに上） | 60 fps |
+
+`World::step` の 167 µs は `TrackGround::probe` の再投影反復（`world_to_track` を
+probe あたり 1→2 回）ぶんを含む。反投影なし（垂線投影）の旧案は 101 µs だったが
+バンクでばね荷重が約 +38% 狂うため採らない。
 
 ### Engineering View をヘッドレスで自動検証する
 
@@ -524,41 +740,40 @@ Game Engine 変更 / 言語変更 / 主要フレームワーク置換 / 物理�
 
 ## 11. 次にやること
 
-### TASK-1B-1 — `sim-vehicle`（車両物理）
+### ① Phase 2 の実装契約を起票する（担当 Architect / Opus 5）
 
-**Phase 1A は完了した。次はここが中核である。**
+Phase 1B は完了・3 本 commit 済み（`b7a7084` / `4968e61` / HEAD）。
+次は Phase 2（レーシングライン + 単独 Driver AI）。**`TODO.md` の
+`# NEXT SONNET TASK` はまだ TASK-1B-3 の記録のまま**なので、Architect が
+`Goal / Allowed Files / Do Not Change / Required Changes / Required Tests /
+Acceptance Criteria / …` を含む実装契約を新規に起票する必要がある（§7）。
 
-物理モデルの全文仕様は **`docs/phase-1b-vehicle.md`（430 行）**にある。
-タスク契約（Allowed Files / 凍結 / 受け入れ基準 / 報告フォーマット）は
-`TODO.md` の `# NEXT SONNET TASK`。**両方読んでから着手すること。**
+起票時に織り込む Phase 1A / 1B の申し送り:
+- Speed Profile はセンターラインではなく**レーシングラインの曲率**から計算する
+  （センターラインは緩和曲線を持たず継ぎ目に曲率オーバーシュートが残る。§8）
+- Driver AI の制御出力は必ず `move_towards` / `approach_exponential` に通す
+  （T-AI-02 の構造的保証。§5）
+- 限界付近で車は素直にスピンする（前後スリップ角が中立）。修正操舵が要る（1B-1 C-1）
+- 暫定ハーネスの `spawn` はヨーのみ。グリッドは S/F ストレートに置く（D-1）
+- track limits はまだ無い。`LAP_MAX_DS` はオンコース前提（D-2）
 
-要点だけ:
+### TASK-1B-4 — `spawn` 姿勢の完全化（D-1 フル版・保留）
 
-- 依存は `sim-math` + `sim-track` のみ。**物理エンジン crate は使わない**（ADR-0005）
-- `assets/vehicles/gt_proto_a.spec.json` の物理側フィールドを**初めて読む実装**になる
-- 決定性が受け入れ基準に入っている（同一シード・同一入力で**ビット一致**）
-- **最大リスクは低速での Pacejka 発散。** 緩和長 0.30 m + 低速ブレンド 2.0 m/s +
-  静止摩擦ばね + 車輪のみ 960 Hz サブステップで対処する設計が仕様書にある。
-  **ここを自己流にするとグリッドスタートとピットで必ず破綻する**
-
-### まだコミットしていない作業がある
-
-TASK-1A-5 は APPROVED 済みだが**作業ツリーに残っている**。
-`assets/tracks/`、`crates/sim-track/tests/io.rs`、`tools/tracks/`、
-`TODO.md`、`HANDOFF.md`、`CLAUDE.md` が対象。
+1B-3 では `spawn` はヨーのみのまま（グリッドを S/F ストレートに置いて無害範囲で運用）。
+フル版は `Vehicle::new` が完全な `orientation`（Quat）を受け取る API 追加が必要で、
+**`sim-vehicle`（凍結）の公開 API 変更 = Architect / 人間承認事項**。
+受け入れ「全周 400 station で 1 step 後 `|compression − static_compression| < 1e-6 m`」。
+Phase 2 でバンクコーナーの単独走行を詰める前にやるのが望ましい。
 
 ### 並行して着手可能
 
 - **TASK-05-1**（UE5 Code-First 構築 + M1〜M9 実測）— `docs/phase-0.5-tasks.md`
   UE 5.8 導入済み。**UE 5.8 の cvar 名は推測で書かず、適用後の値を読み出して検証すること**
-- **Phase 1B**（`sim-vehicle`）— `docs/phase-1b-vehicle.md`
-  最大リスクは低速での Pacejka 発散。緩和長 0.30 m + 低速ブレンド 2.0 m/s +
-  静止摩擦ばね + 車輪のみ 960 Hz サブステップで対処する設計になっている
 
 ### Phase の全体像（`PLAN.md` 参照）
 
 ```
-0 Discovery ✅ / 0.5 UE5 Spike(05-2 ✅) / 1A Track(1A-4 が最後) / 1B Vehicle
+0 Discovery ✅ / 0.5 UE5 Spike(05-2 ✅) / 1A Track ✅ / 1B Vehicle ✅(1B-1 / 1B-2 / 1B-3 commit 済み) / 次 Phase 2
 2 RacingLine+単独AI / 3 複数台+レース / 4 追走 / 5 追い抜き・防御  ← ここまでが中核
 6 タイヤ・戦略 / 7 天候 / 8 放送カメラ / 9 TV Director / 10 映像 / 11 音・リプレイ / 12 最適化
 ```

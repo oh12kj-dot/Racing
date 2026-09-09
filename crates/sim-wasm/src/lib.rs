@@ -1,18 +1,26 @@
-//! `sim-wasm` — Engineering View 向けの **読み出し専用** WASM 境界。
+//! `sim-wasm` — Engineering View 向けの WASM 境界。
 //!
-//! この crate の責務は「Simulation Core の状態を JS から読み出させる」ことだけである。
-//! ロジックを持たず、Presentation が Simulation を書き換える経路も作らない
-//! （ARCHITECTURE.md の依存方向、および DECISIONS.md ADR-0003）。
+//! この crate はロジックを持たず、型変換だけを行う。
+//!
+//! - **トラック幾何は読み出し専用**（[`TrackView`] / [`WasmTrack`]）。書き込み経路はない
+//! - [`WorldView`] / [`WasmWorld`] は [`sim_core::World`] を保持して進めるが、
+//!   外部から渡せるのは [`sim_vehicle::ControlInput`] 相当の数値列だけである。
+//!   Transform / Position / Velocity を書く公開メソッドは存在しない。
+//!   これは実シミュレーションの駆動経路そのものであって、Presentation が
+//!   Simulation を書き換える別経路ではない（DECISIONS.md ADR-0003、
+//!   `HANDOFF.md` §3-1、および ARCHITECTURE.md の依存方向 `sim-wasm -> sim-core`）
 //!
 //! # 構成
 //!
 //! | 層 | 型 | 役割 |
 //! |----|----|------|
-//! | 純 Rust | [`TrackView`] | サンプリングの実装。`wasm_bindgen` に依存しない |
+//! | 純 Rust | [`TrackView`] | トラック幾何のサンプリング。`wasm_bindgen` に依存しない |
 //! | 境界 | [`WasmTrack`] | [`TrackView`] への薄いラッパ。型変換のみ |
+//! | 純 Rust | [`WorldView`] | [`sim_core::World`] の保持と読み出し。`wasm_bindgen` に依存しない |
+//! | 境界 | [`WasmWorld`] | [`WorldView`] への薄いラッパ。型変換のみ |
 //!
-//! テストは [`TrackView`] に対して書く。これによりネイティブの
-//! `cargo test -p sim-wasm` でサンプリングのロジックを検証できる。
+//! テストは純 Rust 層（[`TrackView`] / [`WorldView`]）に対して書く。これにより
+//! ネイティブの `cargo test -p sim-wasm` でロジックを検証できる。
 //!
 //! # サンプリングの規約
 //!
@@ -33,8 +41,10 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
+use sim_core::{World, WorldError};
 use sim_math::Vec3;
 use sim_track::{Track, TrackCoord, TrackIoError};
+use sim_vehicle::{ControlInput, VehicleParams, VehicleParamsError, WheelIndex};
 
 /// ステーション数の上限。これを超える `step_m` の指定は不正として空を返す。
 ///
@@ -136,6 +146,213 @@ impl TrackView {
     }
 }
 
+/// 1 回の [`WorldView::step`] で進めてよい物理 tick 数の上限。
+///
+/// `32 * PHYSICS_DT ≈ 133 ms`。ブラウザのタブが背面から復帰したときに
+/// 数秒ぶんの `dt` がまとめて来ても、1 表示フレームで消化する量をここで頭打ちにして
+/// タブをフリーズさせない。超過ぶんは捨てる（見た目のスローモーションを許容する）。
+pub const MAX_STEPS_PER_CALL: u32 = 32;
+
+/// [`WorldView::step`] が 1 台ぶんの入力として読む要素数。
+///
+/// 並びは `[steer, throttle, brake, clutch, gear, drs]`。
+pub const INPUT_STRIDE: usize = 6;
+
+/// [`WorldView`] の構築 / スポーンのエラー。
+#[derive(Debug)]
+pub enum WorldViewError {
+    /// トラック定義 JSON の読み込みに失敗した。
+    Track(TrackIoError),
+    /// 車両スペック JSON の読み込みに失敗した。
+    Vehicle(VehicleParamsError),
+    /// [`sim_core::World`] の操作に失敗した（スポーン座標が非有限など）。
+    World(WorldError),
+}
+
+impl core::fmt::Display for WorldViewError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            WorldViewError::Track(e) => write!(f, "track JSON: {e}"),
+            WorldViewError::Vehicle(e) => write!(f, "vehicle spec JSON: {e}"),
+            WorldViewError::World(e) => write!(f, "world: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for WorldViewError {}
+
+impl From<TrackIoError> for WorldViewError {
+    fn from(e: TrackIoError) -> Self {
+        WorldViewError::Track(e)
+    }
+}
+impl From<VehicleParamsError> for WorldViewError {
+    fn from(e: VehicleParamsError) -> Self {
+        WorldViewError::Vehicle(e)
+    }
+}
+impl From<WorldError> for WorldViewError {
+    fn from(e: WorldError) -> Self {
+        WorldViewError::World(e)
+    }
+}
+
+/// [`sim_core::World`] を保持し、Engineering View 用の読み出しを提供する純 Rust 層。
+///
+/// 状態を変える経路は [`WorldView::step`]（[`ControlInput`] を渡す）だけである。
+/// これは実シミュレーションの駆動経路そのものであり、Presentation から
+/// Simulation を書き換える別経路ではない（`HANDOFF.md` §3-1）。
+pub struct WorldView {
+    world: World,
+    /// スポーンのたびに複製する車両パラメータ（[`World::spawn`] が値で受け取るため）。
+    params: VehicleParams,
+}
+
+impl WorldView {
+    /// トラック定義 JSON と車両スペック JSON から構築する。車両は 0 台。
+    pub fn from_json(
+        track_json: &str,
+        vehicle_spec_json: &str,
+    ) -> Result<WorldView, WorldViewError> {
+        let def = sim_track::track_from_json_str(track_json)?;
+        let track = Track::build(&def).map_err(TrackIoError::Invalid)?;
+        let params = VehicleParams::from_json_str(vehicle_spec_json)?;
+        Ok(WorldView {
+            world: World::new(track),
+            params,
+        })
+    }
+
+    /// トラック局所座標 `(s, t)` に 1 台配置する。戻り値は添字（= `VehicleId.0`）。
+    pub fn spawn(&mut self, start_s: f64, start_t: f64) -> Result<usize, WorldViewError> {
+        let id = self.world.spawn(self.params.clone(), start_s, start_t)?;
+        Ok(id.0)
+    }
+
+    /// `steps` 物理 tick 進める。
+    ///
+    /// `inputs` は 1 台あたり [`INPUT_STRIDE`] 要素
+    /// （`[steer, throttle, brake, clutch, gear, drs]`）を平坦に並べたもの。
+    /// 車両数ぶんに満たない分は [`ControlInput::default`]。
+    /// `steps` は [`MAX_STEPS_PER_CALL`] でクランプし、超過分は捨てる。
+    /// `dt` は [`sim_vehicle::PHYSICS_DT`] 固定で、引数に取らない。
+    pub fn step(&mut self, steps: u32, inputs: &[f64]) {
+        let controls = parse_inputs(inputs);
+        let steps = steps.min(MAX_STEPS_PER_CALL);
+        for _ in 0..steps {
+            self.world.step(&controls);
+        }
+    }
+
+    /// 進んだ tick 数。
+    pub fn tick(&self) -> u64 {
+        self.world.tick()
+    }
+
+    /// 配置済みの車両数。
+    pub fn vehicle_count(&self) -> usize {
+        self.world.vehicles().len()
+    }
+
+    /// トラック全長 [m]。
+    pub fn track_length(&self) -> f64 {
+        self.world.track().length()
+    }
+
+    /// 車体重心のワールド姿勢。`[px,py,pz, qx,qy,qz,qw]`（7 要素 × 台数）。
+    ///
+    /// 値は [`sim_vehicle::VehicleState`] の `position` / `orientation` そのまま。
+    pub fn body_poses(&self) -> Vec<f64> {
+        let mut out = Vec::with_capacity(self.world.vehicles().len() * 7);
+        for entry in self.world.vehicles() {
+            let s = entry.vehicle.state();
+            push_vec3(&mut out, s.position);
+            push_quat(&mut out, s.orientation);
+        }
+        out
+    }
+
+    /// 車輪のワールド姿勢。1 台あたり 4 輪 ×`[px,py,pz, qx,qy,qz,qw]` = 28 要素。
+    ///
+    /// 車輪順は [`WheelIndex::ALL`]（FL, FR, RL, RR）。値は
+    /// [`sim_vehicle::Vehicle::wheel_world_transform`] そのまま。
+    pub fn wheel_poses(&self) -> Vec<f64> {
+        let mut out = Vec::with_capacity(self.world.vehicles().len() * 28);
+        for entry in self.world.vehicles() {
+            for w in WheelIndex::ALL {
+                let (pos, rot) = entry.vehicle.wheel_world_transform(w);
+                push_vec3(&mut out, pos);
+                push_quat(&mut out, rot);
+            }
+        }
+        out
+    }
+
+    /// テレメトリ。1 台あたり以下を平坦に並べる（順序固定・計 25 要素 × 台数）:
+    ///
+    /// `s, t, laps, forward_speed, engine_rpm, gear, in_steer, in_throttle, in_brake`
+    /// のあと、[`WheelIndex::ALL`] 順に `[load, slip_ratio, slip_angle, grip_usage]`。
+    pub fn telemetry(&self) -> Vec<f64> {
+        let mut out = Vec::with_capacity(self.world.vehicles().len() * 25);
+        for entry in self.world.vehicles() {
+            let s = entry.vehicle.state();
+            out.push(entry.coord.s);
+            out.push(entry.coord.t);
+            out.push(entry.laps_completed as f64);
+            out.push(s.forward_speed());
+            out.push(s.engine_rpm);
+            out.push(s.gear as f64);
+            out.push(s.last_input.steer);
+            out.push(s.last_input.throttle);
+            out.push(s.last_input.brake);
+            for w in WheelIndex::ALL {
+                let ws = &s.wheels[w as usize];
+                out.push(ws.load);
+                out.push(ws.slip_ratio);
+                out.push(ws.slip_angle);
+                out.push(ws.grip_usage);
+            }
+        }
+        out
+    }
+
+    /// 順位。[`World::standings`] の添字列をそのまま返す（`(laps, s)` の辞書順）。
+    pub fn standings(&self) -> Vec<usize> {
+        self.world.standings().into_iter().map(|id| id.0).collect()
+    }
+
+    /// 内部の [`World`] への参照。テストと検証用（読み出しのみ。
+    /// `&World` の公開メソッドで状態は変えられない）。
+    pub fn world(&self) -> &World {
+        &self.world
+    }
+}
+
+/// 平坦な入力配列を 1 台ぶんずつ [`ControlInput`] へ切り出す。
+///
+/// [`INPUT_STRIDE`] に満たない端数は無視する（不完全な最終要素を捨てる）。
+fn parse_inputs(inputs: &[f64]) -> Vec<ControlInput> {
+    inputs
+        .chunks_exact(INPUT_STRIDE)
+        .map(|c| ControlInput {
+            steer: c[0],
+            throttle: c[1],
+            brake: c[2],
+            clutch: c[3],
+            gear: c[4] as i8,
+            drs: c[5] != 0.0,
+        })
+        .collect()
+}
+
+/// `Quat` を平坦な `[x, y, z, w]` として追加する。
+fn push_quat(out: &mut Vec<f64>, q: sim_math::Quat) {
+    out.push(q.x);
+    out.push(q.y);
+    out.push(q.z);
+    out.push(q.w);
+}
+
 /// 幅の比 `ratio` を横オフセット `t` [m] へ変換する。`+t` は左。
 fn lateral_offset(ratio: f64, width_left: f64, width_right: f64) -> f64 {
     if ratio >= 0.0 {
@@ -228,9 +445,78 @@ mod bindings {
             vec![c.s, c.t]
         }
     }
+
+    /// [`sim_core::World`] を WASM 側で保持し、JS から進めて読み出すためのハンドル。
+    ///
+    /// 状態を変える公開メソッドは [`WasmWorld::step`]（`ControlInput` 相当の数値列を
+    /// 渡す）だけである。位置・速度・姿勢を直接書くメソッドは意図的に存在しない。
+    #[wasm_bindgen]
+    pub struct WasmWorld {
+        view: super::WorldView,
+    }
+
+    #[wasm_bindgen]
+    impl WasmWorld {
+        /// トラック定義 JSON と車両スペック JSON から構築する。失敗時は `JsError`。
+        #[wasm_bindgen(constructor)]
+        pub fn new(track_json: &str, vehicle_spec_json: &str) -> Result<WasmWorld, JsError> {
+            let view = super::WorldView::from_json(track_json, vehicle_spec_json)
+                .map_err(|e| JsError::new(&e.to_string()))?;
+            Ok(WasmWorld { view })
+        }
+
+        /// トラック局所座標 `(start_s, start_t)` に 1 台配置する。戻り値は添字。
+        pub fn spawn(&mut self, start_s: f64, start_t: f64) -> Result<usize, JsError> {
+            self.view
+                .spawn(start_s, start_t)
+                .map_err(|e| JsError::new(&e.to_string()))
+        }
+
+        /// `steps` 物理 tick 進める。`inputs` は 1 台あたり 6 要素
+        /// `[steer, throttle, brake, clutch, gear, drs]` を平坦に並べた `Float64Array`。
+        pub fn step(&mut self, steps: u32, inputs: &[f64]) {
+            self.view.step(steps, inputs);
+        }
+
+        /// 進んだ tick 数。JS 側の扱いを単純にするため `f64` で返す
+        /// （デバッグ用途では 2^53 tick まで正確で十分）。
+        pub fn tick(&self) -> f64 {
+            self.view.tick() as f64
+        }
+
+        /// 配置済みの車両数。
+        pub fn vehicle_count(&self) -> usize {
+            self.view.vehicle_count()
+        }
+
+        /// トラック全長 [m]。
+        pub fn track_length(&self) -> f64 {
+            self.view.track_length()
+        }
+
+        /// 車体重心のワールド姿勢。`[px,py,pz, qx,qy,qz,qw]` × 台数。
+        pub fn body_poses(&self) -> Vec<f64> {
+            self.view.body_poses()
+        }
+
+        /// 車輪のワールド姿勢。1 台あたり 4 輪 × 7 要素（FL, FR, RL, RR 順）。
+        pub fn wheel_poses(&self) -> Vec<f64> {
+            self.view.wheel_poses()
+        }
+
+        /// テレメトリ。1 台あたり 25 要素（並びは [`WorldView::telemetry`] を参照）。
+        pub fn telemetry(&self) -> Vec<f64> {
+            self.view.telemetry()
+        }
+
+        /// 順位（`(laps, s)` の辞書順の添字列）。
+        pub fn standings(&self) -> Vec<usize> {
+            self.view.standings()
+        }
+    }
 }
 
-pub use bindings::WasmTrack;
+pub use bindings::{WasmTrack, WasmWorld};
 
 #[cfg(test)]
 mod tests {
@@ -400,5 +686,178 @@ mod tests {
             );
             assert!(v.sample_banking(bad).is_empty(), "sample_banking({bad})");
         }
+    }
+
+    // ------------------------------------------------------------------------------------
+    // WorldView（TASK-1B-3）
+    // ------------------------------------------------------------------------------------
+
+    /// GT Proto A。物理と見た目の共通の正であるアセットをそのまま使う。
+    const SPEC: &str = include_str!("../../../assets/vehicles/gt_proto_a.spec.json");
+
+    /// スポーン地点。S/F ストレート上（バンクほぼ 0）に置く。
+    const SPAWN_S: f64 = 40.0;
+
+    fn world_view() -> WorldView {
+        WorldView::from_json(AOYAMA, SPEC).expect("aoyama ring + gt proto a must load")
+    }
+
+    /// 1 台ぶんの入力（`throttle`, `gear`）を平坦配列にする。
+    fn drive(throttle: f64, brake: f64, steer: f64, gear: i8) -> Vec<f64> {
+        vec![steer, throttle, brake, 0.0, gear as f64, 0.0]
+    }
+
+    #[test]
+    fn t_ev_a1_worldview_builds_and_spawns() {
+        let mut wv = world_view();
+        assert_eq!(wv.vehicle_count(), 0);
+        let id = wv.spawn(SPAWN_S, 0.0).expect("spawn on S/F straight");
+        assert_eq!(id, 0);
+        assert_eq!(wv.vehicle_count(), 1);
+        assert!((wv.track_length() - 4139.0).abs() < 2.0);
+
+        // 不正なスペック / トラックは弾かれる。
+        assert!(WorldView::from_json("{ not json", SPEC).is_err());
+        assert!(WorldView::from_json(AOYAMA, r#"{"schema_version":1}"#).is_err());
+        // 非有限のスポーン座標。
+        assert!(world_view().spawn(f64::NAN, 0.0).is_err());
+    }
+
+    #[test]
+    fn t_ev_a2_body_poses_match_world_truth() {
+        let mut wv = world_view();
+        wv.spawn(SPAWN_S, 0.0).unwrap();
+        let inputs = drive(0.4, 0.0, 0.0, 1);
+        for _ in 0..300 {
+            wv.step(1, &inputs);
+        }
+        let poses = wv.body_poses();
+        let truth = wv.world().vehicles()[0].vehicle.state();
+        assert!((poses[0] - truth.position.x).abs() < 1.0e-6);
+        assert!((poses[1] - truth.position.y).abs() < 1.0e-6);
+        assert!((poses[2] - truth.position.z).abs() < 1.0e-6);
+        assert!((poses[3] - truth.orientation.x).abs() < 1.0e-6);
+        assert!((poses[4] - truth.orientation.y).abs() < 1.0e-6);
+        assert!((poses[5] - truth.orientation.z).abs() < 1.0e-6);
+        assert!((poses[6] - truth.orientation.w).abs() < 1.0e-6);
+        // 実際に前進していること（テストが自明でないことの確認）。
+        assert!(truth.forward_speed() > 1.0, "car should be moving");
+    }
+
+    #[test]
+    fn t_ev_a3_wheel_poses_match_transform() {
+        let mut wv = world_view();
+        wv.spawn(SPAWN_S, 0.0).unwrap();
+        let inputs = drive(0.3, 0.0, 0.1, 1);
+        for _ in 0..200 {
+            wv.step(1, &inputs);
+        }
+        let poses = wv.wheel_poses();
+        let vehicle = &wv.world().vehicles()[0].vehicle;
+        for (k, w) in WheelIndex::ALL.into_iter().enumerate() {
+            let (pos, rot) = vehicle.wheel_world_transform(w);
+            let b = k * 7;
+            assert!((poses[b] - pos.x).abs() < 1.0e-9, "wheel {w:?} x");
+            assert!((poses[b + 1] - pos.y).abs() < 1.0e-9, "wheel {w:?} y");
+            assert!((poses[b + 2] - pos.z).abs() < 1.0e-9, "wheel {w:?} z");
+            assert!((poses[b + 3] - rot.x).abs() < 1.0e-9, "wheel {w:?} qx");
+            assert!((poses[b + 4] - rot.y).abs() < 1.0e-9, "wheel {w:?} qy");
+            assert!((poses[b + 5] - rot.z).abs() < 1.0e-9, "wheel {w:?} qz");
+            assert!((poses[b + 6] - rot.w).abs() < 1.0e-9, "wheel {w:?} qw");
+        }
+    }
+
+    #[test]
+    fn t_ev_a4_determinism() {
+        let run = || {
+            let mut wv = world_view();
+            wv.spawn(SPAWN_S, 0.0).unwrap();
+            for i in 0..500u32 {
+                // 時間変化する入力で駆動する。
+                let steer = if i > 200 { 0.05 } else { 0.0 };
+                wv.step(1, &drive(0.5, 0.0, steer, 2));
+            }
+            (wv.body_poses(), wv.telemetry())
+        };
+        let (a_poses, a_tele) = run();
+        let (b_poses, b_tele) = run();
+        assert_eq!(a_poses, b_poses, "body_poses must be bit-identical");
+        assert_eq!(a_tele, b_tele, "telemetry must be bit-identical");
+    }
+
+    #[test]
+    fn t_ev_a5_step_count_is_capped() {
+        let mut wv = world_view();
+        wv.spawn(SPAWN_S, 0.0).unwrap();
+        wv.step(1000, &drive(0.2, 0.0, 0.0, 1));
+        assert_eq!(wv.tick(), MAX_STEPS_PER_CALL as u64);
+        wv.step(5, &drive(0.2, 0.0, 0.0, 1));
+        assert_eq!(wv.tick(), MAX_STEPS_PER_CALL as u64 + 5);
+    }
+
+    #[test]
+    fn t_ev_a6_flat_input_layout() {
+        let mut wv = world_view();
+        wv.spawn(SPAWN_S, 0.0).unwrap();
+        // [steer, throttle, brake, clutch, gear, drs]
+        let inputs = [0.0, 1.0, 0.0, 0.0, 1.0, 0.0];
+        for _ in 0..120 {
+            wv.step(1, &inputs);
+        }
+        let tele = wv.telemetry();
+        // telemetry[3] = forward_speed, telemetry[5] = gear
+        assert!(tele[3] > 0.0, "throttle=1 should produce forward motion");
+        assert_eq!(tele[5], 1.0, "gear should be engaged");
+        // 端数の入力要素は無視される（パニックしない）。
+        wv.step(1, &[0.0, 0.5, 0.0]);
+    }
+
+    #[test]
+    fn t_ev_a7_telemetry_layout() {
+        let mut wv = world_view();
+        wv.spawn(SPAWN_S, 0.0).unwrap();
+        for _ in 0..60 {
+            wv.step(1, &drive(0.3, 0.0, 0.0, 1));
+        }
+        let tele = wv.telemetry();
+        assert_eq!(tele.len(), 25, "one vehicle => 25 elements");
+
+        let entry = &wv.world().vehicles()[0];
+        let s = entry.vehicle.state();
+        assert_eq!(tele[0], entry.coord.s);
+        assert_eq!(tele[1], entry.coord.t);
+        assert_eq!(tele[2], entry.laps_completed as f64);
+        assert_eq!(tele[3], s.forward_speed());
+        assert_eq!(tele[4], s.engine_rpm);
+        assert_eq!(tele[5], s.gear as f64);
+        assert_eq!(tele[6], s.last_input.steer);
+        assert_eq!(tele[7], s.last_input.throttle);
+        assert_eq!(tele[8], s.last_input.brake);
+        // 4 輪 × [load, slip_ratio, slip_angle, grip_usage]
+        for (k, w) in WheelIndex::ALL.into_iter().enumerate() {
+            let ws = &s.wheels[w as usize];
+            let b = 9 + k * 4;
+            assert_eq!(tele[b], ws.load);
+            assert_eq!(tele[b + 1], ws.slip_ratio);
+            assert_eq!(tele[b + 2], ws.slip_angle);
+            assert_eq!(tele[b + 3], ws.grip_usage);
+        }
+    }
+
+    #[test]
+    fn t_ev_a_standings_delegates_to_world() {
+        let mut wv = world_view();
+        wv.spawn(SPAWN_S, 0.0).unwrap();
+        wv.spawn(SPAWN_S - 20.0, 0.0).unwrap();
+        for _ in 0..120 {
+            wv.step(
+                2,
+                &[0.0, 0.6, 0.0, 0.0, 1.0, 0.0, 0.0, 0.2, 0.0, 0.0, 1.0, 0.0],
+            );
+        }
+        // 前方（s が大きい）の車が首位。ワールド距離では並べない。
+        let standings = wv.standings();
+        assert_eq!(standings.len(), 2);
+        assert_eq!(standings[0], 0);
     }
 }

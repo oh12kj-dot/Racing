@@ -163,8 +163,10 @@ dependencies = [
 name = "sim-wasm"
 version = "0.1.0"
 dependencies = [
+ "sim-core",
  "sim-math",
  "sim-track",
+ "sim-vehicle",
  "wasm-bindgen",
 ]
 

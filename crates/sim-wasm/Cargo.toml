@@ -12,4 +12,6 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 sim-math = { path = "../sim-math" }
 sim-track = { path = "../sim-track" }
+sim-core = { path = "../sim-core" }
+sim-vehicle = { path = "../sim-vehicle" }
 wasm-bindgen = "0.2"
