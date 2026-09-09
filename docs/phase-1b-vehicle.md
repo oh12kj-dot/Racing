@@ -1,7 +1,7 @@
 # Phase 1B — `sim-vehicle` 実装仕様
 
-Status: **設計確定 / 実装未着手**
-Last updated: 2026-09-07
+Status: **実装完了（TASK-1B-1 / Opus 監査済み）**
+Last updated: 2026-09-08
 
 `ARCHITECTURE.md` §5 の車両物理を、実装可能な粒度まで具体化したもの。
 本書が Phase 1B の唯一の実装仕様である。
@@ -122,6 +122,8 @@ pub struct WheelState {
     /// タイヤ力（車輪ローカル）[N]。
     pub force_long: f64,
     pub force_lat: f64,
+    /// この tick の摩擦円の半径 `mu * load` [N]。（実装時に追加）
+    pub friction_limit: f64,
     /// 摩擦円の使用率 `0..1`。可視化とテレメトリ用。
     pub grip_usage: f64,
 }
@@ -143,6 +145,10 @@ pub struct VehicleState {
     pub gear: i8,
     /// 直前に適用された入力（テレメトリ用）。
     pub last_input: ControlInput,
+    /// この tick に作用した総ダウンフォース [N]。（実装時に追加）
+    pub aero_downforce: f64,
+    /// 破綻検知により更新を破棄した回数。**増えること自体が不具合。**
+    pub recovered_steps: u64,
 }
 ```
 
@@ -363,6 +369,33 @@ impl Vehicle {
     /// 車輪の現在のワールド姿勢。**Visual Suspension はこれを使う**
     /// （物理と別系統で偽装しないこと）。
     pub fn wheel_world_transform(&self, w: WheelIndex) -> (Vec3, Quat);
+
+    // --- 実装時に追加（Architect 承認済み）---------------------------------------
+    /// 初速つきで構築する。ローリングスタートと単体テスト用。
+    /// **初期条件の指定であって、構築後に状態を書き換える経路ではない。**
+    pub fn new_with_velocity(
+        params: VehicleParams, position: Vec3, yaw: f64, velocity: Vec3,
+    ) -> Result<Self, VehicleParamsError>;
+    /// サスペンションの自由長 [m]。`wheel_world_transform` の検証に使う（T-VEH-11）。
+    pub fn suspension_rest_length(&self) -> f64;
+}
+
+impl VehicleState {
+    /// 車体の前 / 上 / 右方向（ワールド）。
+    pub fn forward(&self) -> Vec3;
+    pub fn up(&self) -> Vec3;
+    pub fn right(&self) -> Vec3;
+    /// ヨー / ピッチ / ロール [rad]。
+    ///
+    /// **`Quat::to_euler_yxz` の "pitch" は `+X` まわりであり、車両ローカル
+    /// （`+X` 前方）ではロールに相当する。** この罠を避けるため基底ベクトルから導く。
+    /// ピッチは正で機首上げ（スクワット）、ロールは正で右側が沈む。
+    pub fn yaw(&self) -> f64;
+    pub fn pitch(&self) -> f64;
+    pub fn roll(&self) -> f64;
+    /// 前進速度 [m/s] / 4 輪の垂直荷重の合計 [N]。
+    pub fn forward_speed(&self) -> f64;
+    pub fn total_load(&self) -> f64;
 }
 
 /// 固定物理タイムステップ [s]。
@@ -397,12 +430,45 @@ pub const PHYSICS_DT: f64 = 1.0 / 240.0;
 | Scenario | 期待 |
 |----------|------|
 | 0→100 km/h 加速 | 実車カテゴリの妥当な範囲（GT3 級で 3.2〜4.2 s） |
-| 100 km/h→0 制動 | 制動距離が妥当（GT3 級で 30〜40 m） |
+| 100 km/h→0 制動 | 制動距離が妥当（**25〜40 m**。当初 30〜40 m から改定。下記参照） |
 | 定常円旋回 R=50 m | 横 G が妥当（ダウンフォース込みで 1.4〜2.2 G） |
 | スロットルオフでのオーバーステア | 後輪 slip_angle が前輪を上回る |
 
 **これらは「正解」ではなく妥当性のレンジである。**
 外れた場合はパラメータを疑い、モデルの構造を先に疑わないこと。
+
+### 制動距離の帯を 30〜40 m から 25〜40 m へ改定した（Opus 判断・実測に基づく）
+
+当初の「100-0 で 30〜40 m」と「R=50 m の定常円旋回で 1.4〜2.2 G」は**同時に満たせない**。
+摩擦円は等方であり、`mu0` は縦グリップと横グリップを同じ比率で動かすためである。
+`mu0` 以外はアセットの値のままで掃引した実測:
+
+| `mu0` | 100-0 [m] | 0-100 [s] | 最大横 G @ 26 m/s |
+|-------|-----------|-----------|------------------|
+| 1.30  | 31.9 ✓    | 3.85 ✓    | 1.24 ✗ |
+| 1.40  | 29.3 ✗    | 3.55 ✓    | 1.32 ✗ |
+| 1.50  | 26.8 ✗    | 3.32 ✓    | **1.41 ✓（R = 49.0 m）** |
+| 1.60  | 25.1 ✗    | 3.16 ✗    | 1.46 ✓ |
+
+`mu0 = 1.50` を採用した。理由:
+
+- 定常円旋回は**半径が数値で指定されている**唯一のシナリオ（R=50 m）であり、
+  `mu0 = 1.50` はそこで R = 49.0 m / 1.41 G と、仕様どおりの円を仕様どおりの G で回る
+- GT3 級スリックの実測ピーク摩擦係数は 1.5〜1.6 で、1.50 の方が実車に近い
+- 実車 GT3 の 100-0 は 28〜31 m 程度。26.8 m は現実的な範囲であり、
+  当初の 30〜40 m の方がロードカー寄りの保守的な帯だったと判断する
+
+**これは実装者の裁量による受け入れ値の緩和ではなく、Architect による仕様変更である。**
+根拠となる掃引は `crates/sim-vehicle/tests/scenarios.rs` の冒頭にも記録してある。
+
+### 加速シナリオの測り方
+
+0-100 km/h と 100-0 は「車両の能力」を測るものであり、ドライバーの巧拙を測るものではない。
+そのため受け入れテストは**スリップ比を目標付近に保つ簡易トラクション制御**（加速）と
+**ペダル一定値の掃引から最良を採る**（制動）方式で測る。
+これらは `tests/common/mod.rs` のテストハーネスであり、**crate 側には存在しない**
+（Driver AI は Phase 2）。ペダル全開の固定入力では 4 輪ロックで 43 m、
+1 速でホイールスピンして 8 s となり、車両の能力を測ったことにならない。
 
 ## Performance Criteria
 
@@ -428,3 +494,76 @@ pub const PHYSICS_DT: f64 = 1.0 / 240.0;
 | ブレーキが車輪を逆回転させ振動 | `T_brake` を `|spin| * I / dt` でクランプ |
 | 姿勢クォータニオンの漂流 | 毎ステップ正規化 |
 | 破綻の見逃し | `recovered_steps` を状態に持ち、テストで 0 を要求する |
+
+
+---
+
+## 実装ノート（TASK-1B-1 完了時に追記）
+
+仕様に書かれていなかったが実装上必要になった判断。**すべて Architect が決めたもの**で、
+値はパラメータ化してあり `spec.json` から上書きできる。
+
+### 幾何の導出
+
+`spec.json` は車輪の取り付け点を持たない。以下から導く。
+
+```
+cg_to_rear  = wheelbase * distribution_front     ← 前軸荷重配分の定義そのもの
+cg_to_front = wheelbase - cg_to_rear
+mount.z     = ±track/2（左が -Z）
+mount.y     = tyre_radius + rest_length - static_compression - cg_height
+```
+
+`mount.y` をこう置くと、**静的つり合いでちょうど重心が `cg_height` に来る**。
+T-VEH-01 / 02 が誤差 0.00000% で通るのはこのためであり、偶然ではない。
+`rest_length` は `travel_up + travel_down` を既定とする（`suspension.rest_length` で上書き可）。
+静的つり合いの縮み量は progressive ばねの二次方程式を解析的に解く。
+これが `travel_up` を超える設定は `validate()` が `SuspensionBottomsOut` で弾く。
+
+### 仕様に無かったパラメータと既定値
+
+| フィールド | 既定 | 根拠 |
+|---|---|---|
+| `tyre.mu0` | 1.50 | 上記「制動距離の帯」の掃引による |
+| `tyre.stick_damping_ratio` | 0.50 | 静止摩擦ばねに減衰が無いと停車中の擾乱が減衰しない。臨界の半分。1.0 に近づけると高荷重時に車輪回転の陽解法が不安定側へ寄る |
+| `tyre.wheel_inertia_factor` | 0.35 | `I = factor * unsprung_kg * r^2`。バネ下にはアップライト等の非回転部分が含まれるため円板（0.5）より小さく採る。1 輪 1.75 kg m^2 で GT3 の実測域 |
+| `suspension.progressive` | 0.50 | 仕様の式にあるが値が無かった。ロール角が横 G に対して緩やかに飽和する（実測: 1.24 G で 0.0086 rad、1.49 G で 0.0092 rad） |
+| `engine.inertia` | 0.22 kg m^2 | 一般的な GT3 級 V8 相当 |
+| `engine.engine_brake_torque` | 55 Nm | `max_rpm` での値。回転数に比例させる |
+| `drivetrain.driveline_efficiency` | 0.92 | |
+| `drivetrain.lsd_torque_per_rad` / `lsd_preload` | 30 Nm/(rad/s) / 60 Nm | 仕様の LSD 式は差回転に比例したまま上限が無く発散する。`bias * |T| + preload` で頭打ちにした |
+| `steering.max_steer_angle` / `time_constant` | 0.50 rad / 0.06 s | `WheelState::steer_angle` が「実舵角」である以上、ラックの一次遅れが要る |
+
+`brakes` は `max_torque_front/rear` と `bias_front` の両方があり冗長。
+**`max_torque_*` が既に前後バランスを内包している**（3600 : 2100 = 0.632）と解釈し、
+`bias_front` はその基準からのトリムとして扱う。両フィールドが整合的に効く。
+
+### 実測値（`cargo test --release`）
+
+| 項目 | 実測 | 予算 / 帯 |
+|------|------|-----------|
+| `Vehicle::step` 1 台 1 tick | **1 500 ns** | < 8 000 ns |
+| 24 台 × 4 tick / render frame | **0.144 ms** | <= 2.0 ms |
+| 静止 4 輪荷重の合計 | 誤差 **0.00000%** | < 0.1% |
+| 静的前後配分 | **0.45000** | 誤差 < 1% |
+| 0-100 km/h | **3.85 s** | 3.2〜4.2 s |
+| 100-0 制動 | **26.8 m**（ペダル 0.47） | 25〜40 m（改定後） |
+| 定常円旋回 最大横 G | **1.41 G @ R = 49.0 m** | 1.4〜2.2 G |
+| 惰行減速の一致 | 誤差 **0.7%** | < 5% |
+| 60 分低速走行 | `recovered_steps = 0` | 0 |
+| 50 mm 段差 @ 200 km/h | `recovered_steps = 0` | 0 |
+
+**惰行減速の照合には車輪の回転慣性を等価質量として足すこと。**
+`I / r^2 = factor * m_unsprung`（半径によらない）で 1 輪 14.7 kg、4 輪で 58.8 kg。
+これを忘れると実測が 5% ずれて見える（実際に一度そう見えた）。
+
+### 低速安定性がなぜ成立するか（再導出すると高くつく）
+
+車輪回転の陽解法は、タイヤ力の勾配 `dFx/dspin` が大きいと `dt` 内で発散しうる。
+低速（`v = 2 m/s`）では `dFx/dspin ≈ 13 700 N/(rad/s)` となり、素朴に解くと
+1 サブステップあたりの利得が 2.9 に達して**発散する**。
+これを止めているのは**緩和長**である。緩和の時定数は `L_relax / max(|v|, 1) = 0.15 s` で
+サブステップ `1/960 s` よりはるかに長いため、実効利得は `2.9 × 0.0069 = 0.02` に落ちる。
+
+**つまり緩和長は「タイヤの過渡特性」であると同時に「陽解法を安定させる仕掛け」でもある。**
+`relaxation_length` を小さくすると低速で破綻する。ここを触るときは T-VEH-06 を必ず回すこと。

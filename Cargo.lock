@@ -141,6 +141,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sim-vehicle"
+version = "0.1.0"
+dependencies = [
+ "approx",
+ "serde",
+ "serde_json",
+ "sim-math",
+]
+
+[[package]]
 name = "sim-wasm"
 version = "0.1.0"
 dependencies = [

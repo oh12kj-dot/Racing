@@ -4,7 +4,7 @@
 すべてそこに 1 本でまとまっている。他の文書は必要になったときだけ開けばよい。
 
 ```bash
-cargo test --release      # 76 passed / 0 failed が健全な状態
+cargo test --release      # 124 passed / 0 failed が健全な状態
 ```
 
 ## このプロジェクトは何か
@@ -31,7 +31,9 @@ Sonnet へタスクを渡すときは `TODO.md` の `# NEXT SONNET TASK` を全�
 4. Simulation Core は Rendering / UI / Camera を知らない
 5. 固定タイムステップのみ。グローバル乱数・時刻依存乱数は禁止
 6. トラック上の位置は Waypoint index ではなく連続量 `s`（弧長 [m]）。
-   ラップ処理は `wrap_s` / `signed_delta_s` に一本化する
+   ラップ処理は `wrap_s` / `signed_delta_s` / `detect_lap_crossing` に一本化する
+7. 順位は `(laps_completed, s)` の辞書順のみで決まる。ワールド距離で並べない
+8. `VehicleState` を `Vehicle::step()` 以外から書き換えない
 
 ## 座標系（変更禁止）
 
@@ -41,11 +43,13 @@ Sonnet へタスクを渡すときは `TODO.md` の `# NEXT SONNET TASK` を全�
 
 ## 進行状況
 
-**Phase 1A（Track Foundation）は完了。** `sim-math` / `sim-track` /
-トラックアセット / Blender 車両生成パイプライン / `sim-wasm` + Engineering View。
-次は **TASK-1B-1（`sim-vehicle` 車両物理）**。
-物理の全文仕様は `docs/phase-1b-vehicle.md`、現在地は `HANDOFF.md`、
-タスク契約は `TODO.md`。
+**Phase 1A（Track Foundation）と TASK-1B-1（`sim-vehicle` 車両物理）は完了。**
+`sim-math` / `sim-track` / `sim-vehicle` / トラックアセット /
+Blender 車両生成パイプライン / `sim-wasm` + Engineering View。
+
+次は **TASK-1B-2（`sim-core`）** — 車とトラックはまだ繋がっていない。
+`sim-vehicle` は `GroundProbe` トレイトしか知らず、`sim-track` は車を知らない。
+現在地は `HANDOFF.md`、タスク契約は `TODO.md`、物理の仕様は `docs/phase-1b-vehicle.md`。
 
 ## 環境で踏みやすい罠
 
