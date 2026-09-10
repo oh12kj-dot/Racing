@@ -258,9 +258,15 @@ def main() -> int:
     # A dedicated absolute log per run: the default -game log was not landing
     # under ue/Saved/Logs (docs/phase-0.5-results.md §profile_gpu.py, diag 4),
     # which makes every failure opaque. -abslog forces one we control.
-    run_log = OUT_SUMMARY.parent / "profile_gpu.ue.log"
-    if run_log.exists():
-        run_log.unlink()
+    # Timestamp it: a fixed path meant every run destroyed the previous run's
+    # evidence (e.g. the green 3002-frame boot log to diff a truncated one
+    # against). Never unlink — keep the history.
+    run_stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    run_log = OUT_SUMMARY.parent / f"profile_gpu.{run_stamp}.ue.log"
+    # When UE exits without flushing the abslog buffer (a truncated -abslog on a
+    # silent exit code 1), its own stdout still carries the exit reason. Capture
+    # it instead of discarding to DEVNULL.
+    stdout_log = OUT_SUMMARY.parent / f"profile_gpu.{run_stamp}.stdout.log"
 
     cmd = [
         str(ue_cmd),
@@ -276,9 +282,8 @@ def main() -> int:
         "-ExecCmds=t.MaxFPS 0",
     ]
 
-    proc = subprocess.Popen(
-        cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-    )
+    stdout_fh = open(stdout_log, "w", encoding="utf-8", errors="replace")
+    proc = subprocess.Popen(cmd, stdout=stdout_fh, stderr=subprocess.STDOUT)
     samples: list[dict] = []
     if baseline:
         samples.append(baseline)
@@ -330,6 +335,10 @@ def main() -> int:
                     ["taskkill", "/F", "/T", "/IM", "UnrealEditor-Cmd.exe"],
                     capture_output=True,
                 )
+        try:
+            stdout_fh.close()
+        except OSError:
+            pass
 
     # If -csvCaptureFrames didn't drop a file, re-scan once more (the
     # writer can lag process exit).
@@ -377,16 +386,23 @@ def main() -> int:
     )
 
     # Tail of the run log helps diagnose a -game that renders nothing.
-    log_tail: list[str] = []
-    if run_log.exists():
+    def _tail(p: Path, n: int) -> list[str]:
         try:
-            log_tail = run_log.read_text(
+            return p.read_text(
                 encoding="utf-8", errors="replace"
-            ).splitlines()[-40:]
+            ).splitlines()[-n:]
         except OSError:
-            pass
+            return []
 
-    ok = csv_found is not None and len(mem) >= 5
+    log_tail = _tail(run_log, 40)
+    # UE's own stdout carries the exit reason when the -abslog buffer is lost on
+    # a silent exit (docs/phase-0.5-results.md §profile_gpu.py). Surface its tail
+    # too, so a failed run is never evidence-free.
+    stdout_tail = _tail(stdout_log, 60)
+
+    # A CsvProfiler file can be created and left empty when -game dies during
+    # boot; "csv present" is not "csv usable". Require a parsed profile.
+    ok = csv_found is not None and "error" not in gpu and len(mem) >= 5
     payload = {
         "ok": ok,
         "task": "profile_gpu",
@@ -402,6 +418,8 @@ def main() -> int:
         "latest_log": str(logs[-1]) if logs else None,
         "run_log": str(run_log) if run_log.exists() else None,
         "run_log_tail": log_tail,
+        "stdout_log": str(stdout_log) if stdout_log.exists() else None,
+        "stdout_tail": stdout_tail,
         "vram_m4": vram,
         "gpu_frame_time_m3": gpu,
         "nvidia_smi_note": (
