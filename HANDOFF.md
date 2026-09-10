@@ -12,7 +12,7 @@ Last updated: 2026-09-10 / **TASK-2-4 Phase 1 は Opus 監査 APPROVED → commi
 |---|---|
 | **何を作っているか** | Realistic Race Spectator Simulator。プレイヤーは運転せず**観戦**する。「実際のモータースポーツ中継に見え、よく見ると各 AI が本当にレースをしている」ことが目標 |
 | **今どこか** | **TASK-2-4 Phase 1 は Opus 監査 APPROVED → commit 済み**（`54e050a` / `.gitignore` は `493cbcc`）。Phase 2 の TASK-2-1 / 2-2 / 2-3 は `4710d63` / `ac80e03` / `1fd08ca`。`sim-line::Trajectory::reference` = 直接帯行列解法 + 箱制約 `white_bounds ± 0.30 m`・純 ∫κ²。本物の out-in-out ライン。K-2 解消（§10）。**本物のラインで clean 0.6 が T3（s≈1561）で完全スピン、かつ `t=0` spawn だと S/F ストレートで 4.6 m レーンチェンジ不能で s≈71 逸脱 → K-1 が確定ハードブロッカー・Phase 2（lateral inner loop 実タイヤ再設計・凍結解除 B）は確定。** ignore 4 本（`t_core_ai_10_full` + `t_core_ai_10_offline_spawn` + 凍結 `t_ai_01`/`t_drv_04`。§10 K-1。Phase 2 で全復活）|
-| **次に何をするか** | **① 人間へ報告: (a) Architect 権限で凍結 `sim-driver/tests/driver.rs` に `#[ignore]` 属性 2 行を追加した（他は 1 文字も変更なし・`git show 54e050a` で確認可）、(b) 人間承認 B（`sim-driver/tests/**` 凍結解除 + `tests/common/mod.rs` の運動学プラント廃止）が TASK-2-4 Phase 2 の確定前提。② 承認 B が下りるまで Phase 2 着手不可。③ 並行で着手可能な TASK-05-1（UE5 スパイク）を進める — `docs/phase-0.5-results.md` の「次」⑤ M3/M4 実測 以降。** |
+| **次に何をするか** | **① 人間へ報告: (a) Architect 権限で凍結 `sim-driver/tests/driver.rs` に `#[ignore]` 属性 2 行を追加した（他は 1 文字も変更なし・`git show 54e050a` で確認可）、(b) 人間承認 B（`sim-driver/tests/**` 凍結解除 + `tests/common/mod.rs` の運動学プラント廃止）が TASK-2-4 Phase 2 の確定前提。② 承認 B が下りるまで Phase 2 着手不可。③ 並行で着手可能な TASK-05-1（UE5）M3/M4 を進める — `profile_gpu.py` 実装済み・初回 run で `-game` possess 問題。次の診断は `docs/phase-0.5-results.md` §profile_gpu.py の 1〜4（GameMode/spectator pawn → 再 run）。** |
 | **役割** | Opus 5 = Architect / Reviewer / Quality Gate。Sonnet 5 = Implementation Engineer。重大な技術変更は人間承認が必要 |
 | **健全性確認** | `cargo test --release` → **182 passed（+doctest 1）/ 0 failed / 4 ignored**（ignore は K-1 の 4 本のみ）。clippy 0 / fmt clean / no-default-features / wasm32 / wasm-pack OK |
 
@@ -849,8 +849,11 @@ Game Engine 変更 / 言語変更 / 主要フレームワーク置換 / 物理�
    (b) **人間承認 B**（`sim-driver/tests/**` 凍結解除 + `tests/common/mod.rs` の運動学プラント廃止）が
    TASK-2-4 Phase 2 の確定前提。
 2. **承認 B が下りるまで TASK-2-4 Phase 2 は着手不可**（契約に「承認前に着手禁止」と明記）。
-3. **並行タスク TASK-05-1（UE5）を進める** — 承認不要。`docs/phase-0.5-results.md` の「次」⑤ M3/M4
-   実測（`run_ue_game` に `stat gpu` / `-csvprofile` + host から `nvidia-smi`）以降。
+3. **並行タスク TASK-05-1（UE5）M3/M4 を進める** — 承認不要・**Sonnet が今すぐ着手可**。
+   `tools/ue_python/profile_gpu.py` 実装済み。初回 run で `-game` が possess 対象なしで
+   フルレンダー未到達（M4 の nvidia-smi 経路は動作・738 サンプル）。次の診断は
+   `docs/phase-0.5-results.md` §profile_gpu.py の 1〜4: GameMode/PlayerStart か spectator pawn を
+   入れて再 run → 駄目なら MovieRenderQueue。`-game` のログが `ue/Saved/Logs/` に出ない件も追う。
 
 以下 ①〜③ は **すべて commit 済み**（`4710d63` / `ac80e03` / `1fd08ca`）。記録として残置。
 
@@ -1001,7 +1004,13 @@ Phase 2 でバンクコーナーの単独走行を詰める前にやるのが望
   **レンダー 1 枚取得**（`build/ue/shots/spike_broadcast.png`・1920×1080・Lumen/RT/Nanite/VSM 有効）:
   手続き的路面 + 24 台グリッド + ガードレール + 300 mm 圧縮感。→ **M6 暫定合格・M1/M7 レンダー疎通**。
   仮マテリアルなので M1/M2 の実写並置は本マテリアル投入後。
-  **次**: ⑤ M3/M4 = `run_ue_game` に `stat gpu`/`-csvprofile` + host から `nvidia-smi` →
+  **⑤ M3/M4（着手済み・2026-09-10）**: `tools/ue_python/profile_gpu.py` 実装（ホスト側・`-game`
+  `-csvGpuStats -csvCaptureFrames=N` + 実行中 host から `nvidia-smi` サンプリング → `build/ue/
+  profile_gpu.summary.json`）。**初回 run: M4 の nvidia-smi 経路は動作（738 サンプル・部分初期化で
+  peak 2.39 GB）だが `-game` がフルレンダーループに入らず ~400 s で自己終了（ログ未生成・pip-install
+  のみ）→ M3 CSV 未出力・M4 未確定。** 推定原因 = `L_Spike` に GameMode/PlayerStart/Pawn が無く
+  possess 対象がない。**次の診断は `docs/phase-0.5-results.md` §profile_gpu.py の 1〜4**（GameMode
+  設定 or spectator pawn → 再 run / 駄目なら MovieRenderQueue）。
   ⑥ `materials` step に本マテリアル → M1/M2 → ⑦ M8（`sim-ffi`）は Architect 判断待ち →
   ⑧ 縁石/ランオフ/LOD は中核 Phase 後。
   仕上げ事項（機能はする）: 車体色が薄い / 車が僅かに浮く / 路面幅がやや狭い — 定数調整レベル。

@@ -3,8 +3,9 @@
 > **再開するときは先に [`HANDOFF.md`](HANDOFF.md) を読むこと。** 現在地・実装済み API・環境・手順が 1 本にまとまっている。
 
 
-Last updated: 2026-09-09
-Current Phase: **Phase 1B 完了 → Phase 2 へ**（TASK-1B-1 `b7a7084` / 1B-2 `4968e61` / 1B-3 commit 済み。すべて APPROVED）
+Last updated: 2026-09-10
+Current Phase: **Phase 2 進行中**。TASK-2-1 `4710d63` / 2-2 `ac80e03` / 2-3 `1fd08ca` / **2-4 Phase 1 `54e050a`（Opus APPROVED）**。
+次: TASK-2-4 **Phase 2**（K-1 根治・**人間承認 B 待ち**で着手不可）／ 並行で TASK-05-1 UE5 M3/M4（`profile_gpu.py` 実装済み・`-game` possess 問題を調査中）。
 
 ---
 
@@ -57,7 +58,7 @@ Architect（Opus 5）が新規起票する（現状は 1B-3 の記録のまま�
 
 | Task | 内容 | 担当 | 状態 |
 |------|------|------|------|
-| TASK-05-1 | UE5 Code-First 構築 + M1〜M9 実測 | Sonnet 5 | 📄 仕様済 `docs/phase-0.5-tasks.md` |
+| TASK-05-1 | UE5 Code-First 構築 + M1〜M9 実測 | Sonnet 5 | 🔶 進行中・未 commit。scaffold + `build_scene.py`(8 step) + `import_vehicle.py` + `measure.py`(settings) + `capture.py`/`run_ue_game` + **`profile_gpu.py`(M3/M4)**。M6/M7/M9 暫定合格。M3/M4 は `-game` possess 問題で再 run 待ち（`docs/phase-0.5-results.md` §profile_gpu.py）|
 | TASK-05-2 | Blender 車両生成パイプライン | Sonnet 5 | ✅ **完了・APPROVED** `2ec80c9`（M9 達成） |
 
 ---
@@ -946,10 +947,27 @@ Forward のみ +1。逆走相殺・後方スタート判定は Phase 3 のレー
 
 # NEXT SONNET TASK
 
-> **次は TASK-2-4（基準走行ラインの収束欠陥修正 + 実物理での AI ラップ完走）。仕様は直下。**
-> **⚠ 着手前に人間の承認が必要**（`sim-line/src/trajectory.rs` と `sim-driver/tests/**` の凍結解除）。
-> TASK-2-3 は PDC-6 込みで land 済み・Architect 最終監査待ち（完了報告は「TASK-2-3 — 進捗メモ」）。
-> TASK-2-3 / 2-2 / 2-1 の実装契約はアーカイブとして後方にある。Phase 1B の記録は末尾。
+> ## 現在の状態（2026-09-10 更新）
+>
+> **TASK-2-4 Phase 1 は Opus 監査 APPROVED → commit 済み**（`54e050a` / `.gitignore` は `493cbcc` /
+> HANDOFF 更新 `61a7996`）。直接帯行列解法 + 白線箱制約 + 純 ∫κ²。182 passed(+doctest 1) / 4 ignored。
+> Round-2 監査の新規 findings は N-1〜N-4（全 LOW・非ブロッキング・Phase 2 で処理）。
+>
+> **Sonnet がすぐ着手できるタスクは現在ない。** 次の 2 つはいずれもゲート待ち:
+>
+> 1. **TASK-2-4 Phase 2**（K-1 根治・lateral inner loop の実タイヤ再設計）— 契約は下の
+>    「## TASK-2-4 Phase 2」。**人間承認 B が必須**（`sim-driver/tests/**` 凍結解除 +
+>    `tests/common/mod.rs` の運動学プラント廃止）。**承認前に着手禁止。**
+> 2. **TASK-05-1（UE5）M3/M4** — 承認不要・並行可。`profile_gpu.py` は実装済みだが初回 run で
+>    `-game` がフルレンダーに入らず自己終了（GameMode/possess 問題）。`docs/phase-0.5-results.md`
+>    §profile_gpu.py の「次の診断」1〜4 を順に。**これは Sonnet が今すぐ進められる。**
+>
+> **人間へ報告すべき 2 点**: (a) Architect 権限で凍結 `sim-driver/tests/driver.rs` に `#[ignore]`
+> 属性 2 行を追加（`git show 54e050a -- crates/sim-driver/tests/driver.rs`・他は無変更）、
+> (b) 承認 B が Phase 2 の確定前提。
+>
+> TASK-2-3 / 2-2 / 2-1 の実装契約とレビュー記録はアーカイブとして後方にある。Phase 1B の記録は末尾。
+> TASK-2-4 Phase 1 の実装契約は下の「## TASK-2-4」、進捗の詳細は「## TASK-2-4 — Phase 1 進捗メモ」。
 
 ---
 
@@ -1202,6 +1220,34 @@ Required Change / Affected Scope / Recommended Next Step
 or `sim-vehicle` 側の疑いが出るため、凍結解除の判断が要る）。
 
 **IMPORTANT IMPLEMENTATION CONTRACT** は TASK-2-4 契約の全文をそのまま適用（凍結リストのみ上記へ差し替え）。
+
+---
+
+## TASK-2-4 Phase 1 — land 完了報告（2026-09-10）
+
+**Opus 5（Architect / Quality Gate）Round-2 再監査 = APPROVED。commit 済み。**
+
+- **commit**: `54e050a` `fix(sim-line): solve the reference line exactly and keep it inside the white-line corridor`
+  （scope: `crates/sim-line/src/trajectory.rs` / `crates/sim-line/tests/line.rs` /
+  `crates/sim-core/tests/world_ai.rs` / `crates/sim-driver/tests/driver.rs` / `HANDOFF.md` / `TODO.md`）。
+  `.gitignore` の UE5 分は別 commit `493cbcc`（LOW-3）。HANDOFF 更新 `61a7996`。
+- **Scope PASS**: `src/**` の変更は `sim-line/src/trajectory.rs` のみ。凍結 crate 差分ゼロ。
+  `sim-driver/tests/driver.rs` は `#[ignore]` 属性 2 行の追加のみ（`t_ai_01` / `t_drv_04`・他は無変更）。
+- **Round-1 findings**: HIGH-1 / MEDIUM-1/2/3 / LOW-1/2/3 すべて是正確認（実コード確認）。
+- **独立再実行**: `cargo test --release` 182 passed +doctest 1 / 0 failed / 4 ignored、clippy 0、
+  fmt clean、`sim-line` no-default-features / wasm32、`sim-wasm` wasm32 release すべて OK。
+- **ignore 4 本は全て実際に red**（回帰隠蔽なし）: `t_core_ai_10_full`（s≈1561.6 で 7 cm 逸脱）/
+  `t_core_ai_10_offline_spawn`（s≈70.9 で 9 mm 逸脱）/ `t_ai_01`（s=160 で 1.15 m 逸脱）/ `t_drv_04`。
+- **新規 findings N-1〜N-4（全 LOW・非ブロッキング・Phase 2 で処理）**:
+  N-1 `driver.rs` の ignore 文言「s≈1569」は実測 s≈1561.6（8 m ずれ・prose のみ）。
+  N-2 非収束パスは `debug_assert!(false)` のみ・`reference()` は `QpDiag` を破棄 → release では黙って
+  クランプ解を使う（契約は満たす・T-LINE-12 が検出・runtime 再生成しないなら無害）。
+  N-3 LOW-1 クランプは大 `step_m` のみ・NaN/≤0 未ガード（`Stations::new` の `debug_assert!` で既カバー）。
+  N-4 commit は path-scoped 必須（`ue/` 等 TASK-05-1 未追跡物を `git add -A` しない）→ 遵守済み。
+- **Engineering View**: `view-engineering/` / `sim-wasm/` 差分ゼロ + wasm32 release 緑につき、
+  Sonnet 報告の headless 数値（racing line 2071 点・NaN 0・v_target 15.7〜75.3 m/s）を採用（Opus 再実行なし）。
+
+**Phase 2（K-1 根治）は人間承認 B 待ち**。契約は上「## TASK-2-4 Phase 2」。
 
 ---
 
