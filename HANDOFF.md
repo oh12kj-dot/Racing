@@ -1,6 +1,6 @@
 # HANDOFF.md — 引き継ぎ資料
 
-Last updated: 2026-09-10 / **Phase 2 の TASK-2-1 / 2-2 / 2-3 を commit 済み**（`4710d63` / `ac80e03` / `1fd08ca`。Phase 1B は `b7a7084` / `4968e61` / `908fea3`）。**TASK-2-4 Phase 1 完成・全チェック緑（作業ツリー・未 commit・Architect 監査 Round-1 の CHANGES REQUIRED を反映済み）**: `sim-line::Trajectory::reference` を直接帯行列解法（KKT 残差 4e-15 = 厳密最小解）+ 求解の箱制約を `white_bounds ± REF_MARGIN_M`(0.30 m) 内側へ、純 ∫κ²（λ 正則化は Architect が却下）。本物の out-in-out ライン（T1/T2 で幅使用 95〜96%・`Σκ²` はセンターラインの 0.725 倍）。`cargo test --release` = **182 passed（+doctest 1）/ 0 failed / 4 ignored** / clippy 0 / fmt clean / no-default-features / wasm32 / wasm-pack OK。K-2 解消。本物のラインで **clean 0.6 が T3（s≈1561）でスピン**、かつ **`t=0` spawn だと S/F ストレートで 4.6 m のレーンチェンジができず s≈71 でコリドー逸脱** → **K-1 が確定ハードブロッカー・Phase 2（lateral inner loop 実タイヤ再設計・凍結解除 B）は確定**。ignore 4 本 = `t_core_ai_10_full` + `t_core_ai_10_offline_spawn` + 凍結 `t_ai_01` / `t_drv_04`（§10 K-1）。次: Architect 再監査（low）→ 人間 go → commit。TASK-05-1 はスキャフォルド + `build_scene.py` step 1〜2。
+Last updated: 2026-09-10 / **TASK-2-4 Phase 1 は Opus 監査 APPROVED → commit 済み**（`54e050a`。`.gitignore` の UE5 分は別 commit `493cbcc`）。Phase 2 の TASK-2-1 / 2-2 / 2-3 は `4710d63` / `ac80e03` / `1fd08ca`、Phase 1B は `b7a7084` / `4968e61` / `908fea3`。`sim-line::Trajectory::reference` を直接帯行列解法（KKT 残差 4e-15 = 厳密最小解）+ 求解の箱制約を `white_bounds ± REF_MARGIN_M`(0.30 m) 内側へ、純 ∫κ²（λ 正則化は Architect が却下）。本物の out-in-out ライン（T1/T2 で幅使用 95〜96%・`Σκ²` はセンターラインの 0.725 倍）。`cargo test --release` = **182 passed（+doctest 1）/ 0 failed / 4 ignored** / clippy 0 / fmt clean / no-default-features / wasm32 / wasm-pack OK。K-2 解消。本物のラインで **clean 0.6 が T3（s≈1561）でスピン**、かつ **`t=0` spawn だと S/F ストレートで 4.6 m のレーンチェンジができず s≈71 でコリドー逸脱** → **K-1 が確定ハードブロッカー・Phase 2（lateral inner loop 実タイヤ再設計・凍結解除 B）は確定**。ignore 4 本 = `t_core_ai_10_full` + `t_core_ai_10_offline_spawn` + 凍結 `t_ai_01` / `t_drv_04`（§10 K-1）。**次: ① 人間へ報告（Architect が凍結 `sim-driver/tests/driver.rs` に `#[ignore]` 2 行を追加した / 人間承認 B が Phase 2 の確定前提）② 承認 B が下りるまで Phase 2 着手不可 → 並行で TASK-05-1（UE5）を進める。**
 **このファイル 1 本で作業を再開できるように書いてある。**
 他の文書は「必要になったときだけ」開けばよい（どこに何があるかは §2 に記載）。
 
@@ -11,8 +11,8 @@ Last updated: 2026-09-10 / **Phase 2 の TASK-2-1 / 2-2 / 2-3 を commit 済み*
 | | |
 |---|---|
 | **何を作っているか** | Realistic Race Spectator Simulator。プレイヤーは運転せず**観戦**する。「実際のモータースポーツ中継に見え、よく見ると各 AI が本当にレースをしている」ことが目標 |
-| **今どこか** | **Phase 2 の TASK-2-1 / 2-2 / 2-3 を commit 済み**（`4710d63` / `ac80e03` / `1fd08ca`）。**TASK-2-4 Phase 1 は作業ツリーで完成・全チェック緑（未 commit・Architect Round-1 の CHANGES REQUIRED を反映済み）**: `sim-line::Trajectory::reference` を直接帯行列解法 + 求解の箱制約 `white_bounds ± 0.30 m` へ差し替え。純 ∫κ² のまま本物の out-in-out ライン。K-2 解消（§10）。**だが本物のラインで clean 0.6 が T3（s≈1561）で完全スピン、かつ `t=0` spawn だと S/F ストレートで 4.6 m レーンチェンジ不能で s≈71 逸脱 → K-1 が確定ハードブロッカー・Phase 2（lateral inner loop 実タイヤ再設計・凍結解除 B）は確定。** ignore 4 本を意図的に導入（`t_core_ai_10_full` + `t_core_ai_10_offline_spawn` + 凍結 `t_ai_01`/`t_drv_04`。§10 K-1。Phase 2 で全復活）。Architect 再監査（low）待ち |
-| **次に何をするか** | **① Architect が TASK-2-4 Phase 1 の差分を再監査（Round-1 findings HIGH-1/MEDIUM-1/2/3/LOW-1/2 の是正確認・`sim-driver/tests/driver.rs` の差分が `#[ignore]` 属性 2 行だけであること）→ APPROVED → 人間 go → commit `fix(sim-line): solve the reference line exactly and keep it inside the white-line corridor`。② 人間承認 B を起票（`sim-driver/tests/**` 凍結解除 + `tests/common/mod.rs` の運動学プラント廃止）。あわせて「Architect 権限で `sim-driver/tests` に `#[ignore]` 2 行を追加した」と人間へ報告。③ TASK-2-4 Phase 2（lateral inner loop 再設計。契約は `TODO.md` にドラフト済み・承認 B 待ち）。④ 並行: TASK-05-1（UE5 スパイク）— `build_scene.py` step 3 以降** |
+| **今どこか** | **TASK-2-4 Phase 1 は Opus 監査 APPROVED → commit 済み**（`54e050a` / `.gitignore` は `493cbcc`）。Phase 2 の TASK-2-1 / 2-2 / 2-3 は `4710d63` / `ac80e03` / `1fd08ca`。`sim-line::Trajectory::reference` = 直接帯行列解法 + 箱制約 `white_bounds ± 0.30 m`・純 ∫κ²。本物の out-in-out ライン。K-2 解消（§10）。**本物のラインで clean 0.6 が T3（s≈1561）で完全スピン、かつ `t=0` spawn だと S/F ストレートで 4.6 m レーンチェンジ不能で s≈71 逸脱 → K-1 が確定ハードブロッカー・Phase 2（lateral inner loop 実タイヤ再設計・凍結解除 B）は確定。** ignore 4 本（`t_core_ai_10_full` + `t_core_ai_10_offline_spawn` + 凍結 `t_ai_01`/`t_drv_04`。§10 K-1。Phase 2 で全復活）|
+| **次に何をするか** | **① 人間へ報告: (a) Architect 権限で凍結 `sim-driver/tests/driver.rs` に `#[ignore]` 属性 2 行を追加した（他は 1 文字も変更なし・`git show 54e050a` で確認可）、(b) 人間承認 B（`sim-driver/tests/**` 凍結解除 + `tests/common/mod.rs` の運動学プラント廃止）が TASK-2-4 Phase 2 の確定前提。② 承認 B が下りるまで Phase 2 着手不可。③ 並行で着手可能な TASK-05-1（UE5 スパイク）を進める — `docs/phase-0.5-results.md` の「次」⑤ M3/M4 実測 以降。** |
 | **役割** | Opus 5 = Architect / Reviewer / Quality Gate。Sonnet 5 = Implementation Engineer。重大な技術変更は人間承認が必要 |
 | **健全性確認** | `cargo test --release` → **182 passed（+doctest 1）/ 0 failed / 4 ignored**（ignore は K-1 の 4 本のみ）。clippy 0 / fmt clean / no-default-features / wasm32 / wasm-pack OK |
 
@@ -54,7 +54,7 @@ TASK-2-4 へ繰り越し）。詳細は `TODO.md`「TASK-2-3 — 進捗メモ / 
 | TASK-2-1 | `sim-line`（Corridor / Trajectory / SpeedProfile） | ✅ commit 済み | `4710d63` |
 | TASK-2-2 | `sim-driver`（Perception / Decision / Planner / Controller。PDC-1/3/5/6 + 定数再調整を同梱） | ✅ commit 済み | `ac80e03` |
 | TASK-2-3 | `sim-core`+`sim-wasm`+EV 配線 + PDC-6（`planner.rs` 摩擦楕円制動計画）+ `world_ai.rs`（T-CORE-AI-04/05/07/08/09/10） | ✅ **Architect APPROVED** → commit 済み。T3 通過・181 passed。K-1（T3 安定余裕ゼロ）は §10 参照 | `1fd08ca` |
-| **TASK-2-4** | `sim-line::Trajectory::reference` の直接解法 + 実物理ラップ完走 + lateral inner loop 再設計 | 🔶 **Phase 1 完成・全チェック緑（作業ツリー・未 commit・Architect Round-1 CHANGES REQUIRED を反映・再監査 low 待ち）**: 直接帯行列解法（KKT 残差 4e-15 = 厳密最小解）+ 求解の箱制約を `white_bounds ± REF_MARGIN_M`(0.30 m) 内側へ + 純 ∫κ²（λ 正則化は「高速コーナーからラインを壊す」ため Architect が却下）。**本物の out-in-out レーシングライン**（T1/T2 で幅使用 95〜96%・`Σκ²` はセンターラインの 0.725 倍）。K-2 解消。`cargo test --release` = **182 passed(+doctest 1) / 0 failed / 4 ignored**（ignore = `t_core_ai_10_full` + `t_core_ai_10_offline_spawn` + 凍結 `t_ai_01`/`t_drv_04`。§10 K-1）/ clippy 0 / fmt clean / wasm OK。**本物のラインで clean 0.6 が T3（s≈1561）で完全スピン + `t=0` spawn で s≈71 逸脱 → K-1 が確定ハードブロッカー・Phase 2（lateral inner loop 実タイヤ再設計・凍結解除 B）は確定。** Phase 2 契約は `TODO.md` にドラフト済み。詳細は `TODO.md`「TASK-2-4 — Phase 1 進捗メモ」 | — |
+| **TASK-2-4 Phase 1** | `sim-line::Trajectory::reference` の直接解法（実物理ラップ完走 / lateral inner loop 再設計は Phase 2） | ✅ **Opus 監査 APPROVED → commit 済み**: 直接帯行列解法（KKT 残差 4e-15 = 厳密最小解）+ 箱制約 `white_bounds ± REF_MARGIN_M`(0.30 m) + 純 ∫κ²（λ 正則化は Architect が却下）。**本物の out-in-out レーシングライン**（T1/T2 で幅使用 95〜96%・`Σκ²` はセンターラインの 0.725 倍）。K-2 解消。`cargo test --release` = **182 passed(+doctest 1) / 0 failed / 4 ignored**（§10 K-1）/ clippy 0 / fmt clean / wasm OK。**Phase 2（lateral inner loop 実タイヤ再設計・凍結解除 B）は K-1 の根治として確定。契約は `TODO.md` にドラフト済み・人間承認 B 待ち。** | `54e050a` |
 | **TASK-1B-4** | `spawn` 姿勢の完全化（D-1 フル版。`sim-vehicle` 凍結解除が前提） | ⬅ 保留。Architect / 人間承認事項 | — |
 | TASK-05-1 | UE5 Code-First 構築 + M1〜M9 実測 | 🔶 スキャフォルド + ヘッドレス Python 疎通 + `build_scene.py` step 1〜2（レベル/ライティング/保存）。road 以降は未着手（`docs/phase-0.5-results.md`） | — |
 
@@ -827,7 +827,7 @@ Game Engine 変更 / 言語変更 / 主要フレームワーク置換 / 物理�
 | # | 内容 | 期限 |
 |---|------|------|
 | H-4 | Phase 0.5 の M1〜M9 実測結果に基づく UE5 続行判定 | **Phase 3 完了時**。不合格なら Unity 6 HDRP へ退避（Simulation Core は無傷） |
-| H-5 | TASK-2-4 の凍結解除承認（A: `sim-line/src/trajectory.rs`、B: `sim-driver/tests/**`、C: `PerformanceEnvelope` 荷重感度）| **A 取得済み**（Phase 1 完了）。**C は不要と判明**。**B は Phase 2 着手前に必要**（`sim-driver/tests` 凍結解除 + 運動学プラント廃止）。Phase 1 では Architect 権限で凍結ファイル `sim-driver/tests/driver.rs` に `#[ignore]` 属性 2 行のみ追加済み（他は 1 文字も変更なし・`git diff` で確認可。K-1） |
+| H-5 | TASK-2-4 の凍結解除承認（A: `sim-line/src/trajectory.rs`、B: `sim-driver/tests/**`、C: `PerformanceEnvelope` 荷重感度）| **A 取得済み → Phase 1 は Opus APPROVED・commit `54e050a`**。**C は不要と判明**。**B は Phase 2 着手前に必要・未取得**（`sim-driver/tests` 凍結解除 + 運動学プラント廃止）。Phase 1 では Architect 権限で凍結ファイル `sim-driver/tests/driver.rs` に `#[ignore]` 属性 2 行のみ追加済み（他は 1 文字も変更なし・`git show 54e050a` で確認可。K-1）**← この 2 点を人間へ報告する（未）** |
 
 ### 既知の問題 / リスク
 
@@ -842,7 +842,19 @@ Game Engine 変更 / 言語変更 / 主要フレームワーク置換 / 物理�
 
 ## 11. 次にやること
 
-### ① TASK-2-1（`sim-line`）を commit する（人間の go 待ち）
+### 現在の次アクション（2026-09-10 更新・これが正）
+
+1. **人間へ報告（未実施）**: (a) Architect 権限で凍結 `sim-driver/tests/driver.rs` に `#[ignore]` 属性
+   2 行を追加した（他は 1 文字も変更なし・`git show 54e050a -- crates/sim-driver/tests/driver.rs`）、
+   (b) **人間承認 B**（`sim-driver/tests/**` 凍結解除 + `tests/common/mod.rs` の運動学プラント廃止）が
+   TASK-2-4 Phase 2 の確定前提。
+2. **承認 B が下りるまで TASK-2-4 Phase 2 は着手不可**（契約に「承認前に着手禁止」と明記）。
+3. **並行タスク TASK-05-1（UE5）を進める** — 承認不要。`docs/phase-0.5-results.md` の「次」⑤ M3/M4
+   実測（`run_ue_game` に `stat gpu` / `-csvprofile` + host から `nvidia-smi`）以降。
+
+以下 ①〜③ は **すべて commit 済み**（`4710d63` / `ac80e03` / `1fd08ca`）。記録として残置。
+
+### ① TASK-2-1（`sim-line`）— commit 済み `4710d63`
 
 Opus 監査完了 = **CHANGES REQUIRED（test/docs のみ・`src/` ロジック不変）**。
 Sonnet が R1〜R5・R7 を適用し Dev 7〜10 を記録・契約文言を訂正・再検証 pass。
@@ -904,10 +916,14 @@ Planner / Controller）+ Driver Model。`sim-line` の `Trajectory` / `SpeedProf
 
 ### TASK-2-4 — 基準走行ラインの収束欠陥修正 + 実物理ラップ完走
 
-**Phase 1 は完成（作業ツリー・未 commit・Architect Round-1 CHANGES REQUIRED を反映・再監査 low 待ち）。**
+**Phase 1 は Opus 監査 APPROVED → commit 済み**（`54e050a`。`.gitignore` の UE5 分は別 commit `493cbcc`）。
 実装は当初契約（収束判定を曲率残差へ）から発展し、Architect Round-3/4 裁定で**直接帯行列解法 +
 `white_bounds ± 0.30 m` 箱制約 + 純 ∫κ²**（λ 正則化は却下）に着地。KKT 残差 4e-15・~40 ms。K-2 は根絶。
-本物の out-in-out ライン（T1/T2 幅使用 95〜96%）。
+本物の out-in-out ライン（T1/T2 幅使用 95〜96%）。Round-2 再監査（Opus）で新規 findings は N-1〜N-4（全 LOW・非ブロッキング）:
+N-1 driver.rs の ignore 文言が「s≈1569」で実測 s≈1561.6 と 8 m ずれ（Phase 2 で訂正）／
+N-2 非収束パスが `debug_assert!(false)` のみで release では黙ってクランプ解を使う（起動時 1 回のみ・T-LINE-12 が検出）／
+N-3 LOW-1 クランプは大 `step_m` のみ・NaN/≤0 は未ガード（`debug_assert!` で既にカバー）／
+N-4 commit は path-scoped で（`ue/` 等の TASK-05-1 未追跡物を `git add -A` しない）。
 
 **Architect Round-1 監査（2026-09-10）の是正（すべて反映済み・sim-line/src + tests 3 ファイル + docs のみ）:**
 - **HIGH-1**: spawn-on-line 化が s≈71 の straight-lane-change 失敗を隠していた → `#[ignore]` の
@@ -923,12 +939,14 @@ Planner / Controller）+ Driver Model。`sim-line` の `Trajectory` / `SpeedProf
 - **LOW-3**: `.gitignore` の +12 行は TASK-05-1 のもの → commit を分けるか人間へ明示する（下記「次の手順」3）。
 
 **次の手順:**
-1. Architect 再監査（low）: Round-1 findings の是正確認 + `sim-driver/tests/driver.rs` の差分が
-   `#[ignore]` 属性 2 行の追加のみ・他は 1 文字も変えていないこと。
-2. APPROVED → 人間 go → commit `fix(sim-line): solve the reference line exactly and keep it inside the white-line corridor`。
-   **`.gitignore` の TASK-05-1 分（+12 行）は別 commit に分ける**（LOW-3）。
-3. **人間承認 B を起票**（`sim-driver/tests/**` 凍結解除 + `tests/common/mod.rs` の運動学プラント廃止）。
-   あわせて「Architect 権限で `sim-driver/tests/driver.rs` に `#[ignore]` 2 行を追加した」と人間へ報告。
+1. ✅ Architect 再監査（Opus・Round-2）= APPROVED。scope PASS（`driver.rs` は `#[ignore]` 2 行のみ）・
+   Round-1 findings HIGH-1/MEDIUM-1/2/3/LOW-1/2/3 すべて是正確認・全チェック独立再実行で一致・
+   ignore 4 本は全て実際に red（回帰隠蔽なし）。
+2. ✅ commit 済み — `54e050a`（Phase 1）+ `493cbcc`（`.gitignore` を別 commit・LOW-3）。
+3. **人間へ報告（未）**: (a)「Architect 権限で凍結 `sim-driver/tests/driver.rs` に `#[ignore]` 2 行を追加した」
+   （他は 1 文字も変更なし・`git show 54e050a -- crates/sim-driver/tests/driver.rs` で確認可）、
+   (b) **人間承認 B**（`sim-driver/tests/**` 凍結解除 + `tests/common/mod.rs` の運動学プラント廃止）が
+   TASK-2-4 Phase 2 の確定前提。承認 B が下りるまで Phase 2 着手不可。
 
 **Phase 2（承認 B 待ち・契約は `TODO.md` にドラフト済み）**: lateral inner loop の実タイヤ再設計 +
 運動学プラント廃止・実物理閉ループ化。受け入れ = ignore 4 本（`t_core_ai_10_full` /
