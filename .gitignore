@@ -13,3 +13,15 @@ __pycache__/
 # TASK-1A-4: Engineering View の生成物。
 # wasm-pack と npm でソースから再生成できる（view-engineering/README.md 参照）。
 /view-engineering/pkg/
+
+# TASK-05-1: UE5 プロジェクトの生成物。ue/ 以下はすべて Config/*.ini +
+# *.uproject + tools/ue_python/*.py から再構築できる（docs/phase-0.5-tasks.md）。
+/ue/Binaries/
+/ue/Intermediate/
+/ue/Saved/
+/ue/DerivedDataCache/
+/ue/.vs/
+/ue/*.sln
+# build_scene.py / import_vehicle.py が生成する .umap / .uasset。
+# ADR-0006「100% テキストから再生成可能」— コミットしない。
+/ue/Content/
