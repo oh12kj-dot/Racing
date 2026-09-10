@@ -400,9 +400,13 @@ def main() -> int:
     # too, so a failed run is never evidence-free.
     stdout_tail = _tail(stdout_log, 60)
 
-    # A CsvProfiler file can be created and left empty when -game dies during
-    # boot; "csv present" is not "csv usable". Require a parsed profile.
-    ok = csv_found is not None and "error" not in gpu and len(mem) >= 5
+    # A CsvProfiler file can be created and left empty (or with only a few boot
+    # frames) when -game dies during boot; "csv present" is not "csv usable".
+    # Require a parsed frame count, or the gate records a non-measurement as a
+    # pass.
+    ok = (csv_found is not None
+          and gpu.get("frames", 0) >= 100
+          and len(mem) >= 5)
     payload = {
         "ok": ok,
         "task": "profile_gpu",
