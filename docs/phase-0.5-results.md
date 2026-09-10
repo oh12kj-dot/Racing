@@ -1,14 +1,17 @@
 # Phase 0.5 — UE5 実現可能性検証の実測結果（M1〜M9）
 
-Status: **進行中 — `build_scene.py`（8 step）/ `import_vehicle.py` / `measure.py` / `capture.py`
+Status: **進行中 — `build_scene.py`（9 step）/ `import_vehicle.py` / `measure.py` / `capture.py`
 + `ue_env.run_ue_game()` 実装完了・未 commit。M7 / M9 暫定合格。M6 暫定合格（`-game` レンダー
-1 枚で圧縮感視認）。RT/Nanite/MotionBlur 4 cvar は `-game` で適用確認（commandlet では不可）。
-M1/M2/M5 はプロダクションマテリアル + 動画待ち。**M3/M4: `profile_gpu.py`（ホスト側 M3/M4 ランナー）
-実装済み・初回 run で M4 の nvidia-smi サンプリング経路は動作（738 サンプル）だが `-game` プロセスが
-フルレンダーに入らず ~400 s で自己終了（プラグイン pip-install + 部分 RHI 初期化のみ・ログ未生成・
-VRAM 1.58→2.39 GB）→ M3 CSV 未出力・M4 は未確定。次の診断は §profile_gpu.py。** M8 は Architect 判断待ち。
+1 枚で圧縮感視認）。**M3/M4: 未確定。** `profile_gpu.py` の `-game` レンダーパスは
+`GlobalDefaultGameMode` + `player_start` + SM6 強制で安定し CsvProfiler が CSV を出力
+（3002 frame）するようになったが、**`DefaultEngine.ini` の行末 `;` コメントが UE の
+config パーサに除去されず、word 値 cvar（`r.RayTracing=True` ほか）が `Atoi()`→0 に
+潰れていた**ため RT / Nanite / Lumen HWRT は実際には engage していない。計測値
+（GPUTime median 2.85 ms / VRAM steady 2.52 GB）は **SM6 の下限**であって 14 ms / 7.0 GB
+budget に対する合否ではない。コメント除去修正済み・**SM6 + 実 feature 有効での再 run 待ち**。
+M1/M2/M5 はプロダクションマテリアル + 動画待ち。M8 は Architect 判断待ち。
 Task: TASK-05-1（仕様は [`docs/phase-0.5-tasks.md`](phase-0.5-tasks.md)）
-Last updated: 2026-09-10（Sonnet 5・未 commit。`profile_gpu.py` 追加 + 初回 M3/M4 run）
+Last updated: 2026-09-11（Sonnet 5・未 commit。Opus 監査 → `ini` 行末コメント修正 + M3/M4 記録訂正）
 
 > **このファイルには実測値だけを書く。推測値・期待値を「結果」として書かない。**
 > 未取得は「未取得」、確認できなかった設定は「未確認」と明記する。
@@ -24,7 +27,7 @@ Last updated: 2026-09-10（Sonnet 5・未 commit。`profile_gpu.py` 追加 + 初
 | `ue/Config/DefaultEngine.ini` | レンダラ設定を intent ベースで記述。全キーに `; VERIFY[Mxx]`。読み戻しは §2 |
 | `ue/Config/DefaultGame.ini` / `DefaultInput.ini` | プロジェクト識別・入力スタブ |
 | `tools/ue_python/ue_env.py` | ホスト側ランナー: `run_ue_python()`（`-run=pythonscript` + サマリ契約）+ `run_ue_game()`（`-game -ExecCmds` レンダーパス・PNG 出現で判定） |
-| `tools/ue_python/build_scene.py` | **全 8 ステップ実装完了**（new_level 冪等 / lighting / road_geometry / guardrail / vehicles_x24 / broadcast_camera / materials / save_level）。headless 緑・2 連続実行で冪等・clean end-to-end 緑 |
+| `tools/ue_python/build_scene.py` | **全 9 ステップ実装完了**（new_level 冪等 / lighting / road_geometry / guardrail / vehicles_x24 / broadcast_camera / player_start / materials / save_level）。headless 緑・2 連続実行で冪等・clean end-to-end 緑。`player_start` は `-game` の pawn spawn を放送リグ位置に置く（M3/M4 レンダーパス用） |
 | `tools/ue_python/import_vehicle.py` | **実装済み**（Interchange GLB インポート + スロット検査）。§下 |
 | `tools/ue_python/measure.py` | **実装済み**（`settings` = レンダラ cvar 読み戻し・§2）。`perf`（`stat gpu` / VRAM）は非 `-nullrhi` 待ちの stub |
 | `tools/ue_python/capture.py` | commandlet 版（`SceneCapture2D`）は撮れず `ok:false`（§下）。**実キャプチャは `ue_env.run_ue_game()` + `HighResShot`**（`spike_broadcast.png` 取得済み） |
@@ -127,17 +130,36 @@ CSV の列名は build フラグ依存なので、`frametime`/`gpu`/`renderthrea
 M6 の 1 枚が撮れたのは `-ExecCmds="HighResShot ..."` が **1 フレームだけ**強制描画したから。
 
 **次の診断（1 つずつ）**:
-1. `build_scene.py` に `broadcast_camera` step を拡張して **spectator 相当の Pawn + `AGameModeBase` を
-   spawn/設定**するか、`DefaultEngine.ini` の `[/Script/EngineSettings.GameMapsSettings]` に
-   `GlobalDefaultGameMode` を指定。possess が成立すればレンダーループが回る。
-2. または `-ExecCmds` を `"CsvProfiler.Start; <N フレーム待つ手段>; CsvProfiler.Stop; quit"` の列にする。
-   `-game` の ExecCmds は起動時 1 回なので「N フレーム待つ」は `-ExecCmds` では書けない →
-   `-CsvCaptureFrames=N` に任せて、CSV 出力後に自然終了 or host 側 terminate（現状の実装）。
-   1 の possess 問題が解ければ現状の CsvProfiler フラグで CSV が出るはず。
-3. それでも駄目なら MovieRenderQueue（`MoviePipelineQueueEngineSubsystem`）経由へ切替（`capture.py`
-   の TODO にも記載済み）。MRQ は自前でフレームを pump するので possess 不要。
-4. `-game` の実ログが `ue/Saved/Logs/` に出ない件も追う（`-log=<path>` 明示 or 別プロセスの
-   ロックで書けていない可能性）。ログが無いと原因特定が遅い。
+1. ✅ **解決（2026-09-10 Sonnet）**: `DefaultEngine.ini` `[/Script/EngineSettings.GameMapsSettings]` に
+   `GlobalDefaultGameMode=/Script/Engine.GameModeBase` を追加 + `build_scene.py` に `player_start` step
+   （PlayerStart を放送リグ位置へ）。`-game` が pawn を possess してレンダーループを維持するようになり、
+   `LogLoad: Game class is 'GameModeBase'` → CsvProfiler が CSV を出力。
+2. ✅ **CSV 出力先が `ue/Saved` ではなく `%LOCALAPPDATA%\UnrealEngine\5.8\Saved\Profiling\CSV\`**。
+   `profile_gpu.py` の `CSV_SCAN_ROOTS` に追加。`-abslog` で run 毎の専用ログ（診断 4 も解決）。
+   `--frames 3000` + tail 50% 解析で boot フレームを除外。orphan `UnrealEditor-Cmd.exe` を
+   `taskkill /F /T /IM` で掃く（terminate() を無視して deadline 後も生き残る事象を実測）。
+3. MovieRenderQueue へ切替 — 現状は不要（1/2 で `-game` レンダーループが安定）。
+4. ✅ `-abslog=<path>` 明示で解決（2 に同梱）。
+
+**⚠ 未解決 — RT / Nanite / Lumen が 1 つも engage していない（2 つの独立要因）**:
+
+1. **feature level が SM5（2026-09-10 実測）**: `-game` は `rhifeaturelevel="SM5"` /
+   `shaderplatform="PCD3D_SM5"` で走っていた（`LogD3D12RHI: Skipped NVAPI RT queries since
+   ... below SM6`）。Nanite も HWRT も SM6 必須。→ `DefaultEngine.ini`
+   `[/Script/WindowsTargetPlatform.WindowsTargetSettings]` に
+   `-D3D12TargetedShaderFormats=PCD3D_SM5` / `+D3D12TargetedShaderFormats=PCD3D_SM6` を追加。
+   直後の run で `rhifeaturelevel="SM6"` は確認できたが、それでも RT/Nanite は動かなかった → 要因 2。
+
+2. **【2026-09-11・Opus 監査 CRITICAL-1】`DefaultEngine.ini` の行末 `;` コメントで word 値 cvar が
+   0 に潰れていた**（§2 参照）。SM6 の run でも `r.RayTracing:True` の行の直後に
+   `LogRendererCore: Ray tracing is disabled. Reason: ... (r.RayTracing=0)`、CSV は
+   `RayTracingGeometry/TotalResidentSizeMB = 0` / `GPU/Nanite*` 列なし / `GPU/Lumen*` 列なし。
+   → 行末コメントを全て行頭へ移動（2026-09-11）。
+
+→ **M3/M4 の計測値（GPUTime median 2.85 ms / VRAM steady 2.52 GB）は SM6 の下限であって
+最終値ではない**。**次**: コメント修正 + SM6 で `profile_gpu.py` 再 run →
+新 CSV に `GPU/Nanite*` / `GPU/Lumen*` 列が出るか・`RayTracingGeometry > 0` か・
+`rhifeaturelevel` を確認 → 数値確定 → M3/M4 行更新。駄目なら `-sm6` フラグ / MRQ。
 
 ### 踏んだ罠（`tools/ue_python/ue_env.py` の docstring にも記録）
 
@@ -220,15 +242,26 @@ world 不要のため `-nullrhi` ヘッドレスで走る。
 
 **RT / Nanite / MotionBlur の 4 件**（`r.Lumen.HardwareRayTracing` / `r.RayTracing` /
 `r.Nanite.ProjectEnabled` / `r.DefaultFeature.MotionBlur`）:
-- `-run=pythonscript` の commandlet（`-nullrhi` でも `nullrhi=False` + `-dx12` でも）: `false`
-  → **commandlet はフルレンダリングコンテキストを持たない。**
-- **`-game` 起動（`ue_env.run_ue_game`・2026-09-10）: 4 件とも適用を確認**。
-  ログに `LogConfig: Set CVar [[r.RayTracing:True ...]]` / `r.Nanite.ProjectEnabled:True` /
-  `r.Lumen.HardwareRayTracing:True` / `r.DefaultFeature.MotionBlur:True`、加えて Lumen HWRT
-  の設定群（`r.Lumen.HardwareRayTracing.HitLighting.Allowed:1` 等）が全て適用。
-  `r.MotionBlurQuality` は `SetByProjectSetting`（4）が優先され scalability 上書きを拒否 = 意図どおり。
+- `-run=pythonscript` の commandlet（`-nullrhi` でも `nullrhi=False` + `-dx12` でも）: `false`。
+- **`-game` 起動（`ue_env.run_ue_game`・2026-09-10）**: ログに
+  `LogConfig: Set CVar [[r.RayTracing:True ...]]` 等の**行は出る**が、これは
+  「その行が存在する」ことの確認であって、cvar の**実効値**の確認ではない。
 
-→ **`ini` の設定は正しい。** レンダリング系の M 検証は `-game` レンダーパスで行う（§下 capture）。
+→ **【訂正 2026-09-11・Opus 監査 CRITICAL-1】** 旧記述「→ `ini` の設定は正しい。」は**誤り・撤回する**。
+`DefaultEngine.ini` の cvar 行末に置いた `; VERIFY[...]` コメントは、UE の config パーサが
+**行頭の `;` しか除去しない**ため値の一部として残り、word 値の cvar は
+`Atoi("True   ; VERIFY[M2]") → 0` に潰れていた。証拠:
+- 上の `-nullrhi` 読み戻し表で、**数値**指定（`=1` `=4` `=3000`）は全て ✅ match（`Atoi` が
+  先頭数字だけ読んで末尾ゴミを無視するため無害）、**word** 指定（`=True`）は全て
+  ⚠（0/false に化ける）、`=False` は偶然 `false` と一致 — という完全な相関。
+  つまり ⚠ 4 件は `-nullrhi` の制約ではなく**このコメントバグ**。
+- `-game` run の `build/ue/profile_gpu.ue.log`:
+  `LogConfig: Set CVar [[r.RayTracing:True                            ; VERIFY[M2]]]` の直後に
+  `LogRendererCore: Ray tracing is disabled. Reason: ... (r.RayTracing=0)`。
+- 同 run の CSV: `RayTracingGeometry/TotalResidentSizeMB = 0` / `GPU/Nanite*` 列なし。
+
+行末コメントは全て行頭へ移動済み（2026-09-11）。レンダリング系 M 検証は
+**SM6 + コメント修正後の `-game` 再 run** で行う。
 
 **🔲 未確認の 2 件**は UE 5.8 の Python API に読み戻し口が見つからないもの。
 `DefaultGraphicsRHI` は起動ログ（`LogD3D12RHI` / `LogD3D11RHI`）で間接確認する。
@@ -246,8 +279,8 @@ world 不要のため `-nullrhi` ヘッドレスで走る。
 |----|------|---------|------|------|
 | M1 | 画質（実写中継との並置） | 遜色ないか（人間判定） | **1 枚レンダー取得**（`build/ue/shots/spike_broadcast.png`・`-game` HighResShot・Lumen/RT/Nanite/VSM 有効）。ただし現状はプレースホルダのグレー/青マテリアルなので実写中継との並置判定は**プロダクションマテリアル投入後**。手続きは疎通 | 🔶 |
 | M2 | 車体反射の安定性 | 走行中ちらつかない | `r.ReflectionMethod=1`（Lumen 反射）+ `r.Lumen.HardwareRayTracing` が `-game` で有効（§2）。ちらつき判定は動画 + プロダクションマテリアル待ち | — |
-| M3 | GPU frame time | ≤ 14.0 ms @1080p | **未取得** — `profile_gpu.py` 実装済み・初回 run で CsvProfiler CSV 未出力（`-game` がフルレンダー未到達で自己終了・§profile_gpu.py）。possess/GameMode を入れて再 run | — |
-| M4 | VRAM | ≤ 7.0 GB（`nvidia-smi`） | **未確定** — `profile_gpu.py` の nvidia-smi サンプリング経路は動作（738 サンプル）。初回 run は部分初期化のみで peak 2.39 GB（フルレンダー時の値ではない）。M3 と同じ再 run で確定 | 🔶 |
+| M3 | GPU frame time | ≤ 14.0 ms @1080p | **未確定（2026-09-11・Opus 監査で暫定合格を撤回）**: `profile_gpu.py` の `-game` レンダーパス（`GlobalDefaultGameMode` + `player_start` + SM6 強制）で CsvProfiler が **3002 frame** 出力し、steady-state（tail 1501 frame）`GPUTime` median **2.85 ms** / p95 **2.91 ms**（`rhifeaturelevel="SM6"` はログ確認済み）。**ただしこの数値は SM6 の下限**: `DefaultEngine.ini` の行末 `;` コメントバグ（§2 CRITICAL-1）で `r.RayTracing` 等が 0 に潰れ、CSV にも `RayTracingGeometry ≈ 0` / `GPU/Nanite*` 列なし / `GPU/Lumen*` 列なし — RT・Nanite・Lumen パスが 1 つも動いていない。14 ms budget に対する余裕は feature 有効化後に再計測するまで無意味。コメント修正済み・**再 run 待ち** | 🔲 未確定 |
+| M4 | VRAM | ≤ 7.0 GB（`nvidia-smi`） | **未確定（2026-09-11・同上）**: 同 run の host `nvidia-smi`（75 サンプル）で steady_peak **2.52 GB** / baseline **1.71 GB**（1746 MiB・total 8.0 GB）。M3 と同じく RT/Nanite/Lumen 未 engage のシーンなので 7.0 GB budget に対する合否ではない。**再 run 待ち** | 🔲 未確定 |
 | M5 | モーション品質 | ghosting / ホイール artifact なし | `r.DefaultFeature.MotionBlur=True` / `r.MotionBlurQuality=4` が `-game` で有効（§2）。ghosting 判定は動く車の動画待ち（M8 後） | — |
 | M6 | 物理カメラ | 300 mm 相当で中継の圧縮感 | **合格（暫定）**: `CineCameraActor` を Python のみで配置・36 mm filmback + 300 mm（水平画角 6.87°）。レンダー 1 枚で**中継の圧縮感が視認できる**（`spike_broadcast.png`。24 台が奥へ圧縮） | ✅（暫定） |
 | M7 | **AI Coding 適合度** | 人間の GUI 作業ゼロで車両 1 台を配置 + マテリアル | **合格（暫定）**: レベル / 動的ライティング / 手続き的路面（sim-track・75 seg）/ ガードレール（150 seg）/ 車両 24 台グリッド（576 パーツアクタ）/ 放送カメラ / 共有マスターマテリアル + spec リバリー適用（24 スロット・未マッチ 0）/ 保存 / レンダラ設定読み戻し / **`-game` レンダー 1 枚**。**すべて `tools/ue_python/*.py` のみ・GUI 作業ゼロ**（下表は空） | ✅（暫定） |
@@ -266,7 +299,7 @@ world 不要のため `-nullrhi` ヘッドレスで走る。
 
 | Risk | 状態 |
 |------|------|
-| UE 5.8 の cvar 名が想定と異なる | `measure.py settings` で読み戻し済み（§2）。11/15 は intent どおり効いている。RT/Nanite/MotionBlur の 4 件は `-nullrhi` 強制 OFF で未確定（非 `-nullrhi` 待ち）、RHI/SetRes の 2 件は Python getter 無し |
+| UE 5.8 の cvar 名が想定と異なる | `measure.py settings` で読み戻し済み（§2）。数値指定の 11/15 は intent どおり。word 値の 4 件（RT/Nanite/HWRT/MotionBlur）は `ini` 行末コメントバグで 0 に潰れていた（§2 CRITICAL-1・2026-09-11 修正）→ SM6 再 run で確認、RHI/SetRes の 2 件は Python getter 無し |
 | 8 GB VRAM で 24 台が乗らない | M4 待ち。現状 24 台 = 576 パーツアクタ + 7 共有マテリアル。不合格なら結合メッシュ + LOD、それでも駄目なら Fallback |
 | Python Editor API で届かない設定がある | **headless scene-build 範囲では GUI 作業ゼロで完遂**（§3 M7 の表は空）。実行時コンポーネント生成（`add_component_by_class`）と一部 cvar 読み戻しは届かず、回避策で対応（§踏んだ罠 5/6） |
 | C++ ビルド時間 | 本スパイクは content-only（`ue/Source/` なし）。M8 の実装方式は Architect 判断待ち |
