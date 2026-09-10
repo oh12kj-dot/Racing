@@ -1156,6 +1156,301 @@ Required Change / Affected Scope / Recommended Next Step
 
 ---
 
+## TASK-2-4 Phase 2 — 横方向インナーループの実タイヤ再設計（Architect 起票・**人間承認 B 必須**）
+
+> **⚠ 人間承認 B が必須**: `crates/sim-driver/tests/**` の凍結解除・`tests/common/mod.rs` の
+> 運動学プラント廃止。Phase 1 の commit と同時に人間へ上げる。承認前に着手禁止。
+
+**Goal**: 本物のレーシングライン（Phase 1）を、実タイヤ・荷重移動下で **T-CORE-AI-11 のモデルスイープ
+全体が**追従できる横方向インナーループにする。**K-1 の解消。**
+
+**Allowed Files**: `crates/sim-driver/src/{controller.rs, planner.rs}`、`crates/sim-driver/tests/**`
+（承認 B 後）、`crates/sim-core/tests/world_ai.rs`。
+**Do Not Change**: `crates/sim-line/**`（Phase 1 で確定・凍結）、
+`crates/sim-driver/src/{lib.rs, driver.rs, model.rs, perception.rs, decision.rs}`、
+`sim-math` / `sim-track` / `sim-vehicle` / `assets` / `tools`、`sim-core/src/**`、`sim-wasm/**`。
+**PDC-1〜6 は既定値のまま着手し、勝手に revert しない。**
+
+**Required Changes**（1 つずつ・都度全テスト実行）:
+1. **診断が先。** T3 進入で `he` / `beta` / `yaw_rate` / `str` / 各操舵項（`delta_pp` / `delta_ff` /
+   `delta_cs` / `delta_hd`）を時系列で出し、**どの項が発散に寄与しているか**を数値で示してから触る。
+   前回 `K_HEADING` を当て推量で下げて主ストレートの共振は消えたが T3 は残った。**同じことを繰り返さない。**
+2. `K_HEADING` / `K_YAW_DAMP` の**速度スケジュール**（実タイヤのヨー定常ゲインは `v/(L + K_us v²)` で
+   非単調 → 固定ゲインは必ずどこかで marginal）。既存値が基準速度で再現されること。
+3. `delta_cs`（逆操舵）の**位相**。`beta` のみに比例する現在形はヨー運動に対し 90° 遅れる。
+   `beta` と `beta_dot`（または yaw_rate 偏差）の線形結合へ。**`t_drv_02` の符号命題は維持。**
+4. Pure Pursuit の `lookahead_m`。**2/3 で足りなければ**のみ。
+
+**Required Tests / Acceptance**:
+- **T-CORE-AI-11（モデルスイープ・実質的合否）**: `level ∈ {0.3, 0.5, 0.7, 0.9}` ×
+  `consistency ∈ {0.5, 1.0}` × `error_rate ∈ {0.0, 0.5}` × seed 3 本の**全組み合わせ**
+  （`DriverModel::balanced()` 必須）で、**全周 3 周・コリドー逸脱 0 m**。
+- **Phase 1 で入れた `#[ignore]` 4 本をすべて外して緑にする**: `t_core_ai_10_full`（ライン上 spawn・全周）、
+  `t_core_ai_10_offline_spawn`（`t=0` spawn・s≈71 の straight-lane-change 回帰）、凍結の `t_ai_01` /
+  `t_drv_04`（Phase 3 移行で運動学プラント版は廃止）。あわせて `t_core_ai_10` の `S_VALIDATED_M` を
+  1400 → 3100 へ戻す。07 は K-1 派生と確定済み（K-5 不要）。
+- **T-CORE-AI-03**（静止発進 3 周完走）、**T-AI-01R / 05R / 07R**（実物理での能力値創発・反応遅れ）。
+- **テスト基盤の移行**: `sim-driver/tests/common/mod.rs` の運動学プラント廃止。`sim-driver` は
+  `sim-core` に依存できないので、T-AI-01〜08 の実物理版は **`world_ai.rs` 側**に置く。`sim-driver/tests`
+  には `sim-core` 不要の単体（T-DRV-01/03/05/06 相当）だけ残す。**T-DRV-06（境界構造）は必ず維持。**
+  移行は**古いテストを消す前に新しいテストを通す**順で。
+- clippy 0 / fmt clean / no-default-features / wasm32 / `wasm-pack` OK、`step_sim_tick` ≤ 3.5 ms / 24 台、
+  `Driver::update` ≤ 25 µs。
+
+**Known Risks**: 横方向ゲインの変更は全ラップタイムを動かす。**受け入れ数値の緩和は設計変更。**
+`ignore` を増やして回避しない。**3 ラウンドで K-1 が解けない場合は止めて報告**（車両パラメータ
+or `sim-vehicle` 側の疑いが出るため、凍結解除の判断が要る）。
+
+**IMPORTANT IMPLEMENTATION CONTRACT** は TASK-2-4 契約の全文をそのまま適用（凍結リストのみ上記へ差し替え）。
+
+---
+
+## TASK-2-4 — Phase 1 進捗メモ（Sonnet 5・**最終 2026-09-10・実装完了・Architect Round-1 是正済み・再監査 low 待ち**）
+
+> ### ★ 最終状態（2026-09-10）— これ以降が正。下の λ 記述は決定履歴として残置（採用しない）
+>
+> **実装**: `sim-line::Trajectory::reference` を **直接帯行列解法**（周期 5 重対角 SPD・
+> border-elimination + 4×4 Schur・primal アクティブセット箱制約）へ差し替え。**目的関数は純 ∫κ²
+> のみ**（`E = Σ|D²P|²`・λ 正則化なし）。ライン幅は **求解の箱制約 = `white_bounds ± REF_MARGIN_M`
+> (0.30 m) 内側** で絞る（λ ペナルティは Round-4 監査で却下 → §「λ を捨てた理由」）。
+> KKT 残差 `max|free g| = 4e-15`（厳密最小化子）・生成 ~40 ms。
+> 系の組み立ては `assemble_reference_system` → `struct ReferenceSystem` に一本化し
+> `reference` と `reference_kkt_for_test` が共有する（Round-1 MEDIUM-3）。
+>
+> **結果のライン**: 本物の out-in-out（T1/T2 で幅使用 95〜96%・`Σκ²` はセンターラインの 0.725 倍）。
+>
+> **検証**: `cargo test --release` = **182 passed(+doctest 1) / 0 failed / 4 ignored** / clippy 0 /
+> fmt clean / `cargo build -p sim-core --no-default-features` / `--target wasm32-unknown-unknown` /
+> `wasm-pack build crates/sim-wasm --target web` すべて OK。EV ヘッドレス再検証（2026-09-10）:
+> racing line 2071 点・NaN 0・v_target 15.7〜75.3 m/s・AI 600 tick で grip 3〜22%・全レイヤ描画 OK
+> （Round-1 の MEDIUM-2 是正は Aoyama で発火せず出荷ラインは不変）。
+>
+> **ignore 4 本（Phase 2 で全復活）**:
+> 1. `sim-core` `tests/world_ai.rs` `t_core_ai_10_full`（新規・`#[ignore]`）— **ライン上 spawn**・全周
+>    s<3100 のコリドー封じ込め。走らせる版 `t_core_ai_10` は `S_VALIDATED_M` を **3100 → 1400**（T3 手前）
+>    へ縮めて緑を維持（`corridor_containment_check(spawn_t, until_s)` に共通化）。**縮小は
+>    `t_core_ai_10_full` とセットでのみ許される。単独での縮小は禁止**（回帰情報が消える）。
+> 2. `sim-core` `tests/world_ai.rs` `t_core_ai_10_offline_spawn`（新規・`#[ignore]`・**Round-1 HIGH-1**）—
+>    **`t = 0`（実グリッド位置）spawn**・s<1400。基準線までの 4.6 m レーンチェンジが S/F ストレートで
+>    できず **s≈70.9 で `coord.t` が `limit_bounds` を 9 mm 超える**（実行して確認済み）。走らせる
+>    テストが spawn をライン上へ固定してこの失敗を T3 から切り離しているので、その回帰をここで保持。
+> 3. `sim-driver` `tests/driver.rs` `t_ai_01_stays_on_course_for_20_laps` — **凍結ファイル。Architect
+>    権限で `#[ignore = "K-1: …"]` 属性 1 行のみ追加。他は 1 文字も変更なし**（`git diff` で確認可）。
+> 4. `sim-driver` `tests/driver.rs` `t_drv_04_rng_only_affects_causes` — 同上。
+>
+> 3・4 はハーネス（運動学プラント `tests/common/mod.rs`）が本物のラインの曲率レートを追えないだけで
+> **Driver の欠陥ではない**（実物理の同一ドライバーは T1 を通過 = clean 0.6 が s≈1569 まで到達）。
+>
+> **K-1 は確定ハードブロッカー**: lateral inner loop は **ライン上 spawn かつ s≈1561（T3）まで**しか
+> 保持できない。T3 では clean `level 0.6 / consistency 1.0` ですら s≈1561 で `coord.t` が
+> `limit_bounds` 超過 →その後 `|t|≈19.5 m` まで excursion。過剰正則化 λ 版で緑だったのはラインが
+> ぬるく T3 進入が遅かったため（緑だが実は壊れていた）。`t=0` spawn の s≈71 失敗も同じ subsystem。
+> → **Phase 2（lateral inner loop の実タイヤ再設計・運動学プラント廃止・人間承認 B）は確定**。
+>
+> **Round-1 監査（2026-09-10・CHANGES REQUIRED）の是正 — すべて反映済み（sim-line/src + tests 3 ファイル + docs のみ・凍結 crate は不変・ソルバ数学は不変）:**
+> - **HIGH-1**: spawn-on-line が s≈71 失敗を隠していた → `t_core_ai_10_offline_spawn` 追加。`line_t` doc 書き直し。§10 K-1 更新。
+> - **MEDIUM-1**: `t_line_09` バンク検証が `generate` を呼んでいなかった → 合成バンク・スキッドパッド
+>   （R=60・一様バンク）で実 `SpeedProfile::generate` を検証。`speed.rs:133` の `bank_assist` 符号反転で落ちることを mutation で確認。
+> - **MEDIUM-2**: `solve_box_qp` (a) 潰れ箱の 2-サイクル → `hi-lo <= FEAS_TOL_M` なら解放しない。
+>   (b) 収束失敗時に白線外を返しうる → return 前に `bounds` へクランプ（診断は INFINITY 維持）。
+> - **MEDIUM-3**: `assemble_reference_system` / `ReferenceSystem` に一本化（KKT 証明の循環を断つ）。
+> - **LOW-1**: `assemble_reference_system` で `step_m` を `L/8` 以下にクランプ（release panic 回避）。
+> - **LOW-2**: 自己矛盾する ignore 文言を訂正。
+> - **LOW-3**: `.gitignore` の +12 行（TASK-05-1 分）は commit を分ける。
+>
+> **次**: Architect 再監査（low・Round-1 findings の是正確認 + `driver.rs` 差分が `#[ignore]` 2 行のみ）
+> → 人間 go → commit `fix(sim-line): solve the reference line exactly and keep it inside the white-line corridor`
+> （`.gitignore` の TASK-05-1 分は別 commit）。並行して人間承認 B を起票。
+>
+> ---
+>
+> #### λ を捨てた理由（Round-4 監査・2026-09-10）
+> 一様な中央寄せペナルティ `λ·Σ(t/hw)²` は**速いコーナーから順にレーシングラインを壊す**。曲率の
+> ゲインは小 R ほど大きいため、同じ λ でも T1 のような高速・広幅コーナー（幅使用 16% で頭打ち）が
+> 真っ先に殺され低速コーナーは無傷 = 非一様な劣化。対策は「箱制約を締める」であって「ペナルティを
+> 足す」ではない。（h⁴ 次元合わせの知見は HANDOFF §8 に残置。）
+>
+> ---
+>
+> ### （以下、2026-09-09 の λ 版メモ — 決定履歴。**採用しない**）
+
+> **状態: Architect 監査 CHANGES REQUIRED → λ 正則化を捨て「求解の箱制約を `white_bounds` から
+> `REF_MARGIN_M=0.30` 内側へ」+ 純 ∫κ² に差し替え。sim-line 15 テスト全緑・厳密最小化子
+> （`max|free g|=4e-15`）・本物の out-in-out レーシングライン（T1/T2 で幅使用 95〜96%・
+> `Σκ²` はセンターラインの 0.725 倍・apex v_at T1 58.5 / T2 71.3 / T3 43.3 / ヘアピン 16.9）。**
+>
+> **Architect 監査 Q1〜Q3 裁定**: Phase 1 を単独 land / 赤テストは `#[ignore]`（`S_VALIDATED_M`
+> 縮小は禁止）/ T-CORE-AI-07 は K-1 派生か独立 K-5 かを切り分けてから ignore / spawn on-line 化は
+> Phase 1 に同梱 / Phase 2 契約起票（人間承認 B 必須）。
+>
+> **切り分け結果**: T-CORE-AI-07 は **K-1 派生**（clean 区間の bogging 1.12% < 2%。excursion 中
+> （worst |t|=19.5 m）の throttle 全開で増える）。独立 K-5 ではない。
+>
+> **land の障害（Architect 判断待ち）**: 箱制約版は `world_ai.rs` の T-CORE-AI-07/10（`#[ignore]`
+> 済み）に加え、**凍結中の `sim-driver/tests/driver.rs` の `t_ai_01` / `t_drv_04` も破る**
+> （運動学プラントが 95% 幅の T1 ラインを追えず 1.15 m オーバーシュート @ s=160）。凍結ファイルは
+> Phase 1 で触れないため、単独 land できない。選択肢: ① 凍結 2 本にも `#[ignore]`（K-1）を Phase 1
+> 範囲で承認、② Phase 1 + Phase 2 のテスト基盤移行を一体 land（人間承認 B を今すぐ）。
+> コードは commit `4710d63` / `1fd08ca` 状態へ復元（**181 passed**）。**Phase 2（lateral inner
+> loop の実タイヤ再設計）は確定。**
+>
+> - **直接解法**: 目的関数 `E' = Σ|D²P|² + λΣ(t/hw)²` は t について厳密二次 → 周期 5 重対角 SPD。
+>   border-elimination（R={0,1,n-2,n-1} を Schur・I を非周期 5 重対角 SPD 主小行列として LDLᵀ）+
+>   primal アクティブセット。**KKT 残差 `max|free g| = 4e-15`**（厳密最小化子）・生成 ~40 ms。
+> - **求解領域 = `white_bounds`**（縁石を使わない・Architect Round-4）。`limit_bounds` は
+>   Planner/Controller の逸脱許容として温存。
+> - **正則化 λ**: 純 ∫κ² は白線を端から端まで使い切り Corridor クランプの権限を奪う（T-DRV-03 崩壊）。
+>   `λ` は**本番 step_m=2 で `REF_MARGIN_M(0.3 m)` を満たす最小値**として固定（`7e-5`）。
+>   自動探索は粗いグリッドの R19 離散化誤差で λ が桁で変わり T-LINE-13 を壊すため不採用。
+>   対角加算は `λ·h⁴/hw²`（グリッド不変。h⁴ 補正なしだと step 1/2/4 で `t_ref` が 6 m ずれた）。
+> - **ライン/spawn の切り分け（Architect 義務）**: 正則化ラインはセンターライン近傍（T1 で t≈+0.3、
+>   worst 白線マージン 0.384 m）→ `spawn(t=0)` で問題なし。**候補 B（spawn オフライン）は正則化で解消・
+>   spawn 修正不要**。
+>
+> **Deviations**: T-LINE-11 gross 網 `3e-3 → 2e-2`（Architect 承認済み・R19 ヘアピン脱出の単調減衰）。
+> T-LINE-13 は κ RMS spread `8e-6`（≤5e-4）+ 補助の位置チェック `0.25 m`（コーナー遷移の O(h²)）。
+
+### Acceptance #4 — 下流の再計測（何も変えず・K-1 の動き）
+
+| driver | 旧（未収束ライン） | 新（正則化ライン） |
+|---|---|---|
+| clean level 0.6（seed 1/2） | s≈1470（T3）でオフ | **s≈3312（R19 ヘアピン）** — 2.25× 前進 |
+| clean level 0.5 | s≈1543（T3） | **s≈4023（97%）** |
+| clean 0.6 + consistency 0.5 | s≈1554 | s≈3312（ヘアピン） |
+| `balanced()` | s≈1532（T3） | s≈1581（T3）— わずかに改善 |
+
+- **T3 は clean/低ノイズドライバーで通過可能に**（PDC-6 + 正則化ライン）。新しい壁は **R19 ヘアピン（s≈3320）**。
+- **`balanced()` はまだ T3 で死ぬ（s≈1581）** = K-1（横方向ループの安定余裕）の残余。正則化で 1532→1581 と微改善。
+- **Phase 2（lateral inner loop）は依然必要** — T-CORE-AI-11（モデルスイープ）は通らない。
+- SpeedProfile（採用 λ）: T1 v_at=59 / T3=52 / ヘアピン=17.4 / min_v=16.6 / max_v=74.7。mean κ² は
+  センターラインの 0.816×（正則化で端使いを抑えたぶんコーナー速度を少し譲っている）。
+
+### Round-4 裁定（直接解法・2026-09-09）— 適用済み
+
+- 目的関数 `E = Σ|D²P|²` は `t` について厳密に二次（`P` が affine）→ 系は周期 5 重対角 SPD 線形システム。
+  反復緩和（SOR / cascadic multigrid）は biharmonic の条件数 `~n⁴` で `ρ ≈ 1 − 2e-7`、原理的に収束しない。
+  **V-cycle も過剰**（1 次元帯行列は直接解法で O(n)・機械精度）。
+- 承認: ソルバ実装を直接帯行列解法へ差し替え（Round-1「アルゴリズム自体は変えない」を「ソルバ実装の
+  差し替え」まで拡張）。目的関数は不変。
+- T-LINE-12 を「同一格子・10x 予算」→ **KKT 残差**（自由点で `max|g_i| ≤ 1e-9`・クランプ点で勾配が外向き）へ。
+- perf を ≤ 0.5 s へ（3 s 承認は撤回）。`t_line_09` バンク検証の構造修正は承認済み。
+
+### 実装（復元済み・目的関数決定後に即再投入可能）
+
+`trajectory.rs`:
+- 線形システム `A t = -c` を組む（`A_{j,k} = (lat_j·lat_k)·w_{j,k}`、w は biharmonic ステンシル `[1,-4,6,-4,1]`）。
+- `solve_periodic_penta_fixed`: border-elimination。R={0,1,n-2,n-1}、interior I を非周期 5 重対角の
+  SPD 主小行列として LDLᵀ（`penta_ldlt_factor`/`_solve`）→ 4×4 Schur 補元（`solve4`）で border。
+- `solve_box_qp`: primal アクティブセット。違反点バッチ固定 → dual-infeasible を深いものバッチ・境界近傍
+  1 個ずつ解放（バッチ解放はサイクリング）。`reference_kkt_for_test` で KKT 残差を返す。
+- `SMOOTH_PASSES` / `MAX_SWEEPS` / `CONVERGE_M` / `SOR_OMEGA` 削除。
+
+`line.rs`: T-LINE-11（振動判定）/ T-LINE-12（KKT 残差）/ T-LINE-13（RMS）追加。`t_line_09` バンク検証を
+合成 κ での bank_assist 符号検証へ。perf assert 800 ms → 500 ms。T-LINE-11 gross 網 3e-3 → **2e-2**
+（R19 ヘアピン脱出が s≈3362 まで `|κ_traj|` 1.2e-2 で単調減衰・振動ではない・要承認）。
+
+### 実測
+
+| 項目 | 結果 |
+|---|---|
+| 制約なし解の残差 `max|At-rhs|` | **1.4e-13**（機械精度） |
+| アクティブセット後の自由点勾配 `max|g|` | **1.95e-14** |
+| クランプ点の内向き KKT 違反 | 1.8e-8（< 1e-7） |
+| T-LINE-11 符号反転 / TV 比 | 3.23/km（≤5）/ 1.80（≤2.5）= リップルなし |
+| T-LINE-13 RMS spread | 7e-5（≤1e-4） |
+| `reference` 生成時間 | **35 ms** |
+| sim-line 14 テスト / clippy / fmt | 全緑 / 0 / clean |
+
+### 致命的発見 — 厳密解が追従不能
+
+`limit_bounds`（±8.5〜9.0 m）で純 ∫κ² を最小化すると**ラインがコリドーを端から端まで使う**:
+`t`: s=0 で +1.3 → s=120（T1・R130 左）で **+8.3**（内側エッジ・bound +8.5）→ s=360 で **-8.8**（外側エッジ）。
+グリッド（s=40・t=0）発進の車に「最初の 80 m で t を 0→+8.3」を要求。
+
+**全ドライバーモデルが発進直後にコースアウト**: clean level 0.6（seed 1/2/3）/ clean level 0.5 /
+`balanced()` すべて s≈48-58 で t=+10。commit 済み `world_ai.rs` の T-CORE-AI-04/05/07/10 も落ちる。
+
+### Architect へ仰いだこと（正則化項の追加 = 目的関数変更の承認）
+
+1. **正則化項** `E' = Σ|D²P|² + λ Σ (t_i / half_width_i)²`（エッジ反発 / 基準への引き戻し）。
+   **系は線形・5 重対角のまま**（対角と rhs に足すだけ）→ 直接ソルバ無改変で使える。
+2. working コリドーを `white_bounds`（− マージン）に。
+3. ライン始点をグリッドに固定（`t_0 = 0` hard 制約）。
+4. `reference` は理想線・Phase 2 で Driver を攻めたライン追従に作り替え（最大スコープ）。
+
+### Architect Round-3 裁定（基準訂正・2026-09-09）— 適用済みの契約
+
+Phase 1 の 3 つの ❌ のうち 2 つは Architect 自身の受け入れ基準の欠陥だった:
+- **T-LINE-11**: `TRANSITION_M`（コーナー距離）で正当な曲率とリップルを区別できない → **振動で判定**
+  （直線ランごとに κ_traj 符号反転 ≤ 5/km、全変動 ≤ 2.5·max、粗い網として `|κ| ≤ 3e-3`）。
+- **T-LINE-12**: 格子を変えた解の比較は**収束不足と離散化誤差 O(h²) を混同** → **同一格子**で
+  「許容 1/10・予算 10 倍で解いた解との κ 最大差 ≤ 1e-4」に変更。V-cycle でも下がらない。
+- **T-LINE-13**: 現行維持（step 1/2/4 m の κ RMS spread ≤ 1e-4。既に合格）。
+- **`t_line_09`**: `v_at >= μg cos(bank)/√|κ|` は偽の不変量（v_at は後退/前進パス出力・floor は κ→0 で発散）。
+  → コーナリング限界の直接比較（`corner_speed(bank on)` > `corner_speed(bank off)`）へ。`speed.rs`（承認 C）不要。
+- Allowed Files（Phase 1）: `trajectory.rs` / `tests/line.rs`（新テスト + t_line_09 バンクブロックのみ）/ `world_ai.rs`（Phase 1 後の再計測）。**承認 C は不要と裁定・B は Phase 3 まで不要**。
+
+### 実測（cascade の 3 構成すべてで T-LINE-12 が 1 桁届かない）
+
+| 構成 | T-LINE-12（同一格子・10x 予算との κ 差） | T-LINE-11 worst `|κ|` / 反転/km | perf reference |
+|---|---|---|---|
+| two-grid（16 m 1 レベル） | 3.11e-3 | — | 1.43 s |
+| cascade・COARSE_SWEEPS=4000 固定 | 2.44e-4 | 2.68e-3 / — | 2.66 s |
+| cascade・per-level `h²` 許容 | 1.37e-3 | 8.3e-3 / 11.6 | 2.2 s |
+| cascade・最粗厳密解 + LIFT_SWEEPS=400 | 9.44e-4 | 8.4e-3 / 5.8 | 3.1 s |
+
+目標: T-LINE-12 ≤ 1e-4 / T-LINE-11 反転 ≤ 5/km・`|κ| ≤ 3e-3` / perf ≤ 2 s（3 s まで承認済み）。
+**λ≈70 m のリップル（`|κ|` 8e-3・R≈120 m）が細レベルまで残る。**
+
+### Root Cause（送付済み）
+
+nested iteration は「粗レベル解 → 線形内挿 → 細レベルで平滑化」しかせず、**細レベルの長波長残差を
+粗レベルへ戻して補正する経路（restriction + coarse-grid correction）が無い**。中間波長（λ≈50〜100 m・
+粗格子で 2〜3 セル）が取りこぼされ、細レベル SOR（`ρ ≈ 1 - O(1/n²)`, n≈2070）では消せない。
+
+### 副次観測（要判断）
+
+T-LINE-13 の直線区間 κ **RMS が全構成・全格子で ~1.5e-3 で一定**。「レーシングラインがコーナー間で
+apex→apex へ斜めに横切るときに持つ緩い曲率（幾何的に peak ~2e-3 相当）」が実在し、その上に λ≈70 m の
+リップルが乗っている可能性。つまり `|κ| ≤ 3e-3` は幾何的に妥当なライン曲率で既に埋まりかけで、
+リップル検出の本質は**反転回数 / TV 比**の側。
+
+### Architect へ仰いだこと
+
+1. **フル V-cycle multigrid へ進む承認**（restriction / coarse-grid correction / prolongation で補正を戻す。
+   pre/post smoothing 各 2〜3。`trajectory.rs` 内 +80〜120 行）。
+2. あるいは **T-LINE-12 の基準再考**: 目的関数（幅 ±8.5 m でほぼ拘束されない直線区間の曲率二乗和最小化）の
+   最小近傍が平坦・縮退なら「同一格子・10x 予算との差 ≤ 1e-4」は原理的に厳しすぎる。
+   T-LINE-11（振動）+ T-LINE-13（格子非依存 RMS）+「予算 10x で反転回数が悪化しない」を収束の証明とする代替。
+
+### 試作した実装（復元済み・再実装の出発点）
+
+`trajectory.rs`:
+- 収束判定を per-sweep 更新量 → **内点での勾配ノルム `max|g_i| < GRAD_EPS`**。`relax_level` 関数に切り出し（`bool` を返す）+ `debug_assert!(converged)`。
+- **cascadic multigrid**: 2 の冪でステーションを間引いた格子を粗い順（~64→32→16→8→4→2 m）に固定スイープ（`COARSE_SWEEPS`）で緩和 → 各解を 1 段細かい格子へ線形内挿して初期値に。最終レベルのみ勾配ノルムで詰める。
+
+`line.rs`: T-LINE-11（直線区間 `|κ|≤5e-4`）/ T-LINE-12（格子半減で κ 差 ≤1e-4）/ T-LINE-13（step 1/2/4 m の κ RMS 一致・spread ≤1e-4）追加。`perf_build_and_accessors` の reference 上限を 800 ms → 2 s に緩和。`straight_section_s` ヘルパ（コーナー端 ±60 m 除外）。
+
+### 実測（cascade / COARSE_SWEEPS=4000 / GRAD_EPS=3e-5）
+
+| テスト | 旧 | cascade 後 | 目標 |
+|---|---|---|---|
+| T-LINE-13（step 非依存） | — | spread 7e-5 | ≤1e-4 ✅ |
+| T-LINE-12（格子半減で κ 差） | 3.11e-3 | 2.44e-4 | ≤1e-4 ❌ |
+| T-LINE-11（直線 worst `|κ|`） | ~6e-3 | 2.68e-3 @ s=3425 | ≤5e-4 ❌ |
+| perf reference | ~0.6 s | 2.66 s | ≤2 s ❌ |
+
+- **T-LINE-11 の worst は cascade 前後で不変**（2.68e-3 @ s=3425 = ヘアピン s≈3320 脱出 65 m）。R19 ヘアピン脱出でラインがまだ立ち上がり中で、±60 m の遷移除外では狭すぎてライン本来の曲率をリップルと誤検出している疑い。
+- **`t_line_09` 回帰（Known Risk #1）**: バンクコーナー s=2384 で収束改善によりラインがストレート化 → `v_at 61.73 < flat floor 62.65`（1.5%）。閾値 `1e-6` は緩めず報告済み。
+
+### Architect へ送った判断依頼
+
+1. cascadic multigrid では T-LINE-12 と 2 s を両立不可 → **フル V-cycle multigrid**（restriction で残差転送・pre/post smoothing）へ進めるか。3-tap 平滑化 10 パスがリップルを固定化している疑いも。
+2. T-LINE-11 の遷移区間: R に応じた可変 / 一律 120 m / residual か否かの切り分け。
+3. `t_line_09`: `speed.rs`（承認 C）を触って v_at を新 κ に追従 / 受け入れ数値を収束後の値へ更新（設計変更として明記）/ その他。
+
+---
+
 ## TASK-2-3 — `sim-core` / `sim-wasm` 配線: Driver AI が実物理で走る（アーカイブ）
 
 > **起票**: Architect（Opus 5）／ 2026-09-09。

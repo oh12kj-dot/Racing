@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use sim_line::{Corridor, PerformanceEnvelope, SpeedProfile, Trajectory, TrajectoryKind};
 use sim_math::Vec3;
-use sim_track::{load_track, Track};
+use sim_track::{load_track, CrossSection, Track, TrackDefinition};
 use sim_vehicle::{VehicleParams, GRAVITY};
 
 const SPEC_JSON: &str = include_str!("../../../assets/vehicles/gt_proto_a.spec.json");
@@ -28,6 +28,38 @@ fn track() -> Track {
 
 fn params() -> VehicleParams {
     VehicleParams::from_json_str(SPEC_JSON).expect("gt_proto_a.spec.json loads and validates")
+}
+
+/// 合成バンク・スキッドパッド（定半径 `radius` の閉円・全周一様 `banking`）。
+///
+/// 実サーキット + 本物のレーシングラインではバンクコーナー（T7）が out-in-out で
+/// 直線化され、`κ_traj` が小さくなって `v_at` がコーナリング限界に達しない。
+/// バンク項（`speed.rs` の `bank_assist = -g·sin(bank)·sign(κ)`）の符号は、
+/// 全域がコーナリング限界に張り付くこのスキッドパッドで検証する（Architect MEDIUM-1）。
+fn banked_skidpad(radius: f64, banking: f64) -> Track {
+    const N: usize = 24;
+    let centerline: Vec<Vec3> = (0..N)
+        .map(|i| {
+            let a = std::f64::consts::TAU * i as f64 / N as f64;
+            Vec3::new(radius * a.cos(), 0.0, radius * a.sin())
+        })
+        .collect();
+    let sections = vec![
+        CrossSection {
+            banking,
+            ..Default::default()
+        };
+        N
+    ];
+    let def = TrackDefinition {
+        name: "synthetic banked skidpad".to_string(),
+        centerline,
+        sections,
+        closed: true,
+        sector_splits: vec![],
+        start_finish: 0.0,
+    };
+    Track::build(&def).expect("synthetic skidpad builds")
 }
 
 fn corridor(t: &Track) -> Corridor {
@@ -408,41 +440,47 @@ fn t_line_09_speed_profile_physics() {
         env.v_max
     );
 
-    // バンクコーナー（T7・banking ≈ -0.1 rad）で g_eff の符号が正しいことを確認する。
-    // 契約 Known Risks は「ヘアピン（バンク ≈ 0）と T7（バンク -0.1）の両方で」検証を
-    // 要求しているが、既存はヘアピンのみだった（Opus 監査 R5）。
-    // 最大バンク局を探し、そこが「有利なバンク」（外側が持ち上がる＝旋回と逆符号）で
-    // あることを確かめたうえで、v_at が平坦・ダウンフォース無視のコーナリング速度
-    // 下限を上回ることを assert する。bank_assist の符号が反転していれば a_lat が
-    // 2·g·|sin(bank)| 目減りし、この下限を明確に割る。
-    let mut s_bank = 0.0;
-    let mut min_bank = 0.0_f64;
-    let mut s = 0.0;
-    while s < tr.length() {
-        let b = tr.frame_at(s).banking;
-        if b < min_bank {
-            min_bank = b;
-            s_bank = s;
-        }
-        s += 1.0;
+    // バンク項の符号が正しいことを **実 `SpeedProfile::generate` の出力**で確認する。
+    //
+    // TASK-2-4 Phase 1（Architect 監査 Q3 + MEDIUM-1）: 旧アサート `v_at >= μ·g·cos(bank)/√|κ_traj|`
+    // は **偽の不変量**だった（v_at は前後パスの出力で局所限界を下回るのが正常。floor ∝ 1/√|κ_traj|
+    // はラインが直線化するほど発散）。だが最初の差し替え版も `generate` を呼ばず downforce 反復を
+    // テスト内へ再実装していたため `speed.rs` の符号を反転しても落ちなかった。実サーキットでは
+    // 本物のラインがバンクコーナー（T7）を out-in-out で直線化して `v_at` がコーナリング限界に
+    // 届かないので、全域がコーナリング限界に張り付く **合成バンク・スキッドパッド**（R=60 m・
+    // 一様バンク 0.15 rad）で検証する。実バンク版と `banking = 0` 版を `generate` し、
+    // 有利ペアリング側が速いことを要求する。`speed.rs` の
+    // `bank_assist = -g·sin(bank)·sign(κ)` を反転すれば不等号が反転して落ちる。
+    let sk_bank = banked_skidpad(60.0, 0.15);
+    let sk_flat = banked_skidpad(60.0, 0.0);
+    let c_bank = Corridor::from_track(&sk_bank, STEP_M, CAR_HALF_WIDTH, SAFETY);
+    let traj_bank = Trajectory::reference(&c_bank, &sk_bank, STEP_M);
+    let sp_bank = SpeedProfile::generate(&traj_bank, &sk_bank, &env, STEP_M);
+    let sp_noban = SpeedProfile::generate(&traj_bank, &sk_flat, &env, STEP_M);
+
+    let s_probe = sk_bank.length() * 0.5;
+    let bank = sk_bank.frame_at(s_probe).banking;
+    let ksign = traj_bank.curvature_at(s_probe).signum();
+    let favourable = -bank.sin() * ksign > 0.0;
+    let v_bank = sp_bank.v_at(s_probe);
+    let v_noban = sp_noban.v_at(s_probe);
+    assert!(
+        v_bank < 0.90 * env.v_max && v_noban < 0.90 * env.v_max,
+        "skidpad must be corner-limited, not v_max-clamped (v_bank {v_bank}, v_noban {v_noban})"
+    );
+    if favourable {
+        assert!(
+            v_bank > v_noban + 0.05,
+            "favourable bank ({bank:.3} rad, κ sign {ksign}) must raise the corner speed: \
+             banked {v_bank} <= flat {v_noban} — bank_assist sign is likely inverted"
+        );
+    } else {
+        assert!(
+            v_bank < v_noban - 0.05,
+            "adverse bank ({bank:.3} rad, κ sign {ksign}) must lower the corner speed: \
+             banked {v_bank} >= flat {v_noban} — bank_assist sign is likely inverted"
+        );
     }
-    assert!(
-        min_bank < -0.05,
-        "expected a meaningfully banked corner, got {min_bank}"
-    );
-    let k_traj = traj.curvature_at(s_bank);
-    // 有利なバンク: banking < 0（右端が持ち上がる）かつ左旋回（κ_traj > 0）。
-    assert!(
-        k_traj > 0.0,
-        "max-bank station s={s_bank}: expected left turn (κ>0) for favourable negative banking, got κ={k_traj}"
-    );
-    let v_flat_floor = (env.mu * GRAVITY * min_bank.cos() / k_traj.abs()).sqrt();
-    let v_bank = sp.v_at(s_bank);
-    assert!(
-        v_bank + 1e-6 >= v_flat_floor,
-        "banked corner s={s_bank} (bank {min_bank} rad): v_at {v_bank} < flat floor {v_flat_floor} \
-         — bank_assist sign is likely inverted"
-    );
 }
 
 // ------------------------------------------------------------------------------------
@@ -476,6 +514,211 @@ fn t_line_10_determinism() {
     };
 
     assert_eq!(build(), build(), "sim-line output is not deterministic");
+}
+
+// ------------------------------------------------------------------------------------
+// TASK-2-4 Phase 1 — 基準線の直接解法（Architect 起票・監査で基準訂正）
+//
+// 目的関数は t について厳密に二次で、系は周期 5 重対角 SPD。反復緩和（SOR / cascadic
+// multigrid）は biharmonic の条件数で長波長モードが収束せず、直線区間で κ_traj が波長 ~70 m で
+// 振動していた。直接帯行列解法 + アクティブセットへ差し替え。求解領域は white_bounds を
+// REF_MARGIN_M（0.30 m）内側へ寄せた箱（λ 正則化は「高速コーナーからラインを壊す」ため却下）。
+// 番号は既存 T-LINE-10（決定性）との衝突を避けて 11 から。
+// ------------------------------------------------------------------------------------
+
+/// センターラインが直線（|κ_c| < STRAIGHT_KAPPA）の連続ランを弧長列として返す。
+fn straight_runs(tr: &Track) -> Vec<Vec<f64>> {
+    const STRAIGHT_KAPPA: f64 = 1.0e-4;
+    const SAMPLE_STEP_M: f64 = 2.0;
+    let l = tr.length();
+    let n = (l / SAMPLE_STEP_M) as usize;
+    let straight = |s: f64| tr.frame_at(s.rem_euclid(l)).curvature.abs() < STRAIGHT_KAPPA;
+    let mut runs: Vec<Vec<f64>> = Vec::new();
+    let mut cur: Vec<f64> = Vec::new();
+    for i in 0..n {
+        let s = i as f64 * SAMPLE_STEP_M;
+        if straight(s) {
+            cur.push(s);
+        } else if !cur.is_empty() {
+            runs.push(std::mem::take(&mut cur));
+        }
+    }
+    if !cur.is_empty() {
+        runs.push(cur);
+    }
+    runs.retain(|r| r.len() as f64 * SAMPLE_STEP_M >= 120.0);
+    runs
+}
+
+/// T-LINE-11 — 直線区間の `κ_traj` に未収束リップルが無い。**大きさではなく振動**で判定。
+#[test]
+fn t_line_11_reference_no_ripple_on_straights() {
+    let tr = track();
+    let c = corridor(&tr);
+    let traj = Trajectory::reference(&c, &tr, STEP_M);
+    let runs = straight_runs(&tr);
+    assert!(
+        runs.len() >= 3,
+        "expected several straight runs, got {}",
+        runs.len()
+    );
+
+    let mut worst_rev_per_km = 0.0_f64;
+    let mut worst_tv_ratio = 0.0_f64;
+    let mut worst_mag = 0.0_f64;
+    for run in &runs {
+        let k: Vec<f64> = run.iter().map(|&s| traj.curvature_at(s)).collect();
+        let len_m = (run.len() - 1) as f64 * 2.0;
+        let max_mag = k.iter().fold(0.0_f64, |a, &v| a.max(v.abs()));
+        worst_mag = worst_mag.max(max_mag);
+        // 相対フロア: ゼロ近傍の数値チャタリングを反転に数えない。
+        let floor = (0.2 * max_mag).max(2.0e-4);
+        let mut reversals = 0;
+        let mut last_sign = 0.0_f64;
+        for &v in &k {
+            if v.abs() > floor {
+                let sgn = v.signum();
+                if last_sign != 0.0 && sgn != last_sign {
+                    reversals += 1;
+                }
+                last_sign = sgn;
+            }
+        }
+        worst_rev_per_km = worst_rev_per_km.max(reversals as f64 / (len_m / 1000.0).max(1e-9));
+        let tv: f64 = k.windows(2).map(|w| (w[1] - w[0]).abs()).sum();
+        if max_mag > 1.0e-4 {
+            worst_tv_ratio = worst_tv_ratio.max(tv / max_mag);
+        }
+    }
+    eprintln!(
+        "T-LINE-11: {} runs. worst sign-reversals/km={:.2}, worst TV/max={:.2}, worst |kappa|={:.2e}",
+        runs.len(), worst_rev_per_km, worst_tv_ratio, worst_mag
+    );
+    assert!(
+        worst_rev_per_km <= 5.0,
+        "kappa_traj reverses {worst_rev_per_km:.2}/km (>5 = ripple)"
+    );
+    assert!(
+        worst_tv_ratio <= 2.5,
+        "kappa_traj TV is {worst_tv_ratio:.2}x max (>2.5 = ripple)"
+    );
+    // 粗い網（gross failure 検出のみ・Architect 承認済み 2e-2）。厳密最小化子でも R19 ヘアピン
+    // 脱出は κ_traj ≈ 1.2e-2 で単調減衰する（振動ではない・反転回数と TV 比が本質）。
+    assert!(
+        worst_mag <= 2.0e-2,
+        "straight |kappa_traj| = {worst_mag:.2e} /m (>2e-2 = gross)"
+    );
+}
+
+/// T-LINE-12 — 厳密最小化子であることの直接証明（KKT 残差）。
+#[test]
+fn t_line_12_reference_kkt_exact_minimizer() {
+    let tr = track();
+    let c = corridor(&tr);
+    let (max_free_grad, worst_inward, iters, n_clamped) =
+        Trajectory::reference_kkt_for_test(&c, &tr, STEP_M);
+    eprintln!(
+        "T-LINE-12: iters={iters}, clamped={n_clamped}, \
+         max|free grad|={max_free_grad:.2e}, worst inward-clamp={worst_inward:.2e}"
+    );
+    assert!(
+        max_free_grad <= 1.0e-9,
+        "free-station gradient max = {max_free_grad:.2e} (>1e-9)"
+    );
+    assert!(
+        worst_inward <= 1.0e-7,
+        "clamped-station gradient inward by {worst_inward:.2e}"
+    );
+}
+
+/// T-LINE-13 — ステーション間隔非依存: step_m 1/2/4 m で「シャープコーナーから遠い」直線区間の
+/// κ_traj RMS が一致（`max` は離散化誤差 O(h²) の局所ピークを拾うので不可）。
+#[test]
+fn t_line_13_reference_step_independence() {
+    let tr = track();
+    let c = corridor(&tr);
+    let l = tr.length();
+    // 幅を使うラインはコーナー脱出後 ~150 m かけて直線値へ戻る。その O(h²) 誤差を避けるため
+    // シャープコーナー（R < 200 = |κ_c| > 0.005）から ±150 m を除外。
+    let clean_s: Vec<f64> = straight_runs(&tr)
+        .into_iter()
+        .flatten()
+        .filter(|&s| {
+            let mut d = -150.0;
+            while d <= 150.0 {
+                if tr.frame_at((s + d).rem_euclid(l)).curvature.abs() > 0.005 {
+                    return false;
+                }
+                d += 4.0;
+            }
+            true
+        })
+        .collect();
+    assert!(
+        clean_s.len() > 50,
+        "clean straight stations: {}",
+        clean_s.len()
+    );
+    let rms = |step: f64| {
+        let traj = Trajectory::reference(&c, &tr, step);
+        let sum: f64 = clean_s.iter().map(|&s| traj.curvature_at(s).powi(2)).sum();
+        (sum / clean_s.len() as f64).sqrt()
+    };
+    let (r1, r2, r4) = (rms(1.0), rms(2.0), rms(4.0));
+    eprintln!(
+        "T-LINE-13: clean-straight kappa RMS  step1={r1:.2e}  step2={r2:.2e}  step4={r4:.2e}"
+    );
+    let spread = r1.max(r2).max(r4) - r1.min(r2).min(r4);
+    assert!(
+        spread <= 5.0e-4,
+        "clean-straight kappa RMS spans {spread:.2e} across step_m 1/2/4 (>5e-4)"
+    );
+    // 位置は補助チェック（本命は κ RMS）。コーナー遷移の O(h²) が直線区間へ伝播する。
+    let t1 = Trajectory::reference(&c, &tr, 1.0);
+    let t2 = Trajectory::reference(&c, &tr, 2.0);
+    let t4 = Trajectory::reference(&c, &tr, 4.0);
+    let mut worst_dt = 0.0_f64;
+    for &s in &clean_s {
+        let a = t1.t_at(s);
+        worst_dt = worst_dt
+            .max((t2.t_at(s) - a).abs())
+            .max((t4.t_at(s) - a).abs());
+    }
+    eprintln!("T-LINE-13: worst |t_at(step) - t_at(1m)| on clean straights = {worst_dt:.4} m");
+    assert!(
+        worst_dt <= 0.25,
+        "line shape grid-dependent: t_at differs by {worst_dt:.4} m"
+    );
+}
+
+/// T-LINE-14 — 基準線は白線から REF_MARGIN_M 以上内側（Corridor クランプの権限を残す）。
+/// **箱制約で構成上成立する。`REF_MARGIN_M = 0` では白線に触れて落ちる**（実質性）。
+#[test]
+fn t_line_14_reference_keeps_white_margin() {
+    let ref_margin = Trajectory::REF_MARGIN_M;
+    let tr = track();
+    let c = corridor(&tr);
+    let traj = Trajectory::reference(&c, &tr, STEP_M);
+    let mut worst = f64::INFINITY;
+    let mut worst_s = 0.0;
+    let mut s = 0.0;
+    while s < tr.length() {
+        let (wr, wl) = c.white_bounds(s);
+        let t = traj.t_at(s);
+        let m = (wl - t).min(t - wr);
+        if m < worst {
+            worst = m;
+            worst_s = s;
+        }
+        s += 1.0;
+    }
+    eprintln!("T-LINE-14: worst white margin = {worst:.3} m at s={worst_s:.0}");
+    // 箱制約は station 値で white−REF_MARGIN。station 間の Catmull-Rom がタイトコーナーで
+    // 数 mm オーバーシュートしうるので 2 cm の許容。
+    assert!(
+        worst >= ref_margin - 0.02,
+        "reference line is {worst:.3} m from the white line at s={worst_s:.0} (< {ref_margin} m)"
+    );
 }
 
 // ------------------------------------------------------------------------------------
@@ -515,6 +758,10 @@ fn perf_build_and_accessors() {
     );
     // 生成は起動時 1 回。緩い上限だけ課す（CI 環境差を吸収）。
     assert!(t_corridor.as_millis() < 200);
-    assert!(t_traj.as_millis() < 800);
+    // TASK-2-4 Phase 1: 直接帯行列解法 + アクティブセット。実測 ~40 ms（旧 SOR ~600 ms）。
+    assert!(
+        t_traj.as_millis() < 500,
+        "reference build {t_traj:?} > 500 ms"
+    );
     assert!(t_speed.as_millis() < 200);
 }

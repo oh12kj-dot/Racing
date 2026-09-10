@@ -1,6 +1,6 @@
 # HANDOFF.md — 引き継ぎ資料
 
-Last updated: 2026-09-09 / Phase 1B commit 済み（`b7a7084` / `4968e61` / `908fea3`）+ 未コミットの TASK-2-1（`sim-line`）/ TASK-2-2（`sim-driver`）/ **TASK-2-3（PDC-6 込みで land 済み・Architect 最終監査待ち。cargo test 181 passed）** + TASK-2-4 起票（人間承認待ち）+ 並行して TASK-05-1（UE5 スパイク）スキャフォルド。cargo test **181 passed**
+Last updated: 2026-09-10 / **Phase 2 の TASK-2-1 / 2-2 / 2-3 を commit 済み**（`4710d63` / `ac80e03` / `1fd08ca`。Phase 1B は `b7a7084` / `4968e61` / `908fea3`）。**TASK-2-4 Phase 1 完成・全チェック緑（作業ツリー・未 commit・Architect 監査 Round-1 の CHANGES REQUIRED を反映済み）**: `sim-line::Trajectory::reference` を直接帯行列解法（KKT 残差 4e-15 = 厳密最小解）+ 求解の箱制約を `white_bounds ± REF_MARGIN_M`(0.30 m) 内側へ、純 ∫κ²（λ 正則化は Architect が却下）。本物の out-in-out ライン（T1/T2 で幅使用 95〜96%・`Σκ²` はセンターラインの 0.725 倍）。`cargo test --release` = **182 passed（+doctest 1）/ 0 failed / 4 ignored** / clippy 0 / fmt clean / no-default-features / wasm32 / wasm-pack OK。K-2 解消。本物のラインで **clean 0.6 が T3（s≈1561）でスピン**、かつ **`t=0` spawn だと S/F ストレートで 4.6 m のレーンチェンジができず s≈71 でコリドー逸脱** → **K-1 が確定ハードブロッカー・Phase 2（lateral inner loop 実タイヤ再設計・凍結解除 B）は確定**。ignore 4 本 = `t_core_ai_10_full` + `t_core_ai_10_offline_spawn` + 凍結 `t_ai_01` / `t_drv_04`（§10 K-1）。次: Architect 再監査（low）→ 人間 go → commit。TASK-05-1 はスキャフォルド + `build_scene.py` step 1〜2。
 **このファイル 1 本で作業を再開できるように書いてある。**
 他の文書は「必要になったときだけ」開けばよい（どこに何があるかは §2 に記載）。
 
@@ -11,16 +11,16 @@ Last updated: 2026-09-09 / Phase 1B commit 済み（`b7a7084` / `4968e61` / `908
 | | |
 |---|---|
 | **何を作っているか** | Realistic Race Spectator Simulator。プレイヤーは運転せず**観戦**する。「実際のモータースポーツ中継に見え、よく見ると各 AI が本当にレースをしている」ことが目標 |
-| **今どこか** | **Phase 2 実装中・全て未コミット。TASK-2-1 / TASK-2-2 実装完了。TASK-2-3 は PDC-6 込みで land 済み（Architect 最終監査待ち）。** Architect Round-2 裁定 = (a): s≈3150 の lateral weave の根因は Controller ではなく `sim-line::Trajectory::reference` の**未収束基準ライン**（直線区間で κ_traj が ±0.006・波長 70 m）。PDC-6（`planner.rs` の摩擦楕円制動計画）は独立に正しく T3 を解消したので land、残りは **TASK-2-4**（`# NEXT SONNET TASK` に起票・**人間承認待ち**）。PDC-7 は撤回。`world_ai.rs` は診断テスト削除 + T-CORE-AI-04/05/07/08/09/10 追加。cargo test **181 passed** / clippy 0 / fmt clean / no-default-features / wasm32 OK |
-| **次に何をするか** | **① Architect（Opus 5）が TASK-2-3 を最終監査 → APPROVED → 人間の go → commit（順序: TASK-2-1 → 2-2 → 2-3。`.gitignore`/`tools/ue_python/`/`ue/`/`docs/phase-0.5-results.md` は TASK-05-1 の別 commit）。② TASK-2-4 は人間承認（`sim-line/src/trajectory.rs` と `sim-driver/tests/**` の凍結解除）が下りてから着手。契約は `TODO.md`「# NEXT SONNET TASK」。③ 並行: TASK-05-1（UE5 スパイク）— `build_scene.py` の `SCENE_STEPS` を 1 つずつ実装 → `import_vehicle.py`/`capture.py`/`measure.py` → M1〜M9 実測** |
+| **今どこか** | **Phase 2 の TASK-2-1 / 2-2 / 2-3 を commit 済み**（`4710d63` / `ac80e03` / `1fd08ca`）。**TASK-2-4 Phase 1 は作業ツリーで完成・全チェック緑（未 commit・Architect Round-1 の CHANGES REQUIRED を反映済み）**: `sim-line::Trajectory::reference` を直接帯行列解法 + 求解の箱制約 `white_bounds ± 0.30 m` へ差し替え。純 ∫κ² のまま本物の out-in-out ライン。K-2 解消（§10）。**だが本物のラインで clean 0.6 が T3（s≈1561）で完全スピン、かつ `t=0` spawn だと S/F ストレートで 4.6 m レーンチェンジ不能で s≈71 逸脱 → K-1 が確定ハードブロッカー・Phase 2（lateral inner loop 実タイヤ再設計・凍結解除 B）は確定。** ignore 4 本を意図的に導入（`t_core_ai_10_full` + `t_core_ai_10_offline_spawn` + 凍結 `t_ai_01`/`t_drv_04`。§10 K-1。Phase 2 で全復活）。Architect 再監査（low）待ち |
+| **次に何をするか** | **① Architect が TASK-2-4 Phase 1 の差分を再監査（Round-1 findings HIGH-1/MEDIUM-1/2/3/LOW-1/2 の是正確認・`sim-driver/tests/driver.rs` の差分が `#[ignore]` 属性 2 行だけであること）→ APPROVED → 人間 go → commit `fix(sim-line): solve the reference line exactly and keep it inside the white-line corridor`。② 人間承認 B を起票（`sim-driver/tests/**` 凍結解除 + `tests/common/mod.rs` の運動学プラント廃止）。あわせて「Architect 権限で `sim-driver/tests` に `#[ignore]` 2 行を追加した」と人間へ報告。③ TASK-2-4 Phase 2（lateral inner loop 再設計。契約は `TODO.md` にドラフト済み・承認 B 待ち）。④ 並行: TASK-05-1（UE5 スパイク）— `build_scene.py` step 3 以降** |
 | **役割** | Opus 5 = Architect / Reviewer / Quality Gate。Sonnet 5 = Implementation Engineer。重大な技術変更は人間承認が必要 |
-| **健全性確認** | `cargo test --release` → **181 passed / 0 failed**（従来 177 − 診断 2 本 + T-CORE-AI-04/05/07/08/09/10）。clippy 0 / fmt clean |
+| **健全性確認** | `cargo test --release` → **182 passed（+doctest 1）/ 0 failed / 4 ignored**（ignore は K-1 の 4 本のみ）。clippy 0 / fmt clean / no-default-features / wasm32 / wasm-pack OK |
 
 ### 最初にやること
 
 ```bash
 cd /c/AI/App_Dev/Racing
-cargo test --release      # 181 passed が期待値。下回ったら先に原因を特定する
+cargo test --release      # 182 passed(+doctest 1) / 4 ignored が期待値。下回ったら先に原因を特定する
 ```
 
 これが通れば、リポジトリは既知の健全な状態にある。
@@ -51,10 +51,10 @@ TASK-2-4 へ繰り越し）。詳細は `TODO.md`「TASK-2-3 — 進捗メモ / 
 | TASK-1B-1 | `sim-vehicle`（車両物理） | ✅ APPROVED | `b7a7084` |
 | TASK-1B-2 | `sim-core`（トラック路面 + 固定ステップ World） | ✅ APPROVED（監査 2 ラウンド） | `4968e61` |
 | TASK-1B-3 | Engineering View 車両表示（`sim-wasm` に `WasmWorld` + ビューア） | ✅ APPROVED | `908fea3` |
-| TASK-2-1 | `sim-line`（Corridor / Trajectory / SpeedProfile） | ✅ Opus 監査 → 修正適用 → 再検証 pass。**人間の commit go 待ち** | **未コミット** |
-| TASK-2-2 | `sim-driver`（Perception / Decision / Planner / Controller） | ✅ 実装完了。PDC-1/3/5/6 + 定数再調整を同梱（`sim-driver` は untracked）。**人間の commit go 待ち** | 未コミット |
-| TASK-2-3 | `sim-core`+`sim-wasm`+EV 配線 + PDC-6（`planner.rs` 摩擦楕円制動計画）+ `world_ai.rs`（T-CORE-AI-04/05/07/08/09/10） | ✅ **Architect APPROVED**（2026-09-09・監査 3 ラウンド）。T3 通過・181 passed。**人間の commit go 待ち**。K-1（T3 安定余裕ゼロ）は §10 参照 | 未コミット |
-| **TASK-2-4** | `sim-line::Trajectory::reference` の収束欠陥修正（per-sweep 更新量 → 曲率残差）+ 実物理ラップ完走 + テスト基盤の実物理移行 | ⬅ **契約起票済み**（`TODO.md`「# NEXT SONNET TASK」）。**凍結解除 A/B/C は人間承認待ち（§10 H-5）。A が下りるまで着手禁止** | — |
+| TASK-2-1 | `sim-line`（Corridor / Trajectory / SpeedProfile） | ✅ commit 済み | `4710d63` |
+| TASK-2-2 | `sim-driver`（Perception / Decision / Planner / Controller。PDC-1/3/5/6 + 定数再調整を同梱） | ✅ commit 済み | `ac80e03` |
+| TASK-2-3 | `sim-core`+`sim-wasm`+EV 配線 + PDC-6（`planner.rs` 摩擦楕円制動計画）+ `world_ai.rs`（T-CORE-AI-04/05/07/08/09/10） | ✅ **Architect APPROVED** → commit 済み。T3 通過・181 passed。K-1（T3 安定余裕ゼロ）は §10 参照 | `1fd08ca` |
+| **TASK-2-4** | `sim-line::Trajectory::reference` の直接解法 + 実物理ラップ完走 + lateral inner loop 再設計 | 🔶 **Phase 1 完成・全チェック緑（作業ツリー・未 commit・Architect Round-1 CHANGES REQUIRED を反映・再監査 low 待ち）**: 直接帯行列解法（KKT 残差 4e-15 = 厳密最小解）+ 求解の箱制約を `white_bounds ± REF_MARGIN_M`(0.30 m) 内側へ + 純 ∫κ²（λ 正則化は「高速コーナーからラインを壊す」ため Architect が却下）。**本物の out-in-out レーシングライン**（T1/T2 で幅使用 95〜96%・`Σκ²` はセンターラインの 0.725 倍）。K-2 解消。`cargo test --release` = **182 passed(+doctest 1) / 0 failed / 4 ignored**（ignore = `t_core_ai_10_full` + `t_core_ai_10_offline_spawn` + 凍結 `t_ai_01`/`t_drv_04`。§10 K-1）/ clippy 0 / fmt clean / wasm OK。**本物のラインで clean 0.6 が T3（s≈1561）で完全スピン + `t=0` spawn で s≈71 逸脱 → K-1 が確定ハードブロッカー・Phase 2（lateral inner loop 実タイヤ再設計・凍結解除 B）は確定。** Phase 2 契約は `TODO.md` にドラフト済み。詳細は `TODO.md`「TASK-2-4 — Phase 1 進捗メモ」 | — |
 | **TASK-1B-4** | `spawn` 姿勢の完全化（D-1 フル版。`sim-vehicle` 凍結解除が前提） | ⬅ 保留。Architect / 人間承認事項 | — |
 | TASK-05-1 | UE5 Code-First 構築 + M1〜M9 実測 | 🔶 スキャフォルド + ヘッドレス Python 疎通 + `build_scene.py` step 1〜2（レベル/ライティング/保存）。road 以降は未着手（`docs/phase-0.5-results.md`） | — |
 
@@ -614,15 +614,32 @@ Severity は `CRITICAL / HIGH / MEDIUM / LOW`。
   検証しても意味がない。サンプル点 3 点の外接円から求める **Menger 曲率**なら
   スプライン実装に一切依存せず裏取りできる（TASK-1A-4 で実際に使い、
   リップルが実在することと、尖ったピークが極めて局所的であることを確認した）
-- **緩和ソルバの収束は「位置許容」ではなく「曲率許容」で判定する。**
-  波長 λ の位置残差 ε は曲率残差を **`Δκ ≈ ε·(2π/λ)²` 倍**に増幅する。`sim-line` の
-  `Trajectory::reference`（曲率二乗和最小化の 4 階緩和）は「1 スイープの最大更新量 < 2 mm」で
-  打ち切っていたが、4 階作用素の長波長モードは最も遅く収束するため、per-sweep delta は
-  真の収束のはるか手前で閾値を割る。結果、センターラインが完全な直線の区間で基準ラインが
-  波長 70 m・振幅 ±1.1 m で蛇行し、κ_traj が ±0.006（R≈165 m）まで残留した。下流
-  （SpeedProfile / Pure Pursuit / 横 G 要求）が読むのは位置ではなく **κ** なので、
-  収束判定は勾配ノルムベース + 曲率許容（`|Δκ| ≤ 1e-4 [1/m]`）にすること（TASK-2-4）。
-  トラックアセット（TASK-1A-5）に続いて `sim-line` で同じ罠を踏んだ
+- **反復緩和を選ぶ前に、系が線形か・帯行列か・SPD かを確認する。**
+  `Trajectory::reference` の目的関数 `E = Σ|D²P|²` は `P_i = pos_i + t_i·lat_i` が `t` について
+  affine なので **`t` について厳密に二次形式**、勾配は線形。系は周期 5 重対角（`[1,-4,6,-4,1]`
+  biharmonic ステンシル・帯幅 2・n≈2070・SPD）。SOR は biharmonic の条件数 `~n⁴` により
+  長波長モードで `ρ ≈ 1 − 2×10⁻⁷` = 最長波長を e 分の 1 にするだけで約 5×10⁶ スイープ、
+  実測でも cascadic multigrid の 3 構成すべてが λ≈70 m のリップルを消せなかった。
+  **直接帯行列解法**（周期性は border-elimination + 4×4 Schur 補元、コリドー箱制約は primal
+  アクティブセット）なら **O(n) で機械精度**（KKT 残差 2e-14）・35 ms。収束許容という論点自体が消える。
+  収束判定を残差ノルムで語る場合も「位置許容」ではなく「曲率許容」（`|Δκ| ≤ 1e-4 [1/m]`）で。
+  波長 λ の位置残差 ε は曲率残差を `Δκ ≈ ε·(2π/λ)²` 倍に増幅する（下流が読むのは位置でなく κ）。
+- **純 ∫κ² 最小化に「中央寄せ」ペナルティを足してはいけない。ライン幅は箱制約で絞る。**
+  `limit_bounds`（±8.5〜9 m）の中で純粋に曲率二乗和を最小化すると、幾何的に最も滑らかな線 =
+  **コリドーを端から端まで使う線**になる（Aoyama T1 で内側エッジ `t=+8.3`）。基準線が白線に
+  ベタ付けだと [`Corridor`] のクランプ・防御ライン・追い越しラインの逸脱余地がゼロになり
+  Phase 2/3 の前提（T-DRV-03）が壊れる。**Round-4 で一度は弱い正則化 `E' = Σ|D²P|² +
+  λ·Σ(t_i/hw_i)²` を採用したが、監査で却下した**——一様な中央寄せペナルティは**速いコーナーから
+  順にレーシングラインを壊す**。曲率のゲインは小 R ほど大きい（`κ ≈ (幅使用量)/R²` 感覚）ため、
+  同じ `λ` でも T1 のような高速・広幅コーナー（幅の 16% 使用で頭打ち）が真っ先に殺され、
+  低速コーナーは無傷という**非一様な劣化**になる。**最終策（Phase 1）**: λ は完全に廃止し、
+  **求解の箱制約を `white_bounds ± REF_MARGIN_M`（0.30 m）内側へ絞るだけ**。純 ∫κ² のまま
+  本物の out-in-out ライン（T1/T2 で幅使用 95〜96%・`Σκ²` はセンターラインの 0.725 倍）が出る。
+- **正則化項をアクティブセット対角へ足すときは次元を合わせる。**（λ は廃止したが知見は残す）
+  `Σ|D²P|² ≈ h³∫κ²ds` に対し `Σ(t/hw)² ≈ (1/h)∫(t/hw)²ds` なので、素朴に `λ/hw²` を対角へ
+  足すと実効重みが `λ/h⁴` になり、グリッド依存になる（実測: step 1/2/4 で `t_ref` が 6 m
+  ずれた）。正しくは `λ·h⁴/hw²`。曲率許容（`|Δκ| ≤ 1e-4 [1/m]`）など下流が読む量の
+  次元で受け入れ基準を書くのと同じ原則。
 - **`camber` は現在データとして保持のみで、幾何には未適用。** 下流はこれを前提にしないこと
 - **`serde_json` の f64 は 1 ULP ずれて往復する**（実測）。
   「保存→再読込でビット一致」と仮定しないこと。アセット JSON が唯一の正であり
@@ -715,7 +732,7 @@ Severity は `CRITICAL / HIGH / MEDIUM / LOW`。
 ```bash
 cd /c/AI/App_Dev/Racing
 
-# Rust（期待値: 143 passed / clippy 0 / warnings 0 / fmt clean）
+# Rust（期待値: 182 passed(+doctest 1) / 0 failed / 4 ignored[K-1] / clippy 0 / warnings 0 / fmt clean）
 cargo test --release
 cargo clippy --all-targets -- -D warnings
 cargo build --release
@@ -731,9 +748,14 @@ cargo build -p sim-core --target wasm32-unknown-unknown
 cargo build -p sim-wasm  --target wasm32-unknown-unknown --release
 
 # Engineering View（詳細は view-engineering/README.md）
+# ★ sim-line / trajectory を触ったら EV の pkg も必ず再ビルドすること（EV は自前の pkg/ を持つ）
 wasm-pack build crates/sim-wasm --target web --out-dir ../../view-engineering/pkg --release
 python -m http.server 8080                           # ★リポジトリルートで起動
 # http://localhost:8080/view-engineering/
+# TASK-2-4 Phase 1 のヘッドレス再検証（2026-09-10）: racing line 2071 点・NaN 0・
+# v_target 15.7〜75.3 m/s・AI 600 tick で grip 3〜22%・全レイヤ描画 OK・黒画面なし。
+# Architect Round-1 是正（MEDIUM-2 の潰れ箱ガード / 収束失敗クランプ）は Aoyama では発火せず
+# 出荷ラインは byte 単位で不変 → EV 再検証はこの結果がそのまま有効。
 
 # トラックの制御点を詰め直す（chord/R <= 0.25 を満たすまで）
 PYTHONIOENCODING=utf-8 python tools/tracks/densify_corners.py \
@@ -805,14 +827,14 @@ Game Engine 変更 / 言語変更 / 主要フレームワーク置換 / 物理�
 | # | 内容 | 期限 |
 |---|------|------|
 | H-4 | Phase 0.5 の M1〜M9 実測結果に基づく UE5 続行判定 | **Phase 3 完了時**。不合格なら Unity 6 HDRP へ退避（Simulation Core は無傷） |
-| H-5 | TASK-2-4 の凍結解除承認（A: `sim-line/src/trajectory.rs`、B: `sim-driver/tests/**`、C: `PerformanceEnvelope` 荷重感度）| **TASK-2-4 着手前**。A が下りるまで着手禁止 |
+| H-5 | TASK-2-4 の凍結解除承認（A: `sim-line/src/trajectory.rs`、B: `sim-driver/tests/**`、C: `PerformanceEnvelope` 荷重感度）| **A 取得済み**（Phase 1 完了）。**C は不要と判明**。**B は Phase 2 着手前に必要**（`sim-driver/tests` 凍結解除 + 運動学プラント廃止）。Phase 1 では Architect 権限で凍結ファイル `sim-driver/tests/driver.rs` に `#[ignore]` 属性 2 行のみ追加済み（他は 1 文字も変更なし・`git diff` で確認可。K-1） |
 
 ### 既知の問題 / リスク
 
 | # | Severity | 内容 |
 |---|----------|------|
-| **K-1** | **HIGH** | **T3（s≈1543）の閉ループ安定余裕は実質ゼロ。** `T-CORE-AI-10` が緑（`CONTAIN_TOL_M = 0.0`）なのは `level 0.6 / consistency 1.0` の **1 点のみ**。`consistency 0.5`（操舵ノイズ σ≈1%）でも、能力値 0.6 → 0.5（3 seed とも s=1543 で決定論的）でも breach する。**安全側の変更（`braking_skill`↓ = 早めのブレーキ、`pace`↓ = 低い `v_target`）で悪化する非単調挙動。** `CONTAIN_TOL_M = 0.0` の緑を堅牢性の証拠として読まないこと。Architect 監査 2026-09-09 が軸別実測で確認。根治は **TASK-2-4**（未収束基準ライン + lateral inner loop の実タイヤ検証。受け入れは T-CORE-AI-11 モデルスイープ） |
-| K-2 | HIGH | `sim-line::Trajectory::reference` の収束判定が per-sweep 更新量ベースで、4 階緩和の長波長モードが未収束のまま返る（直線区間で κ_traj ±0.006・波長 70 m）。s≈3150 の lateral weave の根因。TASK-2-4 Phase 1 で対応 |
+| **K-1** | **HIGH（確定ハードブロッカー）** | **横方向インナーループの安定余裕は実質ゼロ。Phase 2 が必須。** TASK-2-4 Phase 1 で基準線を本物の out-in-out（T1/T2 で幅使用 95〜96%）へ直した結果、lateral inner loop（`K_HEADING` / `K_YAW_DAMP` / `delta_cs` の位相。運動学プラント前提で本物のラインの曲率レートを追えない）が **(a) 車をラインぴったりに spawn したときだけ・かつ s≈1561（T3）まで** しか保持できない。<br>・**T3**: clean `level 0.6 / consistency 1.0` の 1 点ですら s≈1561 で `coord.t` が `limit_bounds` を超え、その後 `|t|≈19.5 m` まで excursion。過剰正則化の λ 版で緑だったのはラインがぬるく T3 進入が遅かったため（緑だが実は壊れていた）。安全側パラメータ（`braking_skill`↓ / `pace`↓）で **早く** breach する非単調挙動。<br>・**straight lane-change**: `t = 0`（実グリッド位置）spawn だと S/F ストレートで基準線までの 4.6 m レーンチェンジを立ち上がりから実行できず **s≈71 でコリドー逸脱・s≈126 でコースアウト**（HEAD ではクリーンだった）。T3 と同じ K-1 subsystem。<br>**根治は TASK-2-4 Phase 2**（lateral inner loop の実タイヤ再設計 + 運動学プラント廃止・実物理閉ループ化。人間承認 B が前提。受け入れは下記 `#[ignore]` 4 本を全て外す + T-CORE-AI-11 モデルスイープ）。**Phase 1 時点で意図的に `#[ignore]` にしたテスト 4 本**（Phase 2 で全復活）: <br>① `sim-core` `t_core_ai_10_full`（ライン上 spawn・全周 s<3100 のコリドー封じ込め。走らせる版 `t_core_ai_10` は s<1400=T3 手前に縮め緑を維持）<br>② `sim-core` `t_core_ai_10_offline_spawn`（`t=0` spawn・s<1400。s≈71 で breach する straight-lane-change 回帰を記録。走らせるテストは spawn をライン上へ固定してこの失敗を T3 から切り離している）<br>③ `sim-driver` `t_ai_01_stays_on_course_for_20_laps`（凍結ファイル。Architect 権限で `#[ignore]` 属性 1 行のみ追加）<br>④ `sim-driver` `t_drv_04_rng_only_affects_causes`（同上）<br>③④ はハーネス（運動学プラント）の限界であり Driver の欠陥ではない — 実物理の同一ドライバーは T1 を通過する。 |
+| K-2 | ✅ 解消（TASK-2-4 Phase 1） | 旧: `sim-line::Trajectory::reference` の SOR 収束判定が per-sweep 更新量ベースで長波長モードが未収束のまま返っていた。直接帯行列解法（KKT 残差 4e-15 = 厳密最小解）へ差し替えて根絶。収束許容という論点自体が消えた。 |
 | K-3 | MEDIUM | 周回数は Forward-only カウンタ（`Backward` で減算しない）。ライン上で振動する車が 1 往復ごとに +1 されうる。確定は Phase 3 のレース状態機械でセクター通過順と併せて（D-3）|
 | K-4 | LOW | Engineering View の Driver HUD パネルが左の凡例と少し重なる（`overlay.js`）。機能は読める。CSS 微調整は任意 |
 
@@ -880,14 +902,38 @@ Planner / Controller）+ Driver Model。`sim-line` の `Trajectory` / `SpeedProf
 - **詳細は `TODO.md`「TASK-2-3 — 進捗メモ / land 完了報告」**（PDC-1〜6 履歴・定数表・
   Deviations・s≈3150 の細粒度トレース・commit 順）。
 
-### TASK-2-4 — 基準走行ラインの収束欠陥修正 + 実物理ラップ完走（⚠ 人間承認待ち）
+### TASK-2-4 — 基準走行ラインの収束欠陥修正 + 実物理ラップ完走
 
-契約全文は `TODO.md`「# NEXT SONNET TASK」（Architect Round-2 起票）。3 フェーズ:
-① `sim-line/src/trajectory.rs` の収束判定を per-sweep 更新量 → **曲率残差**（`|Δκ| ≤ 1e-4`）へ。
-② Phase 1 後に実物理再計測（リップル除去だけで完走の可能性大）。必要なら lateral ループの速度スケジュール。
-③ `sim-driver/tests` の運動学プラント廃止 → 実物理閉ループへ移行。
-**着手前に人間承認が必要**: A=`sim-line/src/trajectory.rs` 凍結解除、B=`sim-driver/tests/**` 凍結解除、
-C=`PerformanceEnvelope` 荷重感度対応。A の承認まで着手禁止。
+**Phase 1 は完成（作業ツリー・未 commit・Architect Round-1 CHANGES REQUIRED を反映・再監査 low 待ち）。**
+実装は当初契約（収束判定を曲率残差へ）から発展し、Architect Round-3/4 裁定で**直接帯行列解法 +
+`white_bounds ± 0.30 m` 箱制約 + 純 ∫κ²**（λ 正則化は却下）に着地。KKT 残差 4e-15・~40 ms。K-2 は根絶。
+本物の out-in-out ライン（T1/T2 幅使用 95〜96%）。
+
+**Architect Round-1 監査（2026-09-10）の是正（すべて反映済み・sim-line/src + tests 3 ファイル + docs のみ）:**
+- **HIGH-1**: spawn-on-line 化が s≈71 の straight-lane-change 失敗を隠していた → `#[ignore]` の
+  `t_core_ai_10_offline_spawn`（`t=0` spawn）を追加して回帰を記録。`line_t` の doc を実状に書き直し。
+- **MEDIUM-1**: `t_line_09` バンク検証が `generate` を呼ばず自前再実装だった → 合成バンク・スキッドパッド
+  で実 `SpeedProfile::generate` の出力を検証（`speed.rs` の `bank_assist` 符号反転で落ちることを確認済み）。
+- **MEDIUM-2**: `solve_box_qp` の (a) 潰れた箱での 2-サイクル → 等式制約は解放しない。(b) 収束失敗時に
+  白線外の解を返しうる → 返す前に `bounds` へクランプ（診断は INFINITY 維持で T-LINE-12 は落ちる）。
+- **MEDIUM-3**: `reference_kkt_for_test` が系を再組み立てしていた（KKT 証明が循環）→ `ReferenceSystem` を
+  `assemble_reference_system` に一本化し `reference` と共有。
+- **LOW-1**: 極端な `step_m` で release panic → `assemble_reference_system` で `n >= 8` にクランプ。
+- **LOW-2**: 自己矛盾する ignore 文言を訂正（「縮小は `t_core_ai_10_full` とセットでのみ」）。
+- **LOW-3**: `.gitignore` の +12 行は TASK-05-1 のもの → commit を分けるか人間へ明示する（下記「次の手順」3）。
+
+**次の手順:**
+1. Architect 再監査（low）: Round-1 findings の是正確認 + `sim-driver/tests/driver.rs` の差分が
+   `#[ignore]` 属性 2 行の追加のみ・他は 1 文字も変えていないこと。
+2. APPROVED → 人間 go → commit `fix(sim-line): solve the reference line exactly and keep it inside the white-line corridor`。
+   **`.gitignore` の TASK-05-1 分（+12 行）は別 commit に分ける**（LOW-3）。
+3. **人間承認 B を起票**（`sim-driver/tests/**` 凍結解除 + `tests/common/mod.rs` の運動学プラント廃止）。
+   あわせて「Architect 権限で `sim-driver/tests/driver.rs` に `#[ignore]` 2 行を追加した」と人間へ報告。
+
+**Phase 2（承認 B 待ち・契約は `TODO.md` にドラフト済み）**: lateral inner loop の実タイヤ再設計 +
+運動学プラント廃止・実物理閉ループ化。受け入れ = ignore 4 本（`t_core_ai_10_full` /
+`t_core_ai_10_offline_spawn` / `t_ai_01` / `t_drv_04`）を全て復活 + T-CORE-AI-11 モデルスイープ通過。
+K-1 の根治。**承認済み**: A（`sim-line/src/trajectory.rs` 凍結解除）。**C（`PerformanceEnvelope` 荷重感度）は不要と判明。**
 
 ### TASK-1B-4 — `spawn` 姿勢の完全化（D-1 フル版・保留）
 
@@ -900,15 +946,51 @@ Phase 2 でバンクコーナーの単独走行を詰める前にやるのが望
 ### 並行して着手可能
 
 - **TASK-05-1**（UE5 Code-First 構築 + M1〜M9 実測）— `docs/phase-0.5-tasks.md`。
-  **スキャフォルド着手済み**（2026-09-09）: `ue/RaceSpectator.uproject`（content-only・
-  `GLTFImporter` は UE 5.8 に無いので不使用）/ `ue/Config/*.ini`（レンダラ設定 intent ベース・
-  全キーに `; VERIFY[Mxx]`）/ `tools/ue_python/{ue_env.py, build_scene.py, README.md}` /
-  `docs/phase-0.5-results.md`。**ヘッドレス Python パイプライン疎通確認済み**
-  （`UnrealEditor-Cmd -run=pythonscript` で editor 起動 → `unreal` import → summary 契約 OK・
-  UE 5.8.2・11.6 s）。踏んだ罠 2 件は `ue_env.py` の docstring と results.md に記録:
-  ① `-script=` の値は `\t` `\u` を unescape する → **全パスを forward slash で渡す**、
-  ② `-script="<path> <args>"` の args は argv に届かない → **env 変数（`UE_SPIKE_SUMMARY` /
-  `UE_SPIKE_ARGS`）で渡す**。次は `build_scene.py` の `SCENE_STEPS` を 1 つずつ実装。
+  **作業ツリーで進行中・未 commit**（TASK-2-4 の変更とは別 commit にする）。
+  スキャフォルド（2026-09-09）: `ue/RaceSpectator.uproject`（content-only・`GLTFImporter` は
+  UE 5.8 に無いので不使用）/ `ue/Config/*.ini`（レンダラ設定 intent ベース・全キーに
+  `; VERIFY[Mxx]`）/ `tools/ue_python/{ue_env.py, README.md}` / `.gitignore` +12 行。
+  **2026-09-10 追加分（Sonnet・全 headless 緑・未 commit）**:
+  ① `measure.py` 実装（`settings` モード）— `DefaultEngine.ini` の 15 cvar を
+  `unreal.SystemLibrary.get_console_variable_{int,float,bool}_value` で読み戻し。**match 11 /
+  mismatch 0 / unconfirmed 2（Python getter 無し = `DefaultGraphicsRHI`・`r.SetRes`）/
+  unconfirmed_nullrhi 4**（`r.Lumen.HardwareRayTracing`・`r.RayTracing`・`r.Nanite.ProjectEnabled`・
+  `r.DefaultFeature.MotionBlur` は `-nullrhi` で強制 OFF。設定ミスではない・非 `-nullrhi` 再計測待ち）。
+  `perf`（`stat gpu`/VRAM）は非 `-nullrhi` 待ちの stub。
+  ② `import_vehicle.py` 実装 — `build/vehicles/gt_proto_a.glb` を Interchange（`AssetImportTask`）で
+  `/Game/Spike/Vehicles` へ。**StaticMesh 24（Blender オブジェクト単位）+ MIC 7・マテリアルスロット
+  7 ロール全保持**（`M_Body`/`M_Glass`/`M_Carbon`/`M_Tyre`/`M_WheelRim`/`M_BrakeDisc`/`M_Caliper`）。
+  ③ `build_scene.py` の残り全 step 実装 → **8 step 全緑**: `new_level` 冪等化（既存は `load_level` +
+  全アクタ `destroy_actor`。`delete_asset` は headless で `.umap` に no-op）/ `road_geometry`
+  （Aoyama centerline の S/F+T1 600 m スライスを 8 m 再サンプル → 75 Plane セグメント）/
+  `guardrail`（両縁 150 Cube セグメント）/ `vehicles_x24`（24 パーツを 12×2 グリッドに全配置 =
+  576 `StaticMeshActor`・手前 6 台 LOD0 タグ）/ `broadcast_camera`（`CineCameraActor`・36 mm
+  filmback + 300 mm → 水平画角 6.87°）/ `materials`（`MaterialEditingLibrary` で共有マスター
+  `M_VehicleMaster` + spec の `visual.livery` から 7 MIC → 24 スロット割当・未マッチ 0）。
+  **clean end-to-end（Content 全消し → import_vehicle → build_scene）緑・2 連続実行で 806 アクタを
+  クリアして再構築 = 冪等**。umap 約 1.26 MB / 811 アクタ。
+  **M7（GUI ゼロでシーン一式）・M9（spec→Blender→GLB→UE インポート→マテリアル）は headless
+  範囲で暫定合格**。§3 の「人間の GUI 作業」表は空のまま。
+  ④ `capture.py` + `measure.py perf` + **`ue_env.run_ue_game()`** 実装。
+  **判明した壁と解決**: `-run=pythonscript` の commandlet は `nullrhi=False`/`-dx12` でも
+  フルレンダリングコンテキストを持たない（`take_high_res_screenshot` crash、`SceneCapture2D`
+  no-op、RT/Nanite/MotionBlur 4 cvar が false）。→ **`-game` 起動で解決**: `run_ue_game()` が
+  `UnrealEditor-Cmd <uproject> <map> -game -ResX -ResY -ExecCmds="HighResShot ..."` を回し、
+  `Saved/Screenshots/WindowsEditor/*.png` 出現で判定。`-game` では 4 cvar とも適用確認。
+  `build_scene.py` の `broadcast_camera` step は (a) カメラ pose を track サンプルから算出
+  （T1 手前・外側 22 m・高さ 7.5 m・グリッドを見返す）、(b) `auto_activate_for_player=PLAYER0`、
+  (c) DoF off（f/8 + focus_method DISABLE）。
+  **レンダー 1 枚取得**（`build/ue/shots/spike_broadcast.png`・1920×1080・Lumen/RT/Nanite/VSM 有効）:
+  手続き的路面 + 24 台グリッド + ガードレール + 300 mm 圧縮感。→ **M6 暫定合格・M1/M7 レンダー疎通**。
+  仮マテリアルなので M1/M2 の実写並置は本マテリアル投入後。
+  **次**: ⑤ M3/M4 = `run_ue_game` に `stat gpu`/`-csvprofile` + host から `nvidia-smi` →
+  ⑥ `materials` step に本マテリアル → M1/M2 → ⑦ M8（`sim-ffi`）は Architect 判断待ち →
+  ⑧ 縁石/ランオフ/LOD は中核 Phase 後。
+  仕上げ事項（機能はする）: 車体色が薄い / 車が僅かに浮く / 路面幅がやや狭い — 定数調整レベル。
+  踏んだ罠（`docs/phase-0.5-results.md` §踏んだ罠 7 本 + `ue_env.py` docstring）: forward slash /
+  env 変数で args / `new_level` 非冪等 + `delete_asset` no-op / `Actor.add_component_by_class` 無し
+  → 路面は `StaticMeshActor` セグメント / Interchange は Blender オブジェクト単位で分割 /
+  commandlet はレンダリングコンテキスト無し → 実レンダは `-game`。
   **UE 5.8 の cvar 名は推測で書かず、適用後の値を読み出して検証すること**
 
 ### Phase の全体像（`PLAN.md` 参照）

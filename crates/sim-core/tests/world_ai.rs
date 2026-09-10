@@ -38,6 +38,20 @@ fn world_with_line() -> World {
     world
 }
 
+/// 弧長 `s` におけるレーシングラインの横位置。**Driver を回すテストは spawn をライン上に置く。**
+///
+/// TASK-2-4 Phase 1 で基準線が幅を使うようになり `t_at(GRID_S) ≈ +4.6 m`（センターラインから
+/// 4.6 m）。**現行の lateral inner loop は S/F ストレート上で 4.6 m のレーンチェンジを
+/// 立ち上がりから実行できず**、`t = 0` spawn だと s≈71 でコリドーを割り s≈126 で
+/// 4 秒走らずコースアウトする（HEAD ではクリーンだった）。これは K-1（横方向インナーループの
+/// 安定余裕ゼロ）の一部で、Phase 1 では承認 B が無く直せない。初期条件をライン上へ固定するのは
+/// **T3 の失敗をこの straight-lane-change の失敗から切り離す**ためで、後者の回帰は
+/// `#[ignore]` の [`t_core_ai_10_offline_spawn`] が記録する（Architect HIGH-1）。運動学プラントの
+/// `Plant::spawn` も `t0 = line.trajectory.t_at(s0)` としている。
+fn line_t(world: &World, s: f64) -> f64 {
+    world.racing_line().unwrap().trajectory().t_at(s)
+}
+
 /// テスト用ドライバー能力値。`level` が pace / braking / cornering を同時に動かす。
 fn driver_model(level: f64) -> DriverModel {
     DriverModel {
@@ -150,14 +164,18 @@ fn t_core_ai_06_racing_line_generated_once() {
 // （根因 = `sim-line::Trajectory::reference` の未収束基準ライン。`s ≈ 3150` の lateral weave）。
 // =============================================================================================
 
-/// PDC-6 で逸脱ゼロ走行が実証されている弧長の上限 [m]。TASK-2-4 で全周へ拡張する。
-const S_VALIDATED_M: f64 = 3100.0;
-/// コリドー封じ込めの許容 [m]。Architect 契約どおり 0 m。
+/// 現在コース保持が緑を維持できる弧長の上限 [m]。
 ///
-/// **注意（Architect 監査 2026-09-09・HIGH）**: この 0 m 緑は堅牢性の証拠ではない。
-/// `level 0.6 / consistency 1.0` という **1 点**でしか成立しない（下の
-/// `clean_reference_driver` の実測表を参照）。TASK-2-4 の T-CORE-AI-11（モデルスイープ）で
-/// `S_VALIDATED_M` を全周へ広げつつ、この 0 を全モデルで維持できるようにする。
+/// **TASK-2-4 Phase 1（Architect 監査）で `3100 → 1400`（T3 手前）へ縮小**。本物の out-in-out
+/// レーシングライン（Phase 1）では T3 進入速度が上がり、lateral inner loop（K-1）が保持できず
+/// clean 0.6 でも s≈1561 で `coord.t` が `limit_bounds` を 7 cm 超える。`s < 1400` は T1 の
+/// **95% 幅ライン**と T2 を含むので、Phase 2 の回帰網として実際に機能する。T3 以降の全周版は
+/// `#[ignore]` の `t_core_ai_10_full` に温存（`S_VALIDATED_FULL_M`）。
+/// **縮小と ignore の両方をやることで回帰情報は失われない**（Architect Round-4 訂正裁定）。
+const S_VALIDATED_M: f64 = 1400.0;
+/// 全周版（K-1 解消後・Phase 2 の受け入れ）の弧長上限 [m]。
+const S_VALIDATED_FULL_M: f64 = 3100.0;
+/// コリドー封じ込めの許容 [m]。Architect 契約どおり 0 m。
 const CONTAIN_TOL_M: f64 = 0.0;
 
 /// 静止発進の過渡を除くためにスキップする先頭 Simulation Tick 数（約 1.5 s）。
@@ -187,20 +205,27 @@ fn clean_reference_driver() -> DriverModel {
     m
 }
 
-/// solo・クリーン基準ドライバー・seed 固定で `s` が `S_VALIDATED_M` に達するまで
-/// 走らせ、各 tick で `f(&World)` を呼ぶ。到達前に打ち切られたら panic（PDC-6 の回帰検出）。
-fn run_solo_until_validated(seed: u64, mut f: impl FnMut(&World)) {
+/// solo・クリーン基準ドライバー（ライン上に spawn）・seed 固定で `s` が `until_s` に達するまで
+/// 走らせ、各 tick で `f(&World)` を呼ぶ。到達前に打ち切られたら panic（回帰検出）。
+fn run_solo_until(seed: u64, until_s: f64, f: impl FnMut(&World)) {
+    run_solo_from_until(seed, None, until_s, f)
+}
+
+/// [`run_solo_until`] の spawn 横位置を上書きできる版。`spawn_t = None` はライン上
+/// （`t_at(GRID_S)`）、`Some(t)` は明示。`Some(0.0)` は実グリッド位置＝センターライン
+/// （[`t_core_ai_10_offline_spawn`] が K-1 の straight-lane-change 失敗を記録するのに使う）。
+fn run_solo_from_until(seed: u64, spawn_t: Option<f64>, until_s: f64, mut f: impl FnMut(&World)) {
     let mut world = world_with_line();
     let rng = sim_core::rng::driver_rng(&Rng::from_seed(seed), VehicleId(0));
+    let gt = spawn_t.unwrap_or_else(|| line_t(&world, GRID_S));
     world
-        .spawn_with_driver(params(), GRID_S, 0.0, clean_reference_driver(), rng)
+        .spawn_with_driver(params(), GRID_S, gt, clean_reference_driver(), rng)
         .unwrap();
 
-    // 4139 m 中 3100 m を ~50 m/s 平均で走ると ~62 s = ~3700 Simulation Tick。余裕を見て 6000。
     let max_ticks = 6000u64;
     for _ in 0..max_ticks {
         world.step_sim_tick();
-        if world.vehicles()[0].coord.s >= S_VALIDATED_M {
+        if world.vehicles()[0].coord.s >= until_s {
             return;
         }
         if world.sim_tick() > WARMUP_TICKS {
@@ -208,8 +233,8 @@ fn run_solo_until_validated(seed: u64, mut f: impl FnMut(&World)) {
         }
     }
     panic!(
-        "clean reference driver did not reach s = {S_VALIDATED_M} m within {max_ticks} sim ticks \
-         (final s = {:.1}, t = {:+.2}). PDC-6 regression?",
+        "clean reference driver did not reach s = {until_s} m within {max_ticks} sim ticks \
+         (final s = {:.1}, t = {:+.2}). regression?",
         world.vehicles()[0].coord.s,
         world.vehicles()[0].coord.t,
     );
@@ -220,7 +245,7 @@ fn run_solo_until_validated(seed: u64, mut f: impl FnMut(&World)) {
 #[test]
 fn t_core_ai_04_coord_is_ground_truth() {
     let mut worst = 0.0_f64;
-    run_solo_until_validated(1, |w| {
+    run_solo_until(1, S_VALIDATED_M, |w| {
         let e = &w.vehicles()[0];
         let pos = e.vehicle.state().position;
         // 独立に再投影（前 tick の s をヒントに）。World が保持する coord と一致するはず。
@@ -241,7 +266,7 @@ fn t_core_ai_04_coord_is_ground_truth() {
 /// Driver が出した `driver.last_input()` の 6 成分がビット一致（zero-order hold の証拠）。
 #[test]
 fn t_core_ai_05_control_input_is_the_only_channel() {
-    run_solo_until_validated(2, |w| {
+    run_solo_until(2, S_VALIDATED_M, |w| {
         let applied = w.vehicles()[0].vehicle.state().last_input;
         let produced = w.driver(VehicleId(0)).unwrap().last_input();
         assert_eq!(applied.steer.to_bits(), produced.steer.to_bits(), "steer");
@@ -272,7 +297,7 @@ fn t_core_ai_07_gearing_sanity() {
     let mut ticks = 0u64;
     let mut limiter_banging = 0u64;
     let mut bogging = 0u64;
-    run_solo_until_validated(1, |w| {
+    run_solo_until(1, S_VALIDATED_M, |w| {
         ticks += 1;
         let st = w.vehicles()[0].vehicle.state();
         let inp = w.driver(VehicleId(0)).unwrap().last_input();
@@ -306,7 +331,8 @@ fn t_core_ai_08_determinism_and_spawn_order_independence() {
         let rng = sim_core::rng::driver_rng(&Rng::from_seed(seed), VehicleId(0));
         // balanced() は error_rate 0.5 + consistency 0.5 = RNG 駆動のミス/ノイズ経路を
         // 通す。決定性が崩れるならここに出る。T3 のスピン（~t=35 s）より十分手前で打ち切る。
-        w.spawn_with_driver(params(), GRID_S, 0.0, DriverModel::balanced(), rng)
+        let gt = line_t(&w, GRID_S);
+        w.spawn_with_driver(params(), GRID_S, gt, DriverModel::balanced(), rng)
             .unwrap();
         for _ in 0..1200 {
             w.step_sim_tick();
@@ -352,10 +378,11 @@ fn t_core_ai_09_step_sim_tick_performance() {
     for i in 0..N_CARS {
         let id = VehicleId(i);
         let rng = sim_core::rng::driver_rng(&race, id);
-        // グリッドを S/F ストレートに縦列で置く（Phase 2 は車車間衝突なし）。
+        // グリッドを S/F ストレートに縦列で置く（Phase 2 は車車間衝突なし）。ライン上に置く。
         let s = world.track().wrap_s(GRID_S + i as f64 * 6.0);
+        let st = line_t(&world, s);
         world
-            .spawn_with_driver(params(), s, 0.0, DriverModel::balanced(), rng)
+            .spawn_with_driver(params(), s, st, DriverModel::balanced(), rng)
             .unwrap();
     }
 
@@ -381,17 +408,14 @@ fn t_core_ai_09_step_sim_tick_performance() {
     );
 }
 
-/// T-CORE-AI-10 — コリドー封じ込め（`s < S_VALIDATED_M` に限定）。
-/// TASK-2-4 で `S_VALIDATED_M` を全周へ拡張し、`CONTAIN_TOL_M` を 0 へ締める。
-#[test]
-fn t_core_ai_10_corridor_containment_validated_section() {
+/// クリーン基準ドライバーが `until_s` まで、全 tick で `coord.t` が `limit_bounds` の
+/// 内側（許容 `CONTAIN_TOL_M`）に居ることを検証する。`spawn_t = None` はライン上 spawn。
+fn corridor_containment_check(spawn_t: Option<f64>, until_s: f64) {
     let line_corridor = world_with_line();
     let corridor = line_corridor.racing_line().unwrap().corridor();
-    // corridor は World が保持するものと同一パラメータ（RacingLine::generate 由来）。
-
     let mut worst_outside = 0.0_f64;
     let mut worst_s = 0.0_f64;
-    run_solo_until_validated(1, |w| {
+    run_solo_from_until(1, spawn_t, until_s, |w| {
         let e = &w.vehicles()[0];
         let (t_right, t_left) = corridor.limit_bounds(e.coord.s);
         let outside = (t_right - e.coord.t).max(e.coord.t - t_left).max(0.0);
@@ -410,7 +434,48 @@ fn t_core_ai_10_corridor_containment_validated_section() {
         );
     });
     eprintln!(
-        "T-CORE-AI-10: worst excursion {worst_outside:.3} m at s={worst_s:.1} \
-         (tol {CONTAIN_TOL_M} m, validated to s={S_VALIDATED_M} m)"
+        "corridor containment: worst excursion {worst_outside:.3} m at s={worst_s:.1} \
+         (tol {CONTAIN_TOL_M} m, validated to s={until_s} m)"
     );
+}
+
+/// T-CORE-AI-10 — コリドー封じ込め（ライン上 spawn・`s < S_VALIDATED_M` = 1400・T3 手前）。
+/// T1 の 95% 幅ラインと T2 を含む Phase 2 の回帰網。T3 以降は K-1 のため
+/// `t_core_ai_10_full`（`#[ignore]`）、`t = 0` spawn は `t_core_ai_10_offline_spawn`（`#[ignore]`）へ。
+#[test]
+fn t_core_ai_10_corridor_containment_validated_section() {
+    corridor_containment_check(None, S_VALIDATED_M);
+}
+
+/// T-CORE-AI-10-FULL — 全周版（ライン上 spawn・`s < 3100`）。
+/// **TASK-2-4 Phase 2 の受け入れ = この ignore を外す。**
+#[test]
+#[ignore = "K-1（TASK-2-4 Phase 1）: 本物の out-in-out レーシングライン（Phase 1 で幅使用を回復）\
+            では T3 進入速度が上がり、lateral inner loop（K_HEADING / K_YAW_DAMP / delta_cs の位相）\
+            が保持できず s≈1561 で coord.t が limit_bounds を 7 cm 超え、その後 |t|≈19.5 m まで \
+            excursion する。過剰正則化された λ 版では緑だったが、それはラインがぬるく T3 進入が \
+            遅かったため（緑だが実は壊れている状態）。**S_VALIDATED_M の縮小は t_core_ai_10_full \
+            とセットでのみ許される。単独での縮小は禁止**（回帰情報が消える）。TASK-2-4 Phase 2 \
+            （lateral inner loop の実タイヤ再設計）で解消し、この ignore を外して全周へ。"]
+fn t_core_ai_10_full() {
+    corridor_containment_check(None, S_VALIDATED_FULL_M);
+}
+
+/// T-CORE-AI-10-OFFLINE — 実グリッド位置（`t = 0` = センターライン）から spawn したときの
+/// コリドー封じ込め。**TASK-2-4 Phase 2 の受け入れ = この ignore を外す。**
+///
+/// `line_t` のコメント参照: TASK-2-4 Phase 1 で `t_at(GRID_S) ≈ +4.6 m` になり、現行の
+/// lateral inner loop は S/F ストレート上でこの 4.6 m レーンチェンジを立ち上がりから
+/// 実行できず s≈71 でコリドーを割る（HEAD ではクリーンだった）。Driver を回すテストの
+/// spawn をライン上へ固定してこの失敗を T3 の失敗から切り離しているが、その回帰情報を
+/// ここで保持する。3 本目の T3 由来 ignore とは別の、4 本目の正直な ignore。
+#[test]
+#[ignore = "K-1（TASK-2-4 Phase 1）: 現行 lateral inner loop は S/F ストレート上で基準線までの \
+            4.6 m レーンチェンジを立ち上がりから実行できず、t=0 spawn だと s≈71 でコリドーを割り \
+            s≈126 でコースアウトする（HEAD ではクリーンだった）。単独走行テストの spawn を \
+            ライン上へ固定してこの失敗を T3 の失敗から切り離しているため、その回帰を本テストで \
+            記録する。TASK-2-4 Phase 2（lateral inner loop の実タイヤ再設計・運動学プラント廃止・\
+            人間承認 B）で解消し、この ignore を外す。"]
+fn t_core_ai_10_offline_spawn() {
+    corridor_containment_check(Some(0.0), S_VALIDATED_M);
 }
