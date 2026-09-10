@@ -16,8 +16,7 @@ STATUS: all steps implemented — new_level (idempotent), lighting,
 road_geometry (plane-segment strip from the sim-track centreline slice),
 guardrail (cube-segment barrier down both edges), vehicles_x24 (24-car
 grid built from the Interchange-imported GLB parts), broadcast_camera
-(300 mm CineCamera), player_start (pawn spawn at the broadcast rig for
--game render passes), materials (shared master material + livery-param
+(300 mm CineCamera), materials (shared master material + livery-param
 instances from the vehicle spec), save_level. vehicles_x24 needs
 tools/ue_python/import_vehicle.py to have run first.
 
@@ -649,42 +648,6 @@ def _step_materials(unreal) -> dict:
     }
 
 
-def _step_player_start(unreal) -> dict:
-    """One PlayerStart at the broadcast rig.
-
-    A ``-game`` launch (the M3/M4 render pass) spawns the GlobalDefaultGameMode's
-    pawn at a PlayerStart; with none in the level the pawn goes to world origin,
-    which for this Aoyama slice is hundreds of metres off the scene, so the
-    render loop runs but frames nothing recognisable. Placing it at the same
-    pose as the broadcast camera keeps the fallback view sane even if the
-    CineCameraActor's auto-activation ever fails. Pose derivation mirrors
-    ``_step_broadcast_camera`` (steps are independent by design).
-    """
-    samples = _load_spike_centerline()
-    look_at_arc = 60.0
-    cam_arc = look_at_arc + 130.0
-    tx, tz, _, (nlx, nlz) = _slice_pose_at(samples, cam_arc)
-    start_x = tx - nlx * 22.0
-    start_z = tz - nlz * 22.0
-    start_loc = _sim_to_ue(start_x, start_z, 7.5)
-
-    ax, az, _, _ = _slice_pose_at(samples, look_at_arc)
-    aim = _sim_to_ue(ax, az, 0.8)
-    start_rot = unreal.MathLibrary.find_look_at_rotation(start_loc, aim)
-
-    actor = _spawn(unreal, unreal.PlayerStart)
-    actor.set_actor_location_and_rotation(start_loc, start_rot, False, False)
-    actor.set_actor_label("SpikePlayerStart")
-
-    return {
-        "actor": "PlayerStart",
-        "location_cm": [round(start_loc.x, 1), round(start_loc.y, 1),
-                        round(start_loc.z, 1)],
-        "rotation_pyr_deg": [round(start_rot.pitch, 2), round(start_rot.yaw, 2),
-                             round(start_rot.roll, 2)],
-    }
-
-
 def _step_save_level(unreal) -> dict:
     les = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
     saved = les.save_current_level()
@@ -722,7 +685,6 @@ def main() -> int:
         log.run("guardrail", lambda: _step_guardrail(unreal))
         log.run("vehicles_x24", lambda: _step_vehicles_x24(unreal))
         log.run("broadcast_camera", lambda: _step_broadcast_camera(unreal))
-        log.run("player_start", lambda: _step_player_start(unreal))
         log.run("materials", lambda: _step_materials(unreal))
         # Save last so every actor spawned above is persisted into the .umap.
         log.run("save_level", lambda: _step_save_level(unreal))

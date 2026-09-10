@@ -15,7 +15,7 @@ use crate::perception::PerceivedSelf;
 use crate::planner::Plan;
 use crate::SIM_DT;
 use sim_line::Trajectory;
-use sim_math::{approach_exponential, clamp, lerp, move_towards, saturate, smoothstep, Rng};
+use sim_math::{approach_exponential, clamp, lerp, move_towards, saturate, Rng};
 use sim_track::Track;
 use sim_vehicle::{ControlInput, VehicleParams, AIR_DENSITY, GRAVITY};
 
@@ -23,19 +23,6 @@ use sim_vehicle::{ControlInput, VehicleParams, AIR_DENSITY, GRAVITY};
 const BETA_LIMIT_RAD: f64 = 0.12;
 /// 逆操舵ゲイン（road wheel angle [rad] / スリップ角 [rad]）。
 const K_COUNTERSTEER: f64 = 0.9;
-/// 逆操舵デッドゾーンの smoothstep 遷移半幅 [rad]（TASK-2-4 Phase 2 step (1)）。
-///
-/// `beta_lim ± BETA_BLEND_RAD` で `0→1` に二次立ち上がり。閾値近傍のハードな整流
-/// （`|beta| − beta_lim` のクリップ）がリミットサイクル周波数でエネルギーを注入して
-/// いたので C1 の膝に置き換える。閾値より十分上では現行と漸近的に同一。
-const BETA_BLEND_RAD: f64 = 0.04;
-/// 逆操舵の位相進み時定数 [s]（TASK-2-4 Phase 2 step (1)）。
-///
-/// `beta` に `COUNTERSTEER_LEAD_TAU · r_err`（ヨーレート誤差 = 後軸ブレイクアウェイの
-/// 最速指標）を足して位相を進める。1.4 Hz（`ω ≈ 8.8 rad/s`）で `atan(τω) ≈ 46°` のリード。
-/// `r_err` は buildup 中 `beta` と同符号（T3 診断で実測確認）なので加算で早期立ち上げになる。
-/// 微分（`beta_dot` の 1 階差分）を使わないのは決定性 / ノイズ増幅回避 / 新規 state 不要のため。
-const COUNTERSTEER_LEAD_TAU: f64 = 0.12;
 /// ヘディング誤差フィードバックのゲイン（road wheel angle [rad] / [rad]）。
 ///
 /// `ARCHITECTURE.md` §6 Perception 表の「安定化（Controller の逆操舵・**ヨー減衰**）」。
@@ -236,45 +223,21 @@ impl Controller {
             self.max_steer_angle,
         );
 
-        // 目標ヨーレート（レーシングライン基準）。**安定化経路の s** で曲率を評価する。
-        //
-        // TASK-2-4 Phase 2 step (0): `kappa_traj` は予見経路の `perceived.s`
-        // （`reaction_time` 遅延・既定 0.20 s）由来。これはフィードフォワード
-        // （`delta_ff`）には適切だが、`delta_hd` / `delta_cs` は安定化ループの一部なので
-        // 予見遅延を持ち込むのは誤り（desired yaw rate は decision ではなく stabilisation
-        // 量）。Aoyama T3 では両者の差は小さい（基準線が滑らかな R≈90 弧）が、進入曲率
-        // ランプが急なヘアピン等では効く。
-        let kappa_stab = trajectory.curvature_at(stabilise.s);
-        let desired_yaw_rate = stabilise.speed * kappa_stab;
-        // ヨーレート誤差 = 後軸ブレイクアウェイの最速指標。buildup 中は `beta` を約 1/4
-        // 周期リードする。`delta_hd` の減衰項と `delta_cs` の位相進み項が共有する。
-        let r_err = stabilise.yaw_rate - desired_yaw_rate;
-
         // 3) 逆操舵（TASK-1B-1 C-1 対策・必須）。安定化経路の beta を使う。
-        //
-        // TASK-2-4 Phase 2 step (1): (i) 位相進み — `beta` に `LEAD_TAU · r_err` を足して
-        // 位相を進める（`r_err` は buildup 中 `beta` と同符号 = T3 診断で実測確認）。
-        // (ii) デッドゾーンの膝を smoothstep で C1 化 — 従来の `(|beta| − beta_lim)` の
-        // ハードなクリップは閾値跨ぎのたびに bang-bang になり ~1.4 Hz でエネルギーを
-        // 注入していた（リミットサイクルのポンプ）。閾値より十分上では従来と漸近同一。
         let beta = stabilise.sideslip;
         let beta_lim = BETA_LIMIT_RAD * lerp(0.8, 1.2, self.cornering_skill);
-        let beta_lead = beta + COUNTERSTEER_LEAD_TAU * r_err;
-        let cs_gate = smoothstep(
-            beta_lim - BETA_BLEND_RAD,
-            beta_lim + BETA_BLEND_RAD,
-            beta_lead.abs(),
-        );
-        let delta_cs = -K_COUNTERSTEER * cs_gate * (beta_lead - beta_lead.signum() * beta_lim);
-        // スライド中はスロットル上限を絞る（無いと限界付近で素直にスピンする）。生の
-        // スライド量 `beta` で計る（step (1) は `delta_cs` のみが対象。throttle は不変）。
         let excess = (beta.abs() - beta_lim).max(0.0);
+        let delta_cs = -K_COUNTERSTEER * beta.signum() * excess;
+        // スライド中はスロットル上限を絞る（無いと限界付近で素直にスピンする）。
+        // 滑らかに絞る（PDC-3 随伴。深さは SLIDE_CUT_DEPTH、過渡は後段の move_towards）。
         let throttle_slide_cap = 1.0 - SLIDE_CUT_DEPTH * saturate(excess / beta_lim);
 
         // 3b) ヘディング / ヨーレート安定化（安定化経路 = 短遅延）。
         //     heading_error + = 車体が目標より左 → 右へ戻す（road angle 負）。
-        //     必要ヨーレート ≈ speed·κ_stab。それを超える分（`r_err`）だけ減衰する。
-        let delta_hd = -K_HEADING * stabilise.heading_error - K_YAW_DAMP * r_err;
+        //     必要ヨーレート ≈ speed·κ_traj。それを超える分だけ減衰する。
+        let desired_yaw_rate = stabilise.speed * kappa_traj;
+        let delta_hd = -K_HEADING * stabilise.heading_error
+            - K_YAW_DAMP * (stabilise.yaw_rate - desired_yaw_rate);
 
         // 4) 合成 → 正規化。road-wheel angle は + が左、steer 出力は + が右。
         let delta_target = delta_pp + delta_ff + delta_cs + delta_hd + state.mistake_steer_bias;

@@ -20,13 +20,6 @@ results.md §2 — a headless commandlet has no full rendering context
 was produced that way. The FIRST ``-game`` boot compiles the whole shader
 set and can take many minutes; subsequent boots are fast.
 
-``-game`` also needs a GameMode so a PlayerController + pawn are spawned and
-the render loop keeps ticking — otherwise the process loads the map and
-self-terminates before CsvProfiler writes a frame (this was the first-run
-failure, docs/phase-0.5-results.md §profile_gpu.py). That is now supplied by
-``GlobalDefaultGameMode`` in ue/Config/DefaultEngine.ini plus a PlayerStart
-placed by build_scene.py, so re-run build_scene.py after pulling those in.
-
 Success is judged structurally (this mirrors ue_env.run_ue_game): a fresh
 CSV appears under the profiling dir AND at least a handful of nvidia-smi
 samples were taken. Everything measured — plus the raw column medians, so
@@ -44,7 +37,6 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import os
 import statistics
 import subprocess
 import sys
@@ -54,24 +46,13 @@ from pathlib import Path
 
 from ue_env import UPROJECT, find_ue_cmd  # host-side, no ``unreal`` import
 
-csv.field_size_limit(10_000_000)  # CsvProfiler headers/rows are huge
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 LEVEL_PACKAGE = "/Game/Spike/Maps/L_Spike"
 OUT_SUMMARY = REPO_ROOT / "build" / "ue" / "profile_gpu.summary.json"
 
-# UE writes CsvProfiler captures under <project>/Saved/Profiling/CSV in a
-# normal build — but a -game launch of this content-only project writes to
-# the per-user engine Saved dir instead (measured 2026-09-10:
-# %LOCALAPPDATA%\UnrealEngine\5.8\Saved\Profiling\CSV). Scan both. The
-# folder name has also moved between releases, hence the list.
-_LOCALAPPDATA = Path(os.environ.get("LOCALAPPDATA", REPO_ROOT))
-CSV_SCAN_ROOTS = (
-    UPROJECT.parent,
-    _LOCALAPPDATA / "UnrealEngine" / "5.8",
-    _LOCALAPPDATA / "UnrealEngine" / "Common",
-)
-CSV_SUBDIRS = (
+# UE writes CsvProfiler captures here (5.8). Kept as a list because the
+# exact folder has moved between releases; we scan all of them.
+CSV_DIRS = (
     "Saved/Profiling/CSV",
     "Saved/CsvProfiler",
     "Saved/Profiling/FpsChart",
@@ -110,15 +91,14 @@ def _nvidia_smi_sample() -> dict | None:
 
 def _csv_snapshot() -> dict[Path, float]:
     snap: dict[Path, float] = {}
-    for root in CSV_SCAN_ROOTS:
-        for rel in CSV_SUBDIRS:
-            d = root / rel
-            if d.exists():
-                for p in d.rglob("*.csv"):
-                    try:
-                        snap[p] = p.stat().st_mtime
-                    except OSError:
-                        pass
+    for rel in CSV_DIRS:
+        d = UPROJECT.parent / rel
+        if d.exists():
+            for p in d.rglob("*.csv"):
+                try:
+                    snap[p] = p.stat().st_mtime
+                except OSError:
+                    pass
     return snap
 
 
@@ -175,45 +155,8 @@ def _parse_csv_profile(path: Path) -> dict:
         if len(vals) >= max(4, len(data) // 2):  # mostly-numeric column
             numeric_medians[h] = round(statistics.median(vals), 4)
 
-    # The first ~10 s of a -game boot are shader compile + level stream, not
-    # steady state. Report the tail 50% separately for the M3 verdict, and
-    # spell out the columns that actually matter so the results doc doesn't
-    # have to dig through 300 of them.
-    tail = data[len(data) // 2:] or data
-
-    def tail_stats(name: str) -> dict:
-        if name not in header:
-            return {"n": 0, "absent": True}
-        i = header.index(name)
-        vals = []
-        for r in tail:
-            if i < len(r):
-                try:
-                    vals.append(float(r[i]))
-                except ValueError:
-                    pass
-        return stats(vals)
-
-    m3_cols = {
-        name: tail_stats(name)
-        for name in ("GPUTime", "FrameTime", "RenderThreadTime",
-                     "GameThreadTime", "RHIThreadTime")
-    }
-    gpu_ms = m3_cols.get("GPUTime", {}).get("median")
-    m3 = {
-        "steady_frames": len(tail),
-        "columns_tail_median_ms": m3_cols,
-        "gpu_time_median_ms": gpu_ms,
-        "budget_ms": 14.0,
-        "verdict": (
-            "pass" if isinstance(gpu_ms, (int, float)) and gpu_ms <= 14.0
-            else ("FAIL" if isinstance(gpu_ms, (int, float)) else "unknown")
-        ),
-    }
-
     return {
         "file": str(path),
-        "m3": m3,
         "frames": len(data),
         "columns": header,
         "timing_columns": timing_cols,
@@ -223,10 +166,8 @@ def _parse_csv_profile(path: Path) -> dict:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--frames", type=int, default=3000,
-                    help="CsvProfiler frames to capture (default 3000; the "
-                         "first ~600 are the -game boot, the parser reports "
-                         "the tail 50% for the M3 verdict)")
+    ap.add_argument("--frames", type=int, default=900,
+                    help="CsvProfiler frames to capture (default 900)")
     ap.add_argument("--settle-s", type=float, default=900.0,
                     help="hard wall-clock cap for the whole run (first "
                          "-game boot compiles all shaders)")
@@ -255,13 +196,6 @@ def main() -> int:
     baseline = _nvidia_smi_sample()
     csv_before = _csv_snapshot()
 
-    # A dedicated absolute log per run: the default -game log was not landing
-    # under ue/Saved/Logs (docs/phase-0.5-results.md §profile_gpu.py, diag 4),
-    # which makes every failure opaque. -abslog forces one we control.
-    run_log = OUT_SUMMARY.parent / "profile_gpu.ue.log"
-    if run_log.exists():
-        run_log.unlink()
-
     cmd = [
         str(ue_cmd),
         UPROJECT.as_posix(),
@@ -270,7 +204,6 @@ def main() -> int:
         "-ResX=1920", "-ResY=1080", "-windowed",
         "-unattended", "-nosplash", "-nopause",
         "-stdout", "-FullStdOutLogOutput",
-        f"-abslog={run_log.as_posix()}",
         "-csvGpuStats",
         f"-csvCaptureFrames={args.frames}",
         "-ExecCmds=t.MaxFPS 0",
@@ -313,16 +246,6 @@ def main() -> int:
                 proc.wait(timeout=45)
             except subprocess.TimeoutExpired:
                 proc.kill()
-        # UnrealEditor-Cmd in -game can outlive a terminate() of the launcher
-        # (measured 2026-09-10: the process kept running past the deadline and
-        # needed a manual kill). Sweep any editor process by image name; there
-        # should be none of ours left by now, and this script never runs
-        # concurrently with another intentional UE launch.
-        if sys.platform == "win32":
-            subprocess.run(
-                ["taskkill", "/F", "/T", "/IM", "UnrealEditor-Cmd.exe"],
-                capture_output=True,
-            )
 
     # If -csvCaptureFrames didn't drop a file, re-scan once more (the
     # writer can lag process exit).
@@ -355,29 +278,17 @@ def main() -> int:
     if csv_found is not None:
         gpu = _parse_csv_profile(csv_found)
     else:
-        scanned = ", ".join(
-            str(root / sub) for root in CSV_SCAN_ROOTS for sub in CSV_SUBDIRS
-        )
         gpu = {
-            "error": f"no fresh CsvProfiler .csv appeared under: {scanned} "
-                     "— check run_log_tail for 'LogCsvProfiler: ... Writing "
-                     "CSV to file' and add that dir to CSV_SCAN_ROOTS",
+            "error": "no CsvProfiler .csv appeared under "
+                     + " / ".join(CSV_DIRS)
+                     + " — inspect the newest ue/Saved/Logs/*.log for "
+                     "'LogCsvProfiler' lines and adjust the capture flags",
         }
 
     logs = sorted(
         (UPROJECT.parent / "Saved" / "Logs").glob("*.log"),
         key=lambda p: p.stat().st_mtime,
     )
-
-    # Tail of the run log helps diagnose a -game that renders nothing.
-    log_tail: list[str] = []
-    if run_log.exists():
-        try:
-            log_tail = run_log.read_text(
-                encoding="utf-8", errors="replace"
-            ).splitlines()[-40:]
-        except OSError:
-            pass
 
     ok = csv_found is not None and len(mem) >= 5
     payload = {
@@ -393,8 +304,6 @@ def main() -> int:
         "exited_before_terminate": exited_early,
         "wall_clock_s": round(time.time() - (deadline - args.settle_s), 1),
         "latest_log": str(logs[-1]) if logs else None,
-        "run_log": str(run_log) if run_log.exists() else None,
-        "run_log_tail": log_tail,
         "vram_m4": vram,
         "gpu_frame_time_m3": gpu,
         "nvidia_smi_note": (
