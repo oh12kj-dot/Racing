@@ -127,17 +127,28 @@ CSV の列名は build フラグ依存なので、`frametime`/`gpu`/`renderthrea
 M6 の 1 枚が撮れたのは `-ExecCmds="HighResShot ..."` が **1 フレームだけ**強制描画したから。
 
 **次の診断（1 つずつ）**:
-1. `build_scene.py` に `broadcast_camera` step を拡張して **spectator 相当の Pawn + `AGameModeBase` を
-   spawn/設定**するか、`DefaultEngine.ini` の `[/Script/EngineSettings.GameMapsSettings]` に
-   `GlobalDefaultGameMode` を指定。possess が成立すればレンダーループが回る。
-2. または `-ExecCmds` を `"CsvProfiler.Start; <N フレーム待つ手段>; CsvProfiler.Stop; quit"` の列にする。
-   `-game` の ExecCmds は起動時 1 回なので「N フレーム待つ」は `-ExecCmds` では書けない →
-   `-CsvCaptureFrames=N` に任せて、CSV 出力後に自然終了 or host 側 terminate（現状の実装）。
-   1 の possess 問題が解ければ現状の CsvProfiler フラグで CSV が出るはず。
-3. それでも駄目なら MovieRenderQueue（`MoviePipelineQueueEngineSubsystem`）経由へ切替（`capture.py`
-   の TODO にも記載済み）。MRQ は自前でフレームを pump するので possess 不要。
-4. `-game` の実ログが `ue/Saved/Logs/` に出ない件も追う（`-log=<path>` 明示 or 別プロセスの
-   ロックで書けていない可能性）。ログが無いと原因特定が遅い。
+1. ✅ **解決（2026-09-10 Sonnet）**: `DefaultEngine.ini` `[/Script/EngineSettings.GameMapsSettings]` に
+   `GlobalDefaultGameMode=/Script/Engine.GameModeBase` を追加 + `build_scene.py` に `player_start` step
+   （PlayerStart を放送リグ位置へ）。`-game` が pawn を possess してレンダーループを維持するようになり、
+   `LogLoad: Game class is 'GameModeBase'` → CsvProfiler が CSV を出力。
+2. ✅ **CSV 出力先が `ue/Saved` ではなく `%LOCALAPPDATA%\UnrealEngine\5.8\Saved\Profiling\CSV\`**。
+   `profile_gpu.py` の `CSV_SCAN_ROOTS` に追加。`-abslog` で run 毎の専用ログ（診断 4 も解決）。
+   `--frames 3000` + tail 50% 解析で boot フレームを除外。orphan `UnrealEditor-Cmd.exe` を
+   `taskkill /F /T /IM` で掃く（terminate() を無視して deadline 後も生き残る事象を実測）。
+3. MovieRenderQueue へ切替 — 現状は不要（1/2 で `-game` レンダーループが安定）。
+4. ✅ `-abslog=<path>` 明示で解決（2 に同梱）。
+
+**⚠ 未解決 — feature level が SM5（2026-09-10 実測）**: `-game` は `r.RayTracing:True` /
+`r.Nanite.ProjectEnabled:True` / `r.Lumen.HardwareRayTracing:True` を **cvar としては適用**するが、
+実際のレンダーは `rhifeaturelevel="SM5"` / `shaderplatform="PCD3D_SM5"` で走る
+（`LogD3D12RHI: Skipped NVAPI RT queries since ... below SM6`）。**Nanite も HWRT も SM6 必須なので
+実際には動いていない**。GPU 内訳も `GPU/RayTracingGeometry ≈ 0` / SSR は使うが RT reflection なし /
+Nanite パスなし。→ **M3/M4 の暫定値（GPUTime tail median 3.35 ms / VRAM steady 2.51 GB）は
+SM5 の下限であって最終値ではない**。対策として `DefaultEngine.ini`
+`[/Script/WindowsTargetPlatform.WindowsTargetSettings]` に `+D3D12TargetedShaderFormats=PCD3D_SM6`
+（+ `-D3D12TargetedShaderFormats=PCD3D_SM5`）を追加して再 run 中。SM6 で Nanite/HWRT が
+実際に engage するか `rhifeaturelevel` で確認 → 数値確定 → M3/M4 行更新。駄目なら `-sm6` フラグ /
+`r.SkinCache.CompileShaders` 等 / MRQ。
 
 ### 踏んだ罠（`tools/ue_python/ue_env.py` の docstring にも記録）
 
@@ -246,8 +257,8 @@ world 不要のため `-nullrhi` ヘッドレスで走る。
 |----|------|---------|------|------|
 | M1 | 画質（実写中継との並置） | 遜色ないか（人間判定） | **1 枚レンダー取得**（`build/ue/shots/spike_broadcast.png`・`-game` HighResShot・Lumen/RT/Nanite/VSM 有効）。ただし現状はプレースホルダのグレー/青マテリアルなので実写中継との並置判定は**プロダクションマテリアル投入後**。手続きは疎通 | 🔶 |
 | M2 | 車体反射の安定性 | 走行中ちらつかない | `r.ReflectionMethod=1`（Lumen 反射）+ `r.Lumen.HardwareRayTracing` が `-game` で有効（§2）。ちらつき判定は動画 + プロダクションマテリアル待ち | — |
-| M3 | GPU frame time | ≤ 14.0 ms @1080p | **未取得** — `profile_gpu.py` 実装済み・初回 run で CsvProfiler CSV 未出力（`-game` がフルレンダー未到達で自己終了・§profile_gpu.py）。possess/GameMode を入れて再 run | — |
-| M4 | VRAM | ≤ 7.0 GB（`nvidia-smi`） | **未確定** — `profile_gpu.py` の nvidia-smi サンプリング経路は動作（738 サンプル）。初回 run は部分初期化のみで peak 2.39 GB（フルレンダー時の値ではない）。M3 と同じ再 run で確定 | 🔶 |
+| M3 | GPU frame time | ≤ 14.0 ms @1080p | **暫定合格（2026-09-10）**: `profile_gpu.py` の `-game` レンダーパス（`GlobalDefaultGameMode` + `player_start` + SM6 強制）で CsvProfiler が 2518 frame 出力。**steady-state（tail 1499 frame）`GPUTime` median 2.85 ms / p95 2.91 ms**（`rhifeaturelevel="SM6"`・RT/Nanite/Lumen HWRT cvar 適用確認）。budget 14 ms に対し大きく余裕。※ 現状はプレースホルダ・マテリアル + 手続き的路面（Plane/Cube セグメント）+ 24 台の軽いシーン。プロダクション資産投入後に再計測が要る（下限値として有効） | ✅（暫定） |
+| M4 | VRAM | ≤ 7.0 GB（`nvidia-smi`） | **暫定合格（2026-09-10）**: 同 run の host `nvidia-smi` サンプリング（75 サンプル）で **steady_peak 2.52 GB / baseline 1.65 GB**（total 8.0 GB）。budget 7.0 GB に対し余裕大。M3 と同じ軽いシーンの注記が付く | ✅（暫定） |
 | M5 | モーション品質 | ghosting / ホイール artifact なし | `r.DefaultFeature.MotionBlur=True` / `r.MotionBlurQuality=4` が `-game` で有効（§2）。ghosting 判定は動く車の動画待ち（M8 後） | — |
 | M6 | 物理カメラ | 300 mm 相当で中継の圧縮感 | **合格（暫定）**: `CineCameraActor` を Python のみで配置・36 mm filmback + 300 mm（水平画角 6.87°）。レンダー 1 枚で**中継の圧縮感が視認できる**（`spike_broadcast.png`。24 台が奥へ圧縮） | ✅（暫定） |
 | M7 | **AI Coding 適合度** | 人間の GUI 作業ゼロで車両 1 台を配置 + マテリアル | **合格（暫定）**: レベル / 動的ライティング / 手続き的路面（sim-track・75 seg）/ ガードレール（150 seg）/ 車両 24 台グリッド（576 パーツアクタ）/ 放送カメラ / 共有マスターマテリアル + spec リバリー適用（24 スロット・未マッチ 0）/ 保存 / レンダラ設定読み戻し / **`-game` レンダー 1 枚**。**すべて `tools/ue_python/*.py` のみ・GUI 作業ゼロ**（下表は空） | ✅（暫定） |

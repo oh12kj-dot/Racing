@@ -54,12 +54,23 @@ const PACE_SCALE_MIN: f64 = 0.90;
 /// が `v_cap` に張り付いてコーナーで曲がりきれなかった。`v_target <= v_cap` と
 /// `pace` 単調性は保たれる。
 const PACE_SCALE_MAX: f64 = 0.98;
-/// 先読み区間長のマージン [m]。
-const LOOKAHEAD_MARGIN_M: f64 = 20.0;
-/// 先読み区間長の上限 [m]。
-const H_MAX: f64 = 400.0;
+/// 制動計画の先読み区間長を決める基準減速度 [m/s²]（TASK-2-4 Phase 2 step (3′)）。
+///
+/// **実現減速度より意図的に低く置く**ことで、最速進入コーナー（ヘアピン）でも先読みが
+/// 足りるようにする。`A_BRAKE_REF = 8.0` は曲率ランプ中の実効 `a_long`（実測 ~8 m/s²）に
+/// 合わせてある。56 m/s で horizon ≈ 221 m、20 m/s で 50 m。地点固有ではなく速度で決める。
+const A_BRAKE_REF: f64 = 8.0;
+/// 制動計画 horizon のマージン [m]（TASK-2-4 Phase 2 step (3′)）。
+const HORIZON_MARGIN_M: f64 = 25.0;
+/// 制動計画 horizon の下限 [m]。
+const HORIZON_MIN_M: f64 = 30.0;
+/// 制動計画 horizon の上限 [m]。
+const HORIZON_MAX_M: f64 = 300.0;
 /// 先読み区間の走査刻み [m]。
 const HORIZON_STEP_M: f64 = 5.0;
+/// 走査ステーションの上限（`HORIZON_MAX_M / HORIZON_STEP_M` にマージン。スタック配列で
+/// 毎 tick のヒープ確保を避ける）。
+const HORIZON_MAX_STATIONS: usize = 64;
 /// タイヤ荷重感度で割り引いた実効 μ の係数。`mu_eff = envelope.mu * MU_LOAD_DERATE`。
 ///
 /// TASK-2-3 Part F（PDC-6・Architect 承認 2026-09-09）。
