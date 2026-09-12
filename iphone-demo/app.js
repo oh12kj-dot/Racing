@@ -1,5 +1,5 @@
 import {TRACK} from './track.js';
-import {buildWorld} from './v7-world.js';
+import {buildWorld} from './v9-world.js';
 import {createRace} from './v8-race-final.js';
 import {createDirector} from './v8-director-final.js';
 import {createEnvironment} from './v6-environment.js';
