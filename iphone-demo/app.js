@@ -7,7 +7,7 @@ import {createDirector} from './v8-director-final.js';
 import {createEnvironment} from './v10-environment.js';
 import {createCamera} from './v13-camera.js';
 import {createAudio} from './v16-audio.js';
-import {createUI} from './v16-ui.js';
+import {createUI} from './v17-ui.js';
 import {createSafetyCar} from './v14-safety-car.js';
 const statusEl=document.getElementById('status'),speedEl=document.getElementById('speed'),camEl=document.getElementById('cam'),errorEl=document.getElementById('error');
 function fail(e){console.error(e);statusEl.textContent='ERROR';errorEl.style.display='block';errorEl.textContent='起動エラー: '+(e?.message||e)}
