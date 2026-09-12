@@ -21,7 +21,7 @@ button.active{background:white;color:#081018}
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="top">GRAND CIRCUIT · <b id="status">STARTING</b></div>
+<div id="top">SUZUKA-INSPIRED · <b id="status">STARTING</b></div>
 <div id="cam">AUTO · TV</div>
 <div id="controls">
 <button data-m="TV">TV</button><button data-m="CHASE">CHASE</button><button data-m="HELI">HELI</button><button data-m="AUTO" class="active">AUTO</button><button id="prev">◀</button><button id="next">▶</button>
@@ -36,15 +36,17 @@ function size(){W=innerWidth;H=innerHeight;dpr=Math.min(devicePixelRatio||1,2);c
 addEventListener('resize',size,{passive:true});size();
 
 const CP=[
-[-760,400],[-380,400],[0,400],[380,400],[760,400],
-[920,360],[1020,250],[1020,120],[960,10],
-[840,-90],[700,-130],[590,-70],[480,-160],[360,-90],[240,-180],[100,-110],[-40,-190],[-180,-130],
-[-320,-220],[-520,-300],[-760,-320],
-[-930,-280],[-1040,-180],[-1080,-40],[-1040,110],[-930,220],
-[-790,260],[-640,210],[-510,120],[-420,20],
-[-330,-50],[-200,-20],[-70,60],[70,140],[210,170],[360,140],[500,100],
-[630,130],[720,210],[720,300],[650,350]
-].map(([X,Z])=>({X,Z}));
+[500,300],[500,140],[495,-20],[490,-100],
+[450,-165],[390,-195],
+[320,-180],[270,-205],[220,-180],[170,-205],[120,-180],[70,-205],[20,-180],[-30,-195],
+[-80,-165],[-120,-120],[-115,-70],[-80,-40],[-30,-30],
+[30,-20],[90,-35],[150,-55],[210,-45],[250,-15],[270,25],[260,70],[225,100],[180,105],
+[130,120],[70,140],[0,165],[-80,195],[-170,225],[-260,240],[-330,225],[-365,190],[-370,150],[-350,115],[-305,90],[-255,85],[-220,100],
+[-160,115],[-90,112],[-20,100],[60,82],[140,65],[220,55],[300,58],[365,75],
+[390,105],[420,145],[410,185],
+[380,215],[350,200],[325,228],[300,212],
+[320,250],[380,275],[450,260],[510,300]
+].map(([X,Z])=>({X:X*2,Z:Z*2}));
 
 function catmull(p0,p1,p2,p3,t){const t2=t*t,t3=t2*t;return{
 X:.5*((2*p1.X)+(-p0.X+p2.X)*t+(2*p0.X-5*p1.X+4*p2.X-p3.X)*t2+(-p0.X+3*p1.X-3*p2.X+p3.X)*t3),
@@ -64,6 +66,12 @@ for(let k=0;k<N;k++){
  const a=RAW[lo%RAW.length],b=RAW[(lo+1)%RAW.length],seg=Math.max(.0001,cum[lo+1]-cum[lo]),t=(target-cum[lo])/seg;
  TRACK.push({X:a.X+(b.X-a.X)*t,Z:a.Z+(b.Z-a.Z)*t});
 }
+/* Suzuka's crossover is intentional. Detect both branches and keep the earlier lap branch as the overpass. */
+const CROSS={X:266.9*2,Z:54*2};
+const near=TRACK.map((p,i)=>({i,d:(p.X-CROSS.X)**2+(p.Z-CROSS.Z)**2})).sort((a,b)=>a.d-b.d);
+const crossA=near[0].i;
+let crossB=near.find(q=>Math.min(Math.abs(q.i-crossA),N-Math.abs(q.i-crossA))>N*.12)?.i ?? crossA;
+const BRIDGE_I=Math.min(crossA,crossB),BRIDGE_U=BRIDGE_I/N,BRIDGE_HALF=34;
 function normU(u){return((u%1)+1)%1}
 function sample(u,lane=0){
  u=normU(u);const f=u*N,i=Math.floor(f)%N,t=f-i,a=TRACK[i],b=TRACK[(i+1)%N];
@@ -111,12 +119,13 @@ function updateRace(dt){
  }
 }
 
+/* Camera: smooth target + trackside broadcast anchors. */
 const camState={cx:0,cz:0,zoom:.28,ready:false};
-const TV_ANCHORS=[.015,.145,.285,.425,.565,.705,.845,.935];
+const TV_ANCHORS=[.015,.12,.23,.35,.47,.60,.74,.86,.94];
 function circularDist(a,b){const d=Math.abs(a-b);return Math.min(d,1-d)}
 function nearestTvAnchor(u){let best=TV_ANCHORS[0],d=9;for(const a of TV_ANCHORS){const q=circularDist(u,a);if(q<d){d=q;best=a}}return best}
 function desiredCamera(t){
- const car=cars[focus];
+ const car=cars[focus],f=sample(car.u,car.lane);
  if(t==='CHASE'){
   const p=sample(car.u-.018,car.lane*.18);
   return{cx:p.X,cz:p.Z,zoom:.78,response:2.15}
@@ -137,14 +146,25 @@ function updateCamera(t,dt){
 }
 function project(P,C){const sx=(P.X-C.cx)*C.zoom,sz=(P.Z-C.cz)*C.zoom,depth=Math.max(.72,1+sz/2100);return{x:W/2+sx/depth,y:H*.47+sz*.49/depth,s:1/depth}}
 function pathFor(offset,C){const pts=[];for(let i=0;i<N;i+=3){const a=TRACK[i],b=TRACK[(i+1)%N];let tx=b.X-a.X,tz=b.Z-a.Z,m=Math.hypot(tx,tz)||1;tx/=m;tz/=m;const nx=-tz,nz=tx;pts.push(project({X:a.X+nx*offset,Z:a.Z+nz*offset},C))}return pts}
-function strokePath(pts,width,style){x.beginPath();pts.forEach((q,i)=>i?x.lineTo(q.x,q.y):x.moveTo(q.x,q.y));x.closePath();x.strokeStyle=style;x.lineWidth=width;x.lineJoin='round';x.lineCap='round';x.stroke()}
-function track(C){
+function segmentPath(center,half,offset,C){const pts=[];for(let k=-half;k<=half;k+=2){const i=(center+k+N)%N,a=TRACK[i],b=TRACK[(i+1)%N];let tx=b.X-a.X,tz=b.Z-a.Z,m=Math.hypot(tx,tz)||1;tx/=m;tz/=m;const nx=-tz,nz=tx;pts.push(project({X:a.X+nx*offset,Z:a.Z+nz*offset},C))}return pts}
+function strokePath(pts,width,style,closed=true){x.beginPath();pts.forEach((q,i)=>i?x.lineTo(q.x,q.y):x.moveTo(q.x,q.y));if(closed)x.closePath();x.strokeStyle=style;x.lineWidth=width;x.lineJoin='round';x.lineCap='round';x.stroke()}
+function trackBase(C){
  const center=pathFor(0,C);
- strokePath(center,104*C.zoom,'#244423');strokePath(center,82*C.zoom,'#b8b7ae');strokePath(center,68*C.zoom,'#34383b');
- const left=pathFor(-35,C),right=pathFor(35,C);strokePath(left,2.8*C.zoom,'#f7f7f7');strokePath(right,2.8*C.zoom,'#f7f7f7');
- for(let i=0;i<N;i+=20){const a=TRACK[i],b=TRACK[(i+8)%N];let tx=b.X-a.X,tz=b.Z-a.Z,m=Math.hypot(tx,tz)||1;tx/=m;tz/=m;const nx=-tz,nz=tx;for(const side of[-1,1]){const p1=project({X:a.X+nx*37*side,Z:a.Z+nz*37*side},C),p2=project({X:b.X+nx*37*side,Z:b.Z+nz*37*side},C);x.beginPath();x.moveTo(p1.x,p1.y);x.lineTo(p2.x,p2.y);x.strokeStyle=((i/20)%2===0)?'#d41f2c':'#fff';x.lineWidth=5*C.zoom;x.stroke()}}
- const sf=sample(.015),q1=project({X:sf.X-sf.tz*32,Z:sf.Z+sf.tx*32},C),q2=project({X:sf.X+sf.tz*32,Z:sf.Z-sf.tx*32},C);x.beginPath();x.moveTo(q1.x,q1.y);x.lineTo(q2.x,q2.y);x.strokeStyle='#fff';x.lineWidth=5*C.zoom;x.stroke();
+ strokePath(center,110*C.zoom,'#244423');strokePath(center,88*C.zoom,'#b8b7ae');strokePath(center,72*C.zoom,'#34383b');
+ const left=pathFor(-37,C),right=pathFor(37,C);strokePath(left,2.8*C.zoom,'#f7f7f7');strokePath(right,2.8*C.zoom,'#f7f7f7');
+ for(let i=0;i<N;i+=20){const a=TRACK[i],b=TRACK[(i+8)%N];let tx=b.X-a.X,tz=b.Z-a.Z,m=Math.hypot(tx,tz)||1;tx/=m;tz/=m;const nx=-tz,nz=tx;for(const side of[-1,1]){const p1=project({X:a.X+nx*39*side,Z:a.Z+nz*39*side},C),p2=project({X:b.X+nx*39*side,Z:b.Z+nz*39*side},C);x.beginPath();x.moveTo(p1.x,p1.y);x.lineTo(p2.x,p2.y);x.strokeStyle=((i/20)%2===0)?'#d41f2c':'#fff';x.lineWidth=5*C.zoom;x.stroke()}}
+ const sf=sample(.008),q1=project({X:sf.X-sf.tz*34,Z:sf.Z+sf.tx*34},C),q2=project({X:sf.X+sf.tz*34,Z:sf.Z-sf.tx*34},C);x.beginPath();x.moveTo(q1.x,q1.y);x.lineTo(q2.x,q2.y);x.strokeStyle='#fff';x.lineWidth=5*C.zoom;x.stroke();
 }
+function drawBridge(C){
+ const center=segmentPath(BRIDGE_I,BRIDGE_HALF,0,C),left=segmentPath(BRIDGE_I,BRIDGE_HALF,-37,C),right=segmentPath(BRIDGE_I,BRIDGE_HALF,37,C);
+ strokePath(center,100*C.zoom,'#162018',false); /* separation/shadow */
+ strokePath(center,88*C.zoom,'#b8b7ae',false);
+ strokePath(center,72*C.zoom,'#34383b',false);
+ strokePath(left,3.5*C.zoom,'#efefef',false);strokePath(right,3.5*C.zoom,'#efefef',false);
+ const railL=segmentPath(BRIDGE_I,BRIDGE_HALF,-47,C),railR=segmentPath(BRIDGE_I,BRIDGE_HALF,47,C);
+ strokePath(railL,3*C.zoom,'#d5dbe0',false);strokePath(railR,3*C.zoom,'#d5dbe0',false);
+}
+function onBridge(u){return circularDist(u,BRIDGE_U)<(BRIDGE_HALF/N*1.15)}
 function drawCar(car,i,C){
  const P=sample(car.u,car.lane),P2=sample(car.u+.0018,car.lane),q=project(P,C),q2=project(P2,C),ang=Math.atan2(q2.y-q.y,q2.x-q.x);
  const scale=Math.max(.46,Math.min(1.48,q.s*C.zoom*2.15)),w=18*scale,h=8.5*scale;
@@ -153,15 +173,18 @@ function drawCar(car,i,C){
 function scenery(C){
  const grass=x.createLinearGradient(0,H*.23,0,H);grass.addColorStop(0,'#739955');grass.addColorStop(1,'#29472a');x.fillStyle=grass;x.fillRect(0,H*.23,W,H*.77);
  x.fillStyle='#8b969d';
- for(const [X,Z] of [[-650,450],[-540,450],[-430,450],[-320,450],[-210,450],[520,455],[640,455]]){const q=project({X,Z},C);x.fillRect(q.x-20*C.zoom,q.y-11*C.zoom,40*C.zoom,11*C.zoom)}
+ for(const [X,Z] of [[720,620],[820,620],[920,610],[1000,590],[-640,520],[-760,500],[-850,470]]){const q=project({X,Z},C);x.fillRect(q.x-20*C.zoom,q.y-11*C.zoom,40*C.zoom,11*C.zoom)}
 }
 function render(now,dt){
  const active=mode==='AUTO'?auto:mode,C=updateCamera(active,dt);
  const sky=x.createLinearGradient(0,0,0,H*.30);sky.addColorStop(0,'#6da4cf');sky.addColorStop(1,'#dbe8ef');x.fillStyle=sky;x.fillRect(0,0,W,H);
- scenery(C);track(C);
- const order=cars.map((car,i)=>({car,i,z:sample(car.u,car.lane).Z})).sort((a,b)=>a.z-b.z);for(const o of order)drawCar(o.car,o.i,C);
+ scenery(C);trackBase(C);
+ const order=cars.map((car,i)=>({car,i,z:sample(car.u,car.lane).Z})).sort((a,b)=>a.z-b.z);
+ for(const o of order){if(!onBridge(o.car.u))drawCar(o.car,o.i,C)}
+ drawBridge(C);
+ for(const o of order){if(onBridge(o.car.u))drawCar(o.car,o.i,C)}
  const fc=cars[focus],ratio=Math.max(0,Math.min(1,fc.v/fc.max)),kmh=Math.round(75+ratio*260);
- x.fillStyle='#0009';x.fillRect(10,H-126,225,34);x.fillStyle='white';x.font='700 12px -apple-system';x.fillText(`CAR ${focus+1} · ${active} · ${kmh} km/h`,20,H-104)
+ x.fillStyle='#0009';x.fillRect(10,H-126,235,34);x.fillStyle='white';x.font='700 12px -apple-system';x.fillText(`CAR ${focus+1} · ${active} · ${kmh} km/h · SUZUKA`,20,H-104)
 }
 function tick(now){
  const dt=Math.min(.05,(now-lastT)/1000||.016);lastT=now;updateRace(dt);
