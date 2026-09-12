@@ -3,7 +3,13 @@ import {createRace as createV8Race} from './v8-race.js';
 export function createRace(W,statusEl){
   const base=createV8Race(W,statusEl),total=W.total;
   const q=base.qualifying||[];
-  q.forEach((r,pos)=>{const c=base.cars[r.carId];c._v8Progress=-Math.floor(pos/2)*12.4;c._v8PrevS=c.s;});
+  q.forEach((r,pos)=>{
+    const c=base.cars[r.carId],row=Math.floor(pos/2);
+    c._v8Progress=-row*12.4;c._v8PrevS=c.s;
+    // Cars physically behind the start line are conceptually still on lap -1.
+    // Crossing the start line then advances them to lap 0, matching the front row.
+    c.lap=row===0?0:-1;
+  });
   for(const c of base.cars){if(!Number.isFinite(c._v8Progress)){c._v8Progress=0;c._v8PrevS=c.s;}}
   const originalUpdate=base.update;
   function standings(){
