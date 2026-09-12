@@ -1,10 +1,10 @@
 import {TRACK} from './track.js';
-import {buildWorld} from './v6-world.js';
-import {createRace} from './v6-race.js';
-import {createDirector} from './v6-director.js';
+import {buildWorld} from './v7-world.js';
+import {createRace} from './v7-race.js';
+import {createDirector} from './v7-director.js';
 import {createEnvironment} from './v6-environment.js';
-import {createCamera} from './v6-camera.js';
-import {createUI} from './v6-ui.js';
+import {createCamera} from './v7-camera.js';
+import {createUI} from './v7-ui.js';
 import {createSafetyCar} from './v6-safety-car.js';
 const statusEl=document.getElementById('status'),speedEl=document.getElementById('speed'),camEl=document.getElementById('cam'),errorEl=document.getElementById('error');
 function fail(e){console.error(e);statusEl.textContent='ERROR';errorEl.style.display='block';errorEl.textContent='起動エラー: '+(e?.message||e)}
@@ -17,5 +17,5 @@ const timeout=(ms,msg)=>new Promise((_,r)=>setTimeout(()=>r(new Error(msg)),ms))
  const W=buildWorld(THREE,TRACK),R=createRace(W,statusEl),D=createDirector(R),E=createEnvironment(W,R),C=createCamera(W,R,D,camEl),U=createUI(W,R,D,E,C),S=createSafetyCar(W,R);
  statusEl.textContent='GRID';
  addEventListener('resize',()=>{W.camera.aspect=innerWidth/innerHeight;W.camera.updateProjectionMatrix();W.renderer.setSize(innerWidth,innerHeight);W.renderer.setPixelRatio(Math.min(devicePixelRatio||1,1.45));},{passive:true});
- const clock=new THREE.Clock();W.renderer.setAnimationLoop(()=>{const dt=Math.min(.05,clock.getDelta());R.update(dt);D.update(dt);E.update(dt);S.update();const idx=C.update(dt,performance.now()),c=R.cars[idx]||R.getStandings()[0];U.update(dt,idx);W.renderer.render(W.scene,W.camera);if(c)speedEl.textContent=`CAR ${c.number} · ${c.name} · ${c.type.toUpperCase()} · ${Math.round(c.v*3.6)} km/h`;});
+ const clock=new THREE.Clock();W.renderer.setAnimationLoop(()=>{const dt=Math.min(.05,clock.getDelta());R.update(dt);D.update(dt);E.update(dt);S.update();const idx=C.update(dt,performance.now()),c=R.cars[idx]||R.getStandings()[0];U.update(dt,idx);W.renderer.render(W.scene,W.camera);if(c)speedEl.textContent=`CAR ${c.number} · ${c.name} · P${c.position} · ${Math.round(c.v*3.6)} km/h`;});
 }catch(e){fail(e)}})();
