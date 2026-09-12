@@ -2,11 +2,11 @@ import {TRACK} from './track.js';
 import {loadSettings,saveSettings,resolveCircuit} from './v10-settings.js';
 import {CIRCUITS,getCircuitTrack} from './v10-circuits.js';
 import {buildWorld} from './v16-world.js';
-import {createRace} from './v18-race.js';
+import {createRace} from './v20-race.js';
 import {createDirector} from './v19-director.js';
 import {createEnvironment} from './v10-environment.js';
 import {createCamera} from './v13-camera.js';
-import {createAudio} from './v18-audio.js';
+import {createAudio} from './v20-audio.js';
 import {createUI} from './v19-ui.js';
 import {createSafetyCar} from './v14-safety-car.js';
 import {createBroadcast} from './v18-broadcast.js';
@@ -30,18 +30,6 @@ const timeout=(ms,msg)=>new Promise((_,r)=>setTimeout(()=>r(new Error(msg)),ms))
  statusEl.textContent='GRID';
  addEventListener('resize',()=>{W.camera.aspect=innerWidth/innerHeight;W.camera.updateProjectionMatrix();W.renderer.setSize(innerWidth,innerHeight);W.renderer.setPixelRatio(targetDpr);},{passive:true});
  const clock=new THREE.Clock();let envAcc=0,lodAcc=0,shadowAcc=0;
- function updateSessionHUD(){
-   const st=R.getStandings(),leader=st[0],phase=R.sessionPhase;
-   if(phase==='QUALIFYING'){
-     const q=R.qualifying?.[0],pole=q?R.cars[q.carId]:null;
-     statusEl.textContent=`QUALIFYING${pole?` · P1 ${pole.name}`:''}`;
-     return;
-   }
-   const lap=Math.min(R.race.lapsTarget,Math.max(1,(leader?.lap??0)+1));
-   const finished=!!R.postRace?.active||(leader?.lap??0)>=R.race.lapsTarget;
-   if(finished){statusEl.textContent='FINISH · RACE COMPLETE';return;}
-   const flag=R.flag||'GREEN';
-   statusEl.textContent=`RACE · LAP ${lap}/${R.race.lapsTarget} · ${flag}`;
- }
+ function updateSessionHUD(){const st=R.getStandings(),leader=st[0],phase=R.sessionPhase;if(phase==='QUALIFYING'){const q=R.qualifying?.[0],pole=q?R.cars[q.carId]:null;statusEl.textContent=`QUALIFYING${pole?` · P1 ${pole.name}`:''}`;return;}const lap=Math.min(R.race.lapsTarget,Math.max(1,(leader?.lap??0)+1));const finished=!!R.postRace?.active||(leader?.lap??0)>=R.race.lapsTarget;if(finished){statusEl.textContent='FINISH · RACE COMPLETE';return;}statusEl.textContent=`RACE · LAP ${lap}/${R.race.lapsTarget} · ${R.flag||'GREEN'}`;}
  W.renderer.setAnimationLoop(()=>{const dt=Math.min(.05,clock.getDelta());R.update(dt);updateSessionHUD();D.update(dt);envAcc+=dt;if(!mobile||envAcc>=1/30){E.update(envAcc);envAcc=0;}S.update();const idx=C.update(dt,performance.now()),c=R.cars[idx]||R.getStandings()[0];lodAcc+=dt;if(lodAcc>=(mobile?.14:.045)){W.updateVehicleLOD?.(R.cars);lodAcc=0;}if(mobile){shadowAcc+=dt;if(shadowAcc>=.12){W.renderer.shadowMap.needsUpdate=true;shadowAcc=0;}}A.setFocus(idx);A.update(dt);U.update(dt,idx);W.renderer.render(W.scene,W.camera);if(!mobile)B.render();if(c){const flags=[c.blueFlag?'BLUE':'',c.hydroplaning?'HYDRO':'',c._doubleStackWait>0?'DOUBLE STACK':'',c.drsActive?'DRS':'',c.coolingMode?'COOL':'',c.spinState&&c.spinState!=='NONE'?c.spinState:''].filter(Boolean).join(' · ');speedEl.textContent=`${W.circuitName} · ${R.raceClass||'MIXED'} · ${String(c.type||'car').toUpperCase()} · CAR ${c.number} ${c.name} · ${c.driverStyle||''} · P${c.position} · ${Math.round(c.v*3.6)} km/h${flags?' · '+flags:''}`;}});
 }catch(e){fail(e)}})();
