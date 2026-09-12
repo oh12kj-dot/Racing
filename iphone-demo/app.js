@@ -3,7 +3,7 @@ import {loadSettings,saveSettings,resolveCircuit} from './v10-settings.js';
 import {CIRCUITS,getCircuitTrack} from './v10-circuits.js';
 import {buildWorld} from './v21-world.js';
 import {createRace} from './v20-race.js';
-import {createDirector} from './v19-director.js';
+import {createDirector} from './v22-director.js';
 import {createEnvironment} from './v21-environment.js';
 import {createCamera} from './v13-camera.js';
 import {createAudio} from './v20-audio.js';
