@@ -6,165 +6,17 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Racing 3D - Suzuka</title>
 <style>
-*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#8fc1e5;color:#fff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;touch-action:manipulation}
-canvas{display:block;width:100%;height:100%}
-#hud{position:fixed;z-index:20;left:12px;top:max(12px,env(safe-area-inset-top));padding:8px 11px;border:1px solid #ffffff3a;border-radius:11px;background:#07121bc4;backdrop-filter:blur(10px);font-size:12px;font-weight:800;line-height:1.45}
-#hud b{color:#67ff9b}#cam{position:fixed;z-index:20;left:12px;bottom:calc(max(78px,env(safe-area-inset-bottom) + 66px));padding:8px 10px;border-radius:9px;background:#07121bd0;font-size:12px;font-weight:800}
-#controls{position:fixed;z-index:30;left:50%;transform:translateX(-50%);bottom:max(10px,env(safe-area-inset-bottom));display:flex;gap:6px;padding:7px;border-radius:15px;background:#07121bec;border:1px solid #ffffff32;backdrop-filter:blur(10px)}
-button{appearance:none;-webkit-appearance:none;border:1px solid #ffffff38;background:#ffffff14;color:#fff;height:42px;min-width:52px;border-radius:10px;font-size:11px;font-weight:900;padding:0 9px}button:active{transform:scale(.94);background:#ffffff40}button.active{background:#fff;color:#07121b}
-#error{display:none;position:fixed;z-index:60;left:12px;right:12px;top:35%;padding:14px;border-radius:12px;background:#651414ee;font-size:12px;line-height:1.55}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#8bbce0;color:#fff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;touch-action:manipulation}canvas{display:block;width:100%;height:100%}#hud{position:fixed;z-index:20;left:12px;top:max(12px,env(safe-area-inset-top));padding:8px 11px;border:1px solid #ffffff35;border-radius:11px;background:#07121bcc;backdrop-filter:blur(10px);font-size:12px;font-weight:800;line-height:1.45}#hud b{color:#67ff9b}#cam{position:fixed;z-index:20;left:12px;bottom:calc(max(78px,env(safe-area-inset-bottom) + 66px));padding:8px 10px;border-radius:9px;background:#07121bd0;font-size:12px;font-weight:800}#controls{position:fixed;z-index:30;left:50%;transform:translateX(-50%);bottom:max(10px,env(safe-area-inset-bottom));display:flex;gap:6px;padding:7px;border-radius:15px;background:#07121bec;border:1px solid #ffffff32;backdrop-filter:blur(10px)}button{appearance:none;-webkit-appearance:none;border:1px solid #ffffff38;background:#ffffff14;color:#fff;height:42px;min-width:52px;border-radius:10px;font-size:11px;font-weight:900;padding:0 9px}button:active{transform:scale(.94);background:#ffffff40}button.active{background:#fff;color:#07121b}#error{display:none;position:fixed;z-index:60;left:12px;right:12px;top:32%;padding:14px;border-radius:12px;background:#651414ee;font-size:12px;line-height:1.55}
 </style>
-<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js"}}</script>
 </head>
 <body>
-<div id="hud">REAL SUZUKA 3D · <b id="status">LOADING TRACK</b><br><span id="speed">CAR 1 · -- km/h</span></div>
+<div id="hud">SUZUKA 3D · <b id="status">BOOTING</b><br><span id="speed">GRID · -- km/h</span></div>
 <div id="cam">AUTO · TV</div>
 <div id="controls"><button data-mode="TV">TV</button><button data-mode="CHASE">CHASE</button><button data-mode="HELI">HELI</button><button data-mode="AUTO" class="active">AUTO</button><button id="prev">◀</button><button id="next">▶</button></div>
 <div id="error"></div>
-<script type="module">
-import * as THREE from 'three';
-
-const TRACK_URL='https://raw.githubusercontent.com/TUMFTM/racetrack-database/master/tracks/Suzuka.csv';
-const statusEl=document.getElementById('status'),speedEl=document.getElementById('speed'),camEl=document.getElementById('cam'),errorEl=document.getElementById('error');
-const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
-const wrap=(v,L)=>((v%L)+L)%L;
-const smooth=(a,b,k,dt)=>THREE.MathUtils.lerp(a,b,1-Math.exp(-k*dt));
-const v3=(x=0,y=0,z=0)=>new THREE.Vector3(x,y,z);
-
-function fail(e){console.error(e);statusEl.textContent='ERROR';errorEl.style.display='block';errorEl.textContent='3D起動エラー: '+(e?.message||e)}
-
-async function main(){
-  const res=await fetch(TRACK_URL,{cache:'force-cache'});if(!res.ok)throw new Error('鈴鹿コースデータを取得できません: '+res.status);
-  const csv=await res.text();
-  const raw=csv.split(/\r?\n/).filter(l=>l&&l[0]!=='#').map(l=>l.split(',').map(Number)).filter(r=>r.length>=4&&r.every(Number.isFinite));
-  if(raw.length<500)throw new Error('コースデータが不足しています');
-
-  let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
-  for(const r of raw){minX=Math.min(minX,r[0]);maxX=Math.max(maxX,r[0]);minY=Math.min(minY,r[1]);maxY=Math.max(maxY,r[1])}
-  const cx=(minX+maxX)/2,cy=(minY+maxY)/2;
-  const N=raw.length;
-  const plan=raw.map(r=>({x:r[0]-cx,z:-(r[1]-cy),wr:r[2],wl:r[3]}));
-
-  const orient=(a,b,c)=>(b.x-a.x)*(c.z-a.z)-(b.z-a.z)*(c.x-a.x);
-  const cross=[];
-  outer:for(let i=0;i<N;i++){
-    const a=plan[i],b=plan[(i+1)%N];
-    for(let j=i+35;j<N;j++){
-      if(i<35&&j>N-35)continue;
-      const c=plan[j],d=plan[(j+1)%N];
-      const o1=orient(a,b,c),o2=orient(a,b,d),o3=orient(c,d,a),o4=orient(c,d,b);
-      if(o1*o2<0&&o3*o4<0){cross.push([i,j]);if(cross.length>=3)break outer}
-    }
-  }
-  const bridgePair=cross[0]||[Math.floor(N*.42),Math.floor(N*.77)];
-  const bridgeIndex=Math.max(...bridgePair);
-  const circIndexDist=(a,b)=>Math.min(Math.abs(a-b),N-Math.abs(a-b));
-
-  const P=[];
-  for(let i=0;i<N;i++){
-    const u=i/N;
-    const base=5.0*Math.sin((u-.12)*Math.PI*2)+2.4*Math.sin((u+.08)*Math.PI*4);
-    const di=circIndexDist(i,bridgeIndex);
-    const bridge=11.5*Math.exp(-(di*di)/(2*34*34));
-    P.push(v3(plan[i].x,base+bridge,plan[i].z));
-  }
-
-  const cum=[0];let total=0;
-  for(let i=0;i<N;i++){const d=P[i].distanceTo(P[(i+1)%N]);total+=d;cum.push(total)}
-  const tan=[],side=[];
-  for(let i=0;i<N;i++){
-    const t=P[(i+2)%N].clone().sub(P[(i-2+N)%N]).normalize();tan.push(t);
-    side.push(v3(-t.z,0,t.x).normalize());
-  }
-  function sample(s,lane=0){
-    s=wrap(s,total);let lo=0,hi=N;
-    while(lo+1<hi){const m=(lo+hi)>>1;if(cum[m]<=s)lo=m;else hi=m}
-    const i=lo%N,j=(i+1)%N,seg=Math.max(.001,cum[i+1]-cum[i]),f=(s-cum[i])/seg;
-    const p=P[i].clone().lerp(P[j],f),t=tan[i].clone().lerp(tan[j],f).normalize(),sv=v3(-t.z,0,t.x).normalize();
-    p.addScaledVector(sv,lane);return{p,t,side:sv,i,f,wr:THREE.MathUtils.lerp(plan[i].wr,plan[j].wr,f),wl:THREE.MathUtils.lerp(plan[i].wl,plan[j].wl,f)};
-  }
-
-  const scene=new THREE.Scene();scene.background=new THREE.Color(0x93c6ea);scene.fog=new THREE.Fog(0xb0cbd7,700,2500);
-  const camera=new THREE.PerspectiveCamera(54,innerWidth/innerHeight,.1,5000);
-  const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});renderer.setSize(innerWidth,innerHeight);renderer.setPixelRatio(Math.min(devicePixelRatio||1,1.5));renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;document.body.prepend(renderer.domElement);
-  scene.add(new THREE.HemisphereLight(0xeaf6ff,0x405d34,1.9));
-  const sun=new THREE.DirectionalLight(0xffffff,2.35);sun.position.set(500,700,200);sun.castShadow=true;sun.shadow.mapSize.set(1024,1024);sun.shadow.camera.left=-1200;sun.shadow.camera.right=1200;sun.shadow.camera.top=1200;sun.shadow.camera.bottom=-1200;scene.add(sun);
-  const ground=new THREE.Mesh(new THREE.PlaneGeometry(3600,3000),new THREE.MeshStandardMaterial({color:0x4f763e,roughness:1}));ground.rotation.x=-Math.PI/2;ground.position.y=-9;ground.receiveShadow=true;scene.add(ground);
-
-  function strip(extra,mat,yLift){
-    const pos=[],uv=[],ind=[];
-    for(let i=0;i<N;i++){
-      const p=P[i],sv=side[i],left=p.clone().addScaledVector(sv,-(plan[i].wl+extra)),right=p.clone().addScaledVector(sv,plan[i].wr+extra);left.y+=yLift;right.y+=yLift;
-      pos.push(left.x,left.y,left.z,right.x,right.y,right.z);uv.push(0,cum[i]/40,1,cum[i]/40);
-    }
-    for(let i=0;i<N;i++){const j=(i+1)%N,a=i*2,b=a+1,c=j*2,d=c+1;ind.push(a,b,c,b,d,c)}
-    const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));g.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));g.setIndex(ind);g.computeVertexNormals();
-    const m=new THREE.Mesh(g,mat);m.receiveShadow=true;scene.add(m);return m;
-  }
-  strip(2.4,new THREE.MeshStandardMaterial({color:0xb2b0a7,roughness:.96,side:THREE.DoubleSide}),.02);
-  strip(0,new THREE.MeshStandardMaterial({color:0x303336,roughness:.9,metalness:.02,side:THREE.DoubleSide}),.08);
-
-  const curbGeo=new THREE.BoxGeometry(1.7,.28,4.0),redMat=new THREE.MeshStandardMaterial({color:0xd91e2c,roughness:.8}),whiteMat=new THREE.MeshStandardMaterial({color:0xf5f5f5,roughness:.8});
-  const count=Math.ceil(N/8)*2,red=new THREE.InstancedMesh(curbGeo,redMat,count),white=new THREE.InstancedMesh(curbGeo,whiteMat,count),tmp=new THREE.Object3D();let ri=0,wi=0;
-  for(let i=0;i<N;i+=8){for(const sign of[-1,1]){const p=P[i].clone(),sv=side[i],t=tan[i],w=sign<0?plan[i].wl:plan[i].wr;p.addScaledVector(sv,sign*(w+.55));p.y+=.25;tmp.position.copy(p);tmp.rotation.set(0,Math.atan2(t.x,t.z),0);tmp.updateMatrix();if((i/8|0)%2===0)red.setMatrixAt(ri++,tmp.matrix);else white.setMatrixAt(wi++,tmp.matrix)}}
-  red.count=ri;white.count=wi;red.instanceMatrix.needsUpdate=true;white.instanceMatrix.needsUpdate=true;scene.add(red,white);
-
-  const sf=sample(0,0),startLine=new THREE.Mesh(new THREE.BoxGeometry((sf.wl+sf.wr)*.95,.12,1.8),new THREE.MeshStandardMaterial({color:0xffffff}));startLine.position.copy(sf.p);startLine.position.y+=.18;startLine.rotation.y=Math.atan2(sf.t.x,sf.t.z);scene.add(startLine);
-  for(const frac of[.002,.012,.022,.032,.042]){const a=sample(total*frac,0),b=new THREE.Mesh(new THREE.BoxGeometry(42,10,16),new THREE.MeshStandardMaterial({color:0x7c8892,roughness:.8}));b.position.copy(a.p).addScaledVector(a.side,35);b.position.y+=4;b.rotation.y=Math.atan2(a.t.x,a.t.z);b.castShadow=true;scene.add(b)}
-
-  const bp=sample(cum[bridgeIndex],0);for(const sgn of[-1,1]){const pillar=new THREE.Mesh(new THREE.BoxGeometry(3,13,3),new THREE.MeshStandardMaterial({color:0x9b9b96,roughness:.9}));pillar.position.copy(bp.p).addScaledVector(bp.side,sgn*6);pillar.position.y-=6;scene.add(pillar)}
-
-  function makeCar(color){
-    const g=new THREE.Group(),body=new THREE.Mesh(new THREE.BoxGeometry(3.7,.95,7.8),new THREE.MeshStandardMaterial({color,metalness:.25,roughness:.34}));body.position.y=.95;body.castShadow=true;g.add(body);
-    const glass=new THREE.Mesh(new THREE.BoxGeometry(2.7,.75,3.0),new THREE.MeshStandardMaterial({color:0x13212e,metalness:.15,roughness:.18}));glass.position.set(0,1.62,-.35);glass.castShadow=true;g.add(glass);
-    const wing=new THREE.Mesh(new THREE.BoxGeometry(4.2,.16,.9),new THREE.MeshStandardMaterial({color:0x111111}));wing.position.set(0,1.25,3.65);g.add(wing);
-    const wm=new THREE.MeshStandardMaterial({color:0x101010,roughness:.9});for(const x of[-1.9,1.9])for(const z of[-2.45,2.45]){const wh=new THREE.Mesh(new THREE.BoxGeometry(.72,.72,1.0),wm);wh.position.set(x,.6,z);g.add(wh)}return g;
-  }
-
-  const curv=new Float32Array(N);
-  for(let i=0;i<N;i++){
-    const a=tan[(i-6+N)%N],b=tan[(i+6)%N];const dot=clamp(a.dot(b),-1,1);curv[i]=clamp(Math.acos(dot)/.52,0,1);
-  }
-  function brakingLoad(s){const a=sample(s+25),b=sample(s+60),c=sample(s+105),d=sample(s+155);return Math.max(curv[a.i]*.62,curv[b.i]*.9,curv[c.i]*1.08,curv[d.i]*.8)}
-
-  const COLORS=[0xff3535,0x3991ff,0xffd43b,0xffffff,0x2ae48e,0xb36cff,0xff8b32,0x16d6d6,0xff5ab3];
-  const cars=Array.from({length:16},(_,i)=>{const skill=.94+((i*7)%11)*.008,mesh=makeCar(COLORS[i%COLORS.length]);scene.add(mesh);return{s:wrap(total*(.015+i/16),total),lane:(i%2?.4:-.4)*2.6,laneTarget:(i%2?.4:-.4)*2.6,v:30,max:76*skill,accel:6.4+skill*.5,brake:15.5,lap:0,overtake:0,mesh}});
-  const gapAhead=(a,b)=>wrap(b.s-a.s,total);
-  function nearestAhead(car,index){let best=null,g=Infinity;for(let j=0;j<cars.length;j++){if(j===index)continue;const q=gapAhead(car,cars[j]);if(q<g){g=q;best=cars[j]}}return{car:best,gap:g}}
-  function laneFree(index,target){const me=cars[index];for(let j=0;j<cars.length;j++){if(j===index)continue;const o=cars[j],du=Math.min(gapAhead(me,o),gapAhead(o,me));if(du<28&&Math.abs(o.lane-target)<2.7)return false}return true}
-  function updateRace(dt){
-    for(let i=0;i<cars.length;i++){
-      const c=cars[i],load=brakingLoad(c.s);let target=Math.max(23,c.max*(1-.68*load));const ahead=nearestAhead(c,i);
-      if(ahead.car){const same=Math.abs(ahead.car.lane-c.lane)<2.8;if(same&&ahead.gap<85&&ahead.gap>30)target*=1.035;if(same&&ahead.gap<28){target=Math.min(target,ahead.car.v*.97);if(c.overtake<=0&&load<.32){const l=-2.8,r=2.8,first=((i+c.lap)%2)?r:l,second=-first;if(laneFree(i,first)){c.laneTarget=first;c.overtake=3}else if(laneFree(i,second)){c.laneTarget=second;c.overtake=3}}}}
-      if(c.overtake>0)c.overtake-=dt;else if(load>.36)c.laneTarget=0;else c.laneTarget*=.995;
-      const dv=target-c.v,rate=dv>0?c.accel:c.brake;c.v+=clamp(dv,-rate*dt,rate*dt);c.lane=smooth(c.lane,c.laneTarget,2.0,dt);const old=c.s;c.s=wrap(c.s+c.v*dt,total);if(c.s<old-total*.5)c.lap++;
-      const q=sample(c.s,c.lane);c.mesh.position.copy(q.p);c.mesh.position.y+=.3;c.mesh.rotation.y=Math.atan2(q.t.x,q.t.z);
-    }
-  }
-
-  let mode='AUTO',autoMode='TV',focus=0,autoTimer=0,tvAnchor=-1,lastCut=-999;
-  const tvFrac=[.015,.09,.17,.27,.38,.49,.61,.73,.84,.93];
-  const camPos=v3(),look=v3();let camReady=false;
-  function nearestAnchor(frac){let bi=0,bd=9;for(let i=0;i<tvFrac.length;i++){const d=Math.min(Math.abs(frac-tvFrac[i]),1-Math.abs(frac-tvFrac[i]));if(d<bd){bd=d;bi=i}}return bi}
-  function desired(active,now){const c=cars[focus],q=sample(c.s,c.lane),ahead=sample(c.s+45,c.lane);
-    if(active==='CHASE')return{p:q.p.clone().addScaledVector(q.t,-34).addScaledVector(q.side,7).add(v3(0,10,0)),look:ahead.p.clone().add(v3(0,1.8,0)),k:3.1,cut:false};
-    if(active==='HELI')return{p:q.p.clone().addScaledVector(q.t,-28).add(v3(0,78,0)),look:ahead.p.clone(),k:1.35,cut:false};
-    const frac=c.s/total,idx=nearestAnchor(frac);let cut=false;if(idx!==tvAnchor&&now-lastCut>1600){tvAnchor=idx;lastCut=now;cut=true}if(tvAnchor<0){tvAnchor=idx;cut=true;lastCut=now}
-    const a=sample(total*tvFrac[tvAnchor],0),p=a.p.clone().addScaledVector(a.side,32).add(v3(0,12,0));return{p,look:q.p.clone().add(v3(0,1.5,0)),k:5.0,cut};
-  }
-  function updateCamera(active,dt,now){const d=desired(active,now);if(!camReady||d.cut){camPos.copy(d.p);look.copy(d.look);camReady=true}else{camPos.lerp(d.p,1-Math.exp(-d.k*dt));look.lerp(d.look,1-Math.exp(-d.k*dt))}camera.position.copy(camPos);camera.lookAt(look)}
-
-  function setMode(m){mode=m;camReady=false;document.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('active',b.dataset.mode===m));camEl.textContent=m==='AUTO'?`AUTO · ${autoMode}`:m}
-  document.querySelectorAll('[data-mode]').forEach(b=>b.addEventListener('click',()=>setMode(b.dataset.mode)));
-  document.getElementById('next').addEventListener('click',()=>{focus=(focus+1)%cars.length;camReady=false});document.getElementById('prev').addEventListener('click',()=>{focus=(focus-1+cars.length)%cars.length;camReady=false});
-  addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);renderer.setPixelRatio(Math.min(devicePixelRatio||1,1.5))},{passive:true});
-
-  const clock=new THREE.Clock();let frames=0;
-  renderer.setAnimationLoop(()=>{const dt=Math.min(.05,clock.getDelta());updateRace(dt);autoTimer+=dt;if(mode==='AUTO'&&autoTimer>7){autoTimer=0;autoMode=autoMode==='TV'?'CHASE':autoMode==='CHASE'?'HELI':'TV';camEl.textContent=`AUTO · ${autoMode}`;camReady=false}const active=mode==='AUTO'?autoMode:mode;updateCamera(active,dt,performance.now());renderer.render(scene,camera);frames++;if(frames===2)statusEl.textContent='RUNNING';speedEl.textContent=`CAR ${focus+1} · ${Math.round(cars[focus].v*3.6)} km/h`});
-}
-
-main().catch(fail);
+<script>
+setTimeout(()=>{const s=document.getElementById('status');if(['BOOTING','LOADING 3D','BUILDING TRACK'].includes(s.textContent)){s.textContent='ERROR';const e=document.getElementById('error');e.style.display='block';e.textContent='起動が停止しました。表示中の段階: '+s.textContent+'。Safariで再読み込みしてください。';}},16000);
 </script>
+<script type="module" src="./app.js"></script>
 </body>
 </html>
