@@ -2,7 +2,7 @@ import {TRACK} from './track.js';
 import {loadSettings,saveSettings,resolveCircuit} from './v10-settings.js';
 import {CIRCUITS,getCircuitTrack} from './v10-circuits.js';
 import {buildWorld} from './v15-world.js';
-import {createRace} from './v15-race.js';
+import {createRace} from './v15-race-final.js';
 import {createDirector} from './v8-director-final.js';
 import {createEnvironment} from './v10-environment.js';
 import {createCamera} from './v13-camera.js';
