@@ -26,7 +26,7 @@ export function createCamera(W,R,D,camEl){
    if(R.race.t<R.race.green+6&&R.sessionPhase!=='QUALIFYING'){const a=sample(-12),b=sample(85);return{p:a.p.clone().addScaledVector(a.side,48).add(new T.Vector3(0,16,0)),target:b.p.clone().add(new T.Vector3(0,2,0)),roadY:a.p.y,k:5,cut:false};}
    if(active==='CHASE')return{p:q.p.clone().addScaledVector(q.t,-28).addScaledVector(q.side,6).add(new T.Vector3(0,8,0)),target:ahead.p.clone().add(new T.Vector3(0,1.5,0)),roadY:q.p.y,k:3,cut:false};
    if(active==='HELI')return{p:q.p.clone().addScaledVector(q.t,-22).add(new T.Vector3(0,76,0)),target:ahead.p.clone(),roadY:q.p.y,k:1.4,cut:false};
-   const fr=c.s/total,k=nearest(fr);let cut=false;if(k!==tv&&now-lastCut>1500){tv=k;lastCut=now;cut=true;}if(tv<0){tv=k;lastCut=now;cut=true;}const a=sample(total*anchors[tv]);return{p:a.p.clone().addScaledVector(a.side,31).add(new T.Vector3(0,12,0)),target:q.p.clone().add(new T.Vector3(0,1.4,0)),roadY:Math.max(a.p.y,q.p.y),k:5.5,cut};
+   const fr=c.s/total,k=nearest(fr);let cut=false;if(k!==tv&&now-lastCut>6000){tv=k;lastCut=now;cut=true;}if(tv<0){tv=k;lastCut=now;cut=true;}const a=sample(total*anchors[tv]);return{p:a.p.clone().addScaledVector(a.side,31).add(new T.Vector3(0,12,0)),target:q.p.clone().add(new T.Vector3(0,1.4,0)),roadY:Math.max(a.p.y,q.p.y),k:5.5,cut};
  }
  function update(dt,now){
    const active=mode==='AUTO'?D.shot:mode,d=desired(active,now);
