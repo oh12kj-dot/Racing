@@ -1,14 +1,14 @@
 import {TRACK} from './track.js';
 import {loadSettings,saveSettings,resolveCircuit} from './v10-settings.js';
 import {CIRCUITS,getCircuitTrack} from './v10-circuits.js';
-import {buildWorld} from './v13-world.js';
+import {buildWorld} from './v14-world.js';
 import {createRace} from './v13-race.js';
 import {createDirector} from './v8-director-final.js';
 import {createEnvironment} from './v10-environment.js';
 import {createCamera} from './v13-camera.js';
 import {createAudio} from './v10-audio.js';
 import {createUI} from './v13-ui.js';
-import {createSafetyCar} from './v6-safety-car.js';
+import {createSafetyCar} from './v14-safety-car.js';
 const statusEl=document.getElementById('status'),speedEl=document.getElementById('speed'),camEl=document.getElementById('cam'),errorEl=document.getElementById('error');
 function fail(e){console.error(e);statusEl.textContent='ERROR';errorEl.style.display='block';errorEl.textContent='起動エラー: '+(e?.message||e)}
 window.addEventListener('error',e=>fail(e.error||e.message));window.addEventListener('unhandledrejection',e=>fail(e.reason));
