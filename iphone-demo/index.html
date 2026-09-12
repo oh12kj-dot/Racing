@@ -98,12 +98,12 @@ async function main(){
       const p=P[i],sv=side[i],left=p.clone().addScaledVector(sv,-(plan[i].wl+extra)),right=p.clone().addScaledVector(sv,plan[i].wr+extra);left.y+=yLift;right.y+=yLift;
       pos.push(left.x,left.y,left.z,right.x,right.y,right.z);uv.push(0,cum[i]/40,1,cum[i]/40);
     }
-    for(let i=0;i<N;i++){const j=(i+1)%N,a=i*2,b=a+1,c=j*2,d=c+1;ind.push(a,c,b,b,c,d)}
+    for(let i=0;i<N;i++){const j=(i+1)%N,a=i*2,b=a+1,c=j*2,d=c+1;ind.push(a,b,c,b,d,c)}
     const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));g.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));g.setIndex(ind);g.computeVertexNormals();
     const m=new THREE.Mesh(g,mat);m.receiveShadow=true;scene.add(m);return m;
   }
-  strip(2.4,new THREE.MeshStandardMaterial({color:0xb2b0a7,roughness:.96}),.02);
-  strip(0,new THREE.MeshStandardMaterial({color:0x303336,roughness:.9,metalness:.02}),.08);
+  strip(2.4,new THREE.MeshStandardMaterial({color:0xb2b0a7,roughness:.96,side:THREE.DoubleSide}),.02);
+  strip(0,new THREE.MeshStandardMaterial({color:0x303336,roughness:.9,metalness:.02,side:THREE.DoubleSide}),.08);
 
   const curbGeo=new THREE.BoxGeometry(1.7,.28,4.0),redMat=new THREE.MeshStandardMaterial({color:0xd91e2c,roughness:.8}),whiteMat=new THREE.MeshStandardMaterial({color:0xf5f5f5,roughness:.8});
   const count=Math.ceil(N/8)*2,red=new THREE.InstancedMesh(curbGeo,redMat,count),white=new THREE.InstancedMesh(curbGeo,whiteMat,count),tmp=new THREE.Object3D();let ri=0,wi=0;
