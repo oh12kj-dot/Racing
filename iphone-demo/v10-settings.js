@@ -1,6 +1,6 @@
 export const DEFAULT_SETTINGS={
   circuit:'CHAMPIONSHIP',laps:6,ai:1,weather:'DYNAMIC',time:14.2,
-  failures:1,tyreWear:1,safetyCar:true,sound:true
+  failures:1,tyreWear:1,safetyCar:true,sound:true,raceClass:'MIXED'
 };
 const KEY='racing_v10_settings';
 export function loadSettings(){
