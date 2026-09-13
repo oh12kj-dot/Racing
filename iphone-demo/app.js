@@ -1,6 +1,6 @@
 // Racing runtime: stable entry point. Versioned legacy modules are hidden behind ./runtime/index.js.
 import {TRACK} from './track.js';
-import {loadSettings,saveSettings,resolveCircuit,CIRCUITS,getCircuitTrack,buildWorld,createRace,createDirector,createEnvironment,createCamera,createAudio,createUI,createSafetyCar,createBroadcast,createProfiler,createPerformanceManager,enhanceVisuals,enhanceSurfaceDetail,createEnvironmentReflections,createSceneQualityController,cleanupLegacyWorld,loadThree,createRuntimeRegression} from './runtime/index.js';
+import {loadSettings,saveSettings,resolveCircuit,CIRCUITS,getCircuitTrack,buildWorld,createRace,createDirector,createEnvironment,createCamera,createAudio,createUI,createSafetyCar,createBroadcast,createProfiler,createPerformanceManager,enhanceVisuals,enhanceSurfaceDetail,createEnvironmentReflections,createSceneQualityController,cleanupLegacyWorld,attachRuntimeAudit,loadThree,createRuntimeRegression} from './runtime/index.js';
 const statusEl=document.getElementById('status'),speedEl=document.getElementById('speed'),camEl=document.getElementById('cam'),errorEl=document.getElementById('error');
 function fail(e){console.error(e);statusEl.textContent='ERROR';errorEl.style.display='block';errorEl.textContent='起動エラー: '+(e?.message||e)}
 window.addEventListener('error',e=>fail(e.error||e.message));window.addEventListener('unhandledrejection',e=>fail(e.reason));
@@ -12,12 +12,12 @@ window.addEventListener('error',e=>fail(e.error||e.message));window.addEventList
  statusEl.textContent='BUILDING TRACK';
  const W=buildWorld(THREE,track,settings,circuit.name),mobile=matchMedia?.('(pointer:coarse)')?.matches||innerWidth<760;
  const cleanup=cleanupLegacyWorld(W),surface=enhanceSurfaceDetail(W,{mobile}),PM=createPerformanceManager(W,settings,mobile),V=enhanceVisuals(W,settings,mobile);
- try{window.__RACING_PM__=PM;window.__RACING_AUDIT__=W.auditCircuit?.();window.__RACING_VISUALS__=V;window.__RACING_WORLD_CLEANUP__=cleanup;window.__RACING_SURFACE__=surface;}catch{}
+ try{window.__RACING_PM__=PM;window.__RACING_VISUALS__=V;window.__RACING_WORLD_CLEANUP__=cleanup;window.__RACING_SURFACE__=surface;}catch{}
  if(W.updateEffects){const f=W.updateEffects.bind(W);let a=0;W.updateEffects=(cars,dt=.016)=>{a+=dt;const step=PM.interval('effects');if(a<step)return;const s=a;a=0;f(cars,s);};}
  if(W.updateDynamicSurface){const f=W.updateDynamicSurface.bind(W);let a=0;W.updateDynamicSurface=(race,wet,dt=.016)=>{a+=dt;const step=PM.interval('surface');if(a<step)return;const s=a;a=0;f(race,wet,s);};}
  if(W.updateDebris){const f=W.updateDebris.bind(W);let a=0;W.updateDebris=(dt=.016)=>{a+=dt;const step=Math.min(.08,PM.interval('effects'));if(a<step)return;const s=a;a=0;f(s);};}
- const R=createRace(W,statusEl,settings),D=createDirector(R),E=createEnvironment(W,R,settings),F=createEnvironmentReflections(W,{mobile}),C=createCamera(W,R,D,camEl),A=createAudio(R,settings),Q=createRuntimeRegression(W,R),QL=createSceneQualityController(W,{mobile});W.updateVisualWeather?.();QL.apply(PM.level,R.cars);
- try{window.__RACING_RACE__=R;window.__RACING_DIRECTOR__=D;window.__RACING_AUDIO__=A;window.__RACING_REGRESSION_MONITOR__=Q;window.__RACING_REFLECTIONS__=F;window.__RACING_SCENE_QUALITY__=QL;}catch{}
+ const R=createRace(W,statusEl,settings),D=createDirector(R),E=createEnvironment(W,R,settings),F=createEnvironmentReflections(W,{mobile}),C=createCamera(W,R,D,camEl),A=createAudio(R,settings),Q=createRuntimeRegression(W,R),QL=createSceneQualityController(W,{mobile});W.updateVisualWeather?.();QL.apply(PM.level,R.cars);attachRuntimeAudit(W,{race:R,performance:PM,regression:Q,quality:QL,reflections:F});
+ try{window.__RACING_RACE__=R;window.__RACING_DIRECTOR__=D;window.__RACING_AUDIO__=A;window.__RACING_REGRESSION_MONITOR__=Q;window.__RACING_REFLECTIONS__=F;window.__RACING_SCENE_QUALITY__=QL;window.__RACING_AUDIT__=W.auditCircuit?.();}catch{}
  A.setEnabled?.(settings.sound!==false);
  const U=createUI(W,R,D,E,C,A,settings,saveSettings),S=createSafetyCar(W,R),B=createBroadcast(W,R,D),P=createProfiler(W,{mobile,targetFps:PM.config.fps,race:R,director:D,audio:A});
  statusEl.textContent='GRID';
