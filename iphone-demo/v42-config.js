@@ -2,11 +2,17 @@ export const LOG_POLICY=Object.freeze({
   profilerSamples:90,
   diagnosticSamples:60,
   dynamicsSamples:600,
+  dynamicsPersistSamples:120,
   events:180,
   radio:60,
   crashHistory:60,
+  audioTrace:120,
   cameraCutSeconds:120,
-  persistedGenerations:0
+  cameraCutEntries:80,
+  persistedGenerations:3,
+  persistedDays:7,
+  persistIntervalSec:30,
+  maxStoredChars:900000
 });
 
 export const SUZUKA_PIT=Object.freeze({
@@ -18,6 +24,8 @@ export const SUZUKA_PIT=Object.freeze({
   exitEndUF:1.095,
   laneOffset:21.5,
   laneHalfWidth:3.35,
+  mergeTrackOffset:4.05,
+  mergeHalfWidth:1.85,
   pitWallOffset:9.8,
   trackBarrierOffset:8.8,
   entryGap:[.932,.984],
