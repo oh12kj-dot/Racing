@@ -16,7 +16,7 @@ export function createCamera(W,R,D,camEl){
     toCam.copy(a.p).sub(car).normalize();
     const tangent=q.t.clone().normalize(),dot=clamp(Math.abs(tangent.dot(toCam)),0,1),angle=Math.acos(dot)*180/Math.PI;
     const distScore=clamp(1-Math.abs(dist-105)/145,0,1),angleScore=clamp(1-Math.abs(angle-70)/70,0,1),trackScore=clamp(1-td/300,0,1);
-    const continuity=i===tvAnchor?.42:0;
+    const continuity=i===tvAnchor ? .42 : 0;
     return{...a,dist,angle,score:distScore*.44+angleScore*.32+trackScore*.24+continuity};
   }
   function chooseTV(c,nowMs){
