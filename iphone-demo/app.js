@@ -1,13 +1,13 @@
-// Racing v38: quality-preserving architecture/performance cleanup.
+// Racing v39: realistic racing dynamics + silent-aware team radio.
 import {TRACK} from './track.js';
 import {loadSettings,saveSettings,resolveCircuit} from './v10-settings.js';
 import {CIRCUITS,getCircuitTrack} from './v10-circuits.js';
-import {buildWorld} from './v38-world.js';
-import {createRace} from './v38-race.js';
+import {buildWorld} from './v39-world.js';
+import {createRace} from './v39-race.js';
 import {createDirector} from './v38-director.js';
 import {createEnvironment} from './v38-environment.js';
 import {createCamera} from './v38-camera.js';
-import {createAudio} from './v38-audio.js';
+import {createAudio} from './v39-audio.js';
 import {createUI} from './v34-ui.js';
 import {createSafetyCar} from './v27-safety-car.js';
 import {createBroadcast} from './v18-broadcast.js';
