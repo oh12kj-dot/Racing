@@ -9,3 +9,5 @@ export {createCamera} from '../v41-camera.js';
 export {createSafetyCar} from '../v27-safety-car.js';
 export {createBroadcast} from '../v18-broadcast.js';
 export {createPerformanceManager} from '../v38-performance.js';
+export {loadSettings,saveSettings,resolveCircuit} from '../v10-settings.js';
+export {CIRCUITS,getCircuitTrack} from '../v10-circuits.js';
