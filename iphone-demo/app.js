@@ -7,7 +7,8 @@ window.addEventListener('error',e=>fail(e.error||e.message));window.addEventList
 (async()=>{try{
  statusEl.textContent='LOADING 3D';
  const THREE=await loadThree({timeoutMs:16000});
- const settings=loadSettings(),circuitId=resolveCircuit(settings),circuit=CIRCUITS[circuitId]||CIRCUITS.SUZUKA,track=getCircuitTrack(TRACK,circuitId);
+ const settings=loadSettings();settings.runtimeCleanWorld=true;
+ const circuitId=resolveCircuit(settings),circuit=CIRCUITS[circuitId]||CIRCUITS.SUZUKA,track=getCircuitTrack(TRACK,circuitId);
  statusEl.textContent='BUILDING TRACK';
  const W=buildWorld(THREE,track,settings,circuit.name),mobile=matchMedia?.('(pointer:coarse)')?.matches||innerWidth<760;
  const cleanup=cleanupLegacyWorld(W),surface=enhanceSurfaceDetail(W,{mobile}),PM=createPerformanceManager(W,settings,mobile),V=enhanceVisuals(W,settings,mobile);
