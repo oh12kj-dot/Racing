@@ -1,0 +1,150 @@
+import {SUZUKA_PIT} from './config.js';
+
+export function createPitStateMachine(W,R){
+  const QUEUE_GAP_METERS=8.5,QUEUE_TRIGGER_METERS=11.0;
+  const serviceTime={formula:2.6,proto:3.1,hyper:3.3,lmh:3.2,gt:4.1,supercar:4.3,touring:4.7};
+  let arrivalSerial=0;
+  const metrics={queued:0,released:0,services:0,legacyStopsRejected:0,doubleStacks:0,invariantRepairs:0};
+  const wrapS=s=>{const total=W.total||1;return((s%total)+total)%total;};
+
+  function poseTrack(c){
+    if(!c?.mesh)return;
+    const q=W.sample(c.s,c.lane);c.mesh.position.copy(q.p);c.mesh.position.y+=.12;c.mesh.rotation.y=Math.atan2(q.t.x,q.t.z);
+  }
+  function posePit(c,state=c.pitState){
+    if(!c?.mesh)return;
+    const q=W.pitPose?.(c.s,c.teamId,state);if(!q)return;
+    c.mesh.position.copy(q.p);c.mesh.position.y+=.12;c.mesh.rotation.y=q.rotationY;
+  }
+  function poseWorking(c){
+    if(!c?.mesh)return;
+    const q=W.pitWorkingPose?.(c.s)||W.pitPose?.(c.s,c.teamId,'ENTRY');if(!q)return;
+    c.mesh.position.copy(q.p);c.mesh.position.y+=.12;c.mesh.rotation.y=q.rotationY;
+  }
+  function ensureArrival(c){
+    if(c.pitState!=='NONE'&&c._runtimePitArrival==null)c._runtimePitArrival=++arrivalSerial;
+    if(c.pitState==='NONE'&&c._runtimePitArrival!=null&&c._runtimePitPhase!=='MERGE'){
+      c._runtimePitArrival=null;c._runtimePitQueued=false;c._runtimeQueueS=null;c._runtimePitPhase='TRACK';
+    }
+  }
+  function removeFreshPitStopEvent(carId,eventStart){
+    if(!Array.isArray(R.events))return;
+    for(let i=R.events.length-1;i>=eventStart;i--){const e=R.events[i];if(e?.carId===carId&&e?.type==='PIT_STOP')R.events.splice(i,1);}
+  }
+  function serviceOccupants(){
+    const m=new Map();
+    for(const c of R.cars){
+      if(c.retired||c.pitState!=='STOP')continue;ensureArrival(c);
+      const team=c.teamId??0,prior=m.get(team);
+      if(!prior||(c._runtimePitArrival??Infinity)<(prior._runtimePitArrival??Infinity))m.set(team,c);
+    }
+    return m;
+  }
+  function queue(c,forceGap=false,eventStart=Infinity){
+    const boxS=W.pitBoxS?.(c.teamId);if(!Number.isFinite(boxS))return false;
+    if(forceGap||!Number.isFinite(c._runtimeQueueS))c._runtimeQueueS=forceGap?wrapS(boxS-QUEUE_GAP_METERS):wrapS(c.s);
+    c._runtimePitQueued=true;c._runtimePitPhase='QUEUE';c.s=c._runtimeQueueS;c.v=0;c.pitState='ENTRY';c.pitTimer=0;c._pitStopInitial=0;c.pitLaneStatus='QUEUE';
+    removeFreshPitStopEvent(c.id,eventStart);poseWorking(c);metrics.queued++;if(forceGap)metrics.doubleStacks++;return true;
+  }
+  function holdQueue(c,eventStart=Infinity){
+    if(!c._runtimePitQueued||!Number.isFinite(c._runtimeQueueS))return;
+    c._runtimePitPhase='QUEUE';c.s=c._runtimeQueueS;c.v=0;c.pitState='ENTRY';c.pitTimer=0;c._pitStopInitial=0;c.pitLaneStatus='QUEUE';
+    removeFreshPitStopEvent(c.id,eventStart);poseWorking(c);
+  }
+  function releaseQueue(c){
+    c._runtimePitQueued=false;c._runtimeQueueS=null;c._runtimePitPhase='WORKING_APPROACH';c.pitState='ENTRY';c.pitTimer=0;c.v=Math.max(c.v||0,7);c.pitLaneStatus='WORKING';
+    posePit(c,'ENTRY');metrics.released++;
+  }
+  function startService(c){
+    const boxS=W.pitBoxS?.(c.teamId);if(!Number.isFinite(boxS))return false;
+    c._runtimePitQueued=false;c._runtimeQueueS=null;c._runtimePitPhase='SERVICE';c.s=boxS;c.v=0;c.pitState='STOP';c.pitTimer=serviceTime[c.type]||3.5;c._pitStopInitial=c.pitTimer;c.pitLaneStatus='JACKS';
+    posePit(c,'STOP');metrics.services++;return true;
+  }
+  function maybeStartService(c,dt,occupied){
+    if(c.retired||c.pitState!=='ENTRY'||c._runtimePitQueued||occupied.has(c.teamId??0))return false;
+    const dist=W.pitDistanceToBox?.(c.s,c.teamId);if(!Number.isFinite(dist))return false;
+    const threshold=Math.max(1.25,Math.max(c.v||0,7)*Math.max(dt,.016)*1.9);
+    return dist<=threshold&&dist>-2.5?startService(c):false;
+  }
+  function rejectPrematureLegacyStop(c,beforeState,beforeV,dt,eventStart){
+    if(beforeState!=='ENTRY'||c.pitState!=='STOP')return false;
+    const dist=W.pitDistanceToBox?.(c.s,c.teamId);if(!Number.isFinite(dist))return false;
+    if(dist<=Math.max(1.2,Math.max(beforeV,7)*dt*1.55))return false;
+    c.pitState='ENTRY';c.pitTimer=0;c._pitStopInitial=0;c.v=Math.min(Math.max(beforeV,7),W.pitSpeedLimit||22.22);c.pitLaneStatus='FAST LANE';c._runtimePitPhase='FAST_LANE';
+    removeFreshPitStopEvent(c.id,eventStart);posePit(c,'ENTRY');metrics.legacyStopsRejected++;return true;
+  }
+  function repairInvariant(c){
+    if(c.retired)return;
+    let repaired=false;
+    if(c._runtimePitQueued&&c.pitState!=='ENTRY'){c.pitState='ENTRY';repaired=true;}
+    if(c.pitState==='STOP'){
+      const bs=W.pitBoxS?.(c.teamId);if(Number.isFinite(bs)&&Math.abs(wrapS(c.s)-wrapS(bs))>.25){c.s=bs;repaired=true;}
+      if((c.v||0)!==0){c.v=0;repaired=true;}
+    }
+    if(c.pitState==='NONE'&&c._runtimePitQueued){c._runtimePitQueued=false;c._runtimeQueueS=null;repaired=true;}
+    if(repaired)metrics.invariantRepairs++;
+  }
+
+  function beforeUpdate(dt){
+    const snapshot=[];
+    for(const c of R.cars){
+      ensureArrival(c);snapshot[c.id]={state:c.pitState,v:c.v||0,s:c.s||0,phase:c._runtimePitPhase||'TRACK'};
+      if(c.pitState==='ENTRY'){
+        if(!c._runtimePitPhase||c._runtimePitPhase==='TRACK')c._runtimePitPhase=W.inPitSpeedZone?.(c.s)?'FAST_LANE':'PIT_ENTRY';
+        if(!W.inPitWindow?.(c.s))c.laneTarget=Math.max(c.laneTarget||0,3.8);
+      }
+    }
+    const occupied=serviceOccupants();
+    for(const c of R.cars){
+      if(c.retired||!c._runtimePitQueued)continue;
+      if(occupied.has(c.teamId??0))holdQueue(c);else releaseQueue(c);
+    }
+    return snapshot;
+  }
+
+  function afterUpdate(dt,snapshot,eventStart){
+    for(const c of R.cars){ensureArrival(c);const b=snapshot[c.id]||{state:'NONE',v:c.v||0};rejectPrematureLegacyStop(c,b.state,b.v,dt,eventStart);}
+
+    const stopGroups=new Map();
+    for(const c of R.cars){if(c.retired||c.pitState!=='STOP')continue;const team=c.teamId??0,list=stopGroups.get(team)||[];list.push(c);stopGroups.set(team,list);}
+    for(const list of stopGroups.values()){
+      if(list.length<2)continue;
+      list.sort((a,b)=>(a._runtimePitArrival??Infinity)-(b._runtimePitArrival??Infinity)||a.id-b.id);
+      for(let i=1;i<list.length;i++)queue(list[i],true,eventStart);
+    }
+
+    let occupied=serviceOccupants();
+    for(const c of R.cars){
+      if(c.retired||c.pitState!=='ENTRY')continue;
+      const blocker=occupied.get(c.teamId??0),dist=W.pitDistanceToBox?.(c.s,c.teamId);
+      if(c._runtimePitQueued){if(blocker)holdQueue(c,eventStart);else releaseQueue(c);continue;}
+      if(blocker&&Number.isFinite(dist)&&dist<=QUEUE_TRIGGER_METERS&&dist>-2.5){queue(c,false,eventStart);continue;}
+      c._runtimePitPhase=Number.isFinite(dist)&&dist<24?'WORKING_APPROACH':'FAST_LANE';c.pitLaneStatus=c._runtimePitPhase==='WORKING_APPROACH'?'WORKING':'FAST LANE';
+    }
+
+    occupied=serviceOccupants();
+    for(const c of R.cars){if(maybeStartService(c,dt,occupied))occupied.set(c.teamId??0,c);}
+
+    for(const c of R.cars){
+      const b=snapshot[c.id]||{state:'NONE',v:0};
+      if(c.pitState==='STOP'){
+        c._runtimePitPhase='SERVICE';c.s=W.pitBoxS?.(c.teamId)??c.s;c.v=0;c.pitLaneStatus='JACKS';posePit(c,'STOP');
+      }else if(c.pitState==='EXIT'){
+        c._runtimePitPhase='FAST_LANE_EXIT';c.pitLaneStatus='PIT EXIT';posePit(c,'EXIT');
+      }else if(b.state==='EXIT'&&c.pitState==='NONE'&&!c.retired){
+        const uf=W.pitUnwrappedFraction?.(c.s),exit=SUZUKA_PIT.exitEndUF;
+        if(Number.isFinite(uf)&&uf<exit){c.pitState='EXIT';c.v=Math.min(Math.max(b.v||0,8),W.pitSpeedLimit||22.22);c._runtimePitPhase='FAST_LANE_EXIT';c.pitLaneStatus='PIT EXIT';posePit(c,'EXIT');}
+        else{c._runtimePitPhase='MERGE';c.lane=SUZUKA_PIT.mergeTrackOffset;c.laneTarget=4.0;c.pitLaneStatus='MERGE';poseTrack(c);}
+      }else if(c.pitState==='NONE'&&c._runtimePitPhase==='MERGE'){
+        c._runtimePitPhase='TRACK';c._runtimePitArrival=null;c._runtimePitQueued=false;c._runtimeQueueS=null;c.pitLaneStatus='TRACK';
+      }
+      repairInvariant(c);
+    }
+  }
+
+  function diagnostics(){
+    return{owner:'runtime',metrics:{...metrics},cars:R.cars.filter(c=>c.pitState!=='NONE'||c._runtimePitPhase==='MERGE').map(c=>({id:c.id,team:c.teamId,state:c.pitState,phase:c._runtimePitPhase||'TRACK',queued:!!c._runtimePitQueued,s:c.s,v:c.v,status:c.pitLaneStatus}))};
+  }
+
+  return{beforeUpdate,afterUpdate,diagnostics,get metrics(){return{...metrics}}};
+}
