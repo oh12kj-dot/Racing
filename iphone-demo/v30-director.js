@@ -38,25 +38,22 @@ export function createDirector(R){
   function update(dt){
     base.update(dt);const t=now();
     if(manualUntil>t){focus=base.focus;shot=base.shot;return;}
+    const ev=latestEvent();
 
     if(pitEventFocus!=null){
-      const pc=R.cars[pitEventFocus];
+      const pc=R.cars[pitEventFocus],critical=ev&&priority(ev.type)>priority('PIT')+8;
+      if(critical){pitEventFocus=null;const id=ev.carId!=null?ev.carId:base.focus;cut(id,ev.type==='SPIN'||ev.type==='CONTACT'||ev.type==='INCIDENT'?'HELI':'CHASE',ev.type);return;}
       if(pc&&!pc.retired&&pc.pitState!=='NONE'){
-        focus=pc.id;shot='PIT';reason='PIT';
-        if(pc.pitState==='STOP')holdUntil=Math.max(holdUntil,t+2.4);
-        else if(pc.pitState==='EXIT')holdUntil=Math.max(holdUntil,t+1.4);
-        if(t<holdUntil)return;
+        focus=pc.id;shot='PIT';reason='PIT';holdUntil=Math.max(holdUntil,t+(pc.pitState==='STOP'?2.4:1.4));return;
       }
-      if(!pc||pc.pitState==='NONE'||t>=holdUntil)pitEventFocus=null;
+      pitEventFocus=null;
     }
 
-    const ev=latestEvent();
     if(ev){
       const currentPriority=priority(reason),nextPriority=priority(ev.type);
       if(t>=holdUntil||nextPriority>currentPriority+8){
         const id=ev.carId!=null?ev.carId:base.focus;
-        cut(id,ev.type==='SPIN'||ev.type==='CONTACT'||ev.type==='INCIDENT'?'HELI':'CHASE',ev.type);
-        return;
+        cut(id,ev.type==='SPIN'||ev.type==='CONTACT'||ev.type==='INCIDENT'?'HELI':'CHASE',ev.type);return;
       }
     }
 
