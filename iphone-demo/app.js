@@ -1,13 +1,13 @@
-// Racing v30: staggered pit traffic + event-aware broadcast camera.
+// Racing v31: realistic spin time loss + upgraded vehicle/radio audio.
 import {TRACK} from './track.js';
 import {loadSettings,saveSettings,resolveCircuit} from './v10-settings.js';
 import {CIRCUITS,getCircuitTrack} from './v10-circuits.js';
 import {buildWorld} from './v26-world.js';
-import {createRace} from './v30-race.js';
+import {createRace} from './v31-race.js';
 import {createDirector} from './v30-director.js';
 import {createEnvironment} from './v29-environment.js';
 import {createCamera} from './v30-camera.js';
-import {createAudio} from './v20-audio.js';
+import {createAudio} from './v31-audio.js';
 import {createUI} from './v26-ui.js';
 import {createSafetyCar} from './v27-safety-car.js';
 import {createBroadcast} from './v18-broadcast.js';
