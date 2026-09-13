@@ -4,12 +4,15 @@ export function createRace(W,statusEl,settings={}){
   const R=createV29Race(W,statusEl,settings),baseUpdate=R.update,total=W.total;
   const plans=new Map(),admissions=[];
   const PIT_CAPACITY=4,ADMIT_WINDOW=3,ADMIT_MAX=2,TEAM_GAP=7;
+  const shortRace=(R.race?.lapsTarget||0)<=10;
 
-  function emergency(c){
-    const wet=W.env?.wetness||0,puncture=c.fault==='PUNCTURE'||(c.wheelState||[]).some(w=>w.puncture);
-    const tyreCritical=(c.wear||0)>.90,lowFuel=(c.fuel??1)<.075,heavyDamage=(c.damage||0)>.72;
-    const wrongWet=wet>.64&&c.compound!=='WET',wrongDry=wet<.08&&c.compound==='WET';
-    return puncture||tyreCritical||lowFuel||heavyDamage||wrongWet||wrongDry;
+  function hardEmergency(c){
+    const puncture=c.fault==='PUNCTURE'||(c.wheelState||[]).some(w=>w.puncture);
+    return puncture||(c.wear||0)>.94||(c.fuel??1)<.055||(c.damage||0)>.82;
+  }
+  function urgentWeather(c){
+    const wet=W.env?.wetness||0;
+    return (wet>.68&&c.compound!=='WET')||(wet<.06&&c.compound==='WET');
   }
   function activePitCars(exceptId=-1){return R.cars.filter(c=>c.id!==exceptId&&!c.retired&&c.pitState!=='NONE');}
   function teamBusy(c){return R.cars.some(o=>o!==c&&!o.retired&&o.teamId===c.teamId&&o.pitState!=='NONE');}
@@ -29,8 +32,20 @@ export function createRace(W,statusEl,settings={}){
     if(Array.isArray(R.events))for(let i=R.events.length-1;i>=eventStart;i--){const e=R.events[i];if(e?.carId===carId&&['PIT_CALL','STRATEGY_CALL','RADAR_STRATEGY'].includes(e.type))R.events.splice(i,1);}
     if(Array.isArray(R.radio))for(let i=R.radio.length-1;i>=radioStart;i--){const m=R.radio[i],t=String(m?.text||'').toLowerCase();if(m?.carId===carId&&(t.includes('box')||m.kind==='STRATEGY'))R.radio.splice(i,1);}
   }
+  function routineStopMakesSense(c){
+    if(hardEmergency(c)||urgentWeather(c))return true;
+    const lapsLeft=Math.max(0,(R.race?.lapsTarget||0)-Math.max(0,c.lap||0)),wear=c.wear||0,reason=reasonFor(c);
+    if((c.lap||0)<1)return false;
+    if(shortRace){
+      if(lapsLeft<=2&&wear<.88)return false;
+      if(reason==='SAFETY CAR WINDOW'&&wear<.64)return false;
+      if(reason==='TYRE LIFE'&&wear<.76)return false;
+      if(reason==='STRATEGY'&&wear<.72)return false;
+    }
+    return true;
+  }
   function defer(c,eventStart,radioStart,why){
-    const p=planFor(c);p.deferred++;p.holdReason=why;
+    const p=planFor(c);p.deferred++;p.holdReason=why;p.earliest=Math.max(p.earliest,R.race.t+(why==='STAY OUT · SHORT RACE'?7:2.8));
     c.pitState='NONE';c.pitTimer=0;c.pitLaneStatus='TRACK';c.laneTarget*=.82;
     if(c.strategy){c.strategy.window='HOLD';c.strategy.reason=why;}
     removeNewPitMessages(c.id,eventStart,radioStart);
@@ -40,16 +55,18 @@ export function createRace(W,statusEl,settings={}){
     if(c.strategy)c.strategy.reason=p.reason;
   }
   function canAdmit(c){
-    if(emergency(c))return{ok:true,why:'EMERGENCY'};
-    cleanAdmissions();const p=planFor(c);
-    if(R.race.t<p.earliest)return{ok:false,why:'PIT WINDOW STAGGER'};
-    if(c._v30LastPitLap!=null&&(c.lap||0)-c._v30LastPitLap<1.25)return{ok:false,why:'RECENT STOP'};
-    if(teamBusy(c))return{ok:false,why:'TEAM BOX OCCUPIED'};
+    cleanAdmissions();const p=planFor(c),hard=hardEmergency(c),weather=urgentWeather(c);
+    if(hard)return{ok:true,why:'EMERGENCY'};
+    if(!routineStopMakesSense(c))return{ok:false,why:'STAY OUT · SHORT RACE'};
+    if(!weather&&R.race.t<p.earliest)return{ok:false,why:'PIT WINDOW STAGGER'};
+    if(c._v30LastPitLap!=null&&(c.lap||0)-c._v30LastPitLap<1.5)return{ok:false,why:'RECENT STOP'};
+    if(!weather&&teamBusy(c))return{ok:false,why:'TEAM BOX OCCUPIED'};
     const mateRecent=R.cars.some(o=>o!==c&&o.teamId===c.teamId&&Number.isFinite(o._v30PitAdmitAt)&&R.race.t-o._v30PitAdmitAt<TEAM_GAP);
-    if(mateRecent)return{ok:false,why:'DOUBLE STACK AVOIDANCE'};
-    if(activePitCars(c.id).length>=PIT_CAPACITY)return{ok:false,why:'PIT LANE TRAFFIC'};
-    if(admissions.length>=ADMIT_MAX)return{ok:false,why:'PIT LANE TRAFFIC'};
-    return{ok:true,why:'CLEAR'};
+    if(!weather&&mateRecent)return{ok:false,why:'DOUBLE STACK AVOIDANCE'};
+    const capacity=weather?PIT_CAPACITY+1:PIT_CAPACITY,rate=weather?ADMIT_MAX+1:ADMIT_MAX;
+    if(activePitCars(c.id).length>=capacity)return{ok:false,why:'PIT LANE TRAFFIC'};
+    if(admissions.length>=rate)return{ok:false,why:'PIT LANE TRAFFIC'};
+    return{ok:true,why:weather?'WEATHER PRIORITY':'CLEAR'};
   }
 
   function update(dt){
@@ -69,7 +86,7 @@ export function createRace(W,statusEl,settings={}){
 
   return new Proxy(R,{get(target,prop){
     if(prop==='update')return update;
-    if(prop==='pitTraffic')return{active:activePitCars().map(c=>c.id),recentAdmissions:[...admissions],plans:[...plans].map(([carId,p])=>({carId,...p}))};
+    if(prop==='pitTraffic')return{active:activePitCars().map(c=>c.id),recentAdmissions:[...admissions],plans:[...plans].map(([carId,p])=>({carId,...p})),shortRace};
     return Reflect.get(target,prop,target);
   }});
 }
