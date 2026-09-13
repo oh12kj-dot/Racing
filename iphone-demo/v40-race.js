@@ -36,16 +36,16 @@ export function createRace(W,statusEl,settings={}){
     }
     const x=speedEnvelope(c);st.raw=x.target;
     if(!Number.isFinite(st.target)||Math.abs(st.target-before)>35)st.target=x.target;
-    const tau=x.target<st.target?.18:.68,blend=1-Math.exp(-dt/tau);st.target+=(x.target-st.target)*blend;
+    const tau=x.target<st.target ? .24 : .78,blend=1-Math.exp(-dt/tau);st.target+=(x.target-st.target)*blend;
     const error=st.target-before;st.hold=Math.max(0,st.hold-dt);
-    let wanted=error<-1.15?'BRAKE':error>1.55?'THROTTLE':'COAST';
-    if(wanted!==st.mode&&(st.hold<=0||error<-4.5)){st.mode=wanted;st.hold=wanted==='COAST'?.16:.24;}
+    const wanted=error<-1.40?'BRAKE':error>1.80?'THROTTLE':'COAST';
+    if(wanted!==st.mode&&(st.hold<=0||error<-4.8)){st.mode=wanted;st.hold=wanted==='COAST' ? .20 : .30;}
     const accelBase=Math.max(2.5,c._v18BaseAccel||c.accel||6),brakeBase=x.brake;
     let desiredA=0;
-    if(st.mode==='BRAKE'){const demand=clamp((-error-.35)/7.5,.10,1);desiredA=-brakeBase*demand;}
-    else if(st.mode==='THROTTLE'){const demand=clamp((error-.35)/8.5,.08,1);desiredA=accelBase*demand;}
+    if(st.mode==='BRAKE'){const demand=clamp((-error-.45)/7.8,.08,1);desiredA=-brakeBase*demand;}
+    else if(st.mode==='THROTTLE'){const demand=clamp((error-.50)/8.8,0,1);desiredA=accelBase*demand;}
     else desiredA=-clamp(.18+before*.004,.18,.55);
-    const jerk=desiredA<st.accel?30:10,maxDelta=jerk*dt;st.accel+=clamp(desiredA-st.accel,-maxDelta,maxDelta);
+    const jerk=desiredA<st.accel?24:8,maxDelta=jerk*dt;st.accel+=clamp(desiredA-st.accel,-maxDelta,maxDelta);
     const controlled=Math.max(0,before+st.accel*dt),core=c.v||0;
     if(core>before)c.v=Math.min(core,controlled);else if(st.accel<0&&core>controlled)c.v=controlled;
     c.racingSpeedRaw=x.target;c.racingSpeedTarget=st.target;c.racingLongAccel=st.accel;c.racingMode=st.mode;c.racingBrake=clamp(-st.accel/Math.max(1,brakeBase),0,1);c.racingThrottle=clamp(st.accel/Math.max(1,accelBase),0,1);
