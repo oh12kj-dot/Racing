@@ -1,20 +1,22 @@
 // Racing runtime: stable entry point. Versioned legacy modules are hidden behind ./runtime/index.js.
 import {TRACK} from './track.js';
-import {loadSettings,saveSettings,resolveCircuit,CIRCUITS,getCircuitTrack,buildWorld,createRace,createDirector,createEnvironment,createCamera,createAudio,createUI,createSafetyCar,createBroadcast,createProfiler,createPerformanceManager,enhanceVisuals,createRuntimeRegression} from './runtime/index.js';
+import {loadSettings,saveSettings,resolveCircuit,CIRCUITS,getCircuitTrack,buildWorld,createRace,createDirector,createEnvironment,createCamera,createAudio,createUI,createSafetyCar,createBroadcast,createProfiler,createPerformanceManager,enhanceVisuals,enhanceSurfaceDetail,createEnvironmentReflections,createSceneQualityController,cleanupLegacyWorld,loadThree,createRuntimeRegression} from './runtime/index.js';
 const statusEl=document.getElementById('status'),speedEl=document.getElementById('speed'),camEl=document.getElementById('cam'),errorEl=document.getElementById('error');
 function fail(e){console.error(e);statusEl.textContent='ERROR';errorEl.style.display='block';errorEl.textContent='起動エラー: '+(e?.message||e)}
 window.addEventListener('error',e=>fail(e.error||e.message));window.addEventListener('unhandledrejection',e=>fail(e.reason));
-const timeout=(ms,msg)=>new Promise((_,r)=>setTimeout(()=>r(new Error(msg)),ms));
 (async()=>{try{
  statusEl.textContent='LOADING 3D';
- const THREE=await Promise.race([import('https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.min.js'),timeout(16000,'Three.jsの読み込みがタイムアウトしました')]);
+ const THREE=await loadThree({timeoutMs:16000});
  const settings=loadSettings(),circuitId=resolveCircuit(settings),circuit=CIRCUITS[circuitId]||CIRCUITS.SUZUKA,track=getCircuitTrack(TRACK,circuitId);
  statusEl.textContent='BUILDING TRACK';
- const W=buildWorld(THREE,track,settings,circuit.name),mobile=matchMedia?.('(pointer:coarse)')?.matches||innerWidth<760,PM=createPerformanceManager(W,settings,mobile),V=enhanceVisuals(W,settings,mobile);try{window.__RACING_PM__=PM;window.__RACING_AUDIT__=W.auditCircuit?.();window.__RACING_VISUALS__=V;}catch{}
+ const W=buildWorld(THREE,track,settings,circuit.name),mobile=matchMedia?.('(pointer:coarse)')?.matches||innerWidth<760;
+ const cleanup=cleanupLegacyWorld(W),surface=enhanceSurfaceDetail(W,{mobile}),PM=createPerformanceManager(W,settings,mobile),V=enhanceVisuals(W,settings,mobile);
+ try{window.__RACING_PM__=PM;window.__RACING_AUDIT__=W.auditCircuit?.();window.__RACING_VISUALS__=V;window.__RACING_WORLD_CLEANUP__=cleanup;window.__RACING_SURFACE__=surface;}catch{}
  if(W.updateEffects){const f=W.updateEffects.bind(W);let a=0;W.updateEffects=(cars,dt=.016)=>{a+=dt;const step=PM.interval('effects');if(a<step)return;const s=a;a=0;f(cars,s);};}
  if(W.updateDynamicSurface){const f=W.updateDynamicSurface.bind(W);let a=0;W.updateDynamicSurface=(race,wet,dt=.016)=>{a+=dt;const step=PM.interval('surface');if(a<step)return;const s=a;a=0;f(race,wet,s);};}
  if(W.updateDebris){const f=W.updateDebris.bind(W);let a=0;W.updateDebris=(dt=.016)=>{a+=dt;const step=Math.min(.08,PM.interval('effects'));if(a<step)return;const s=a;a=0;f(s);};}
- const R=createRace(W,statusEl,settings),D=createDirector(R),E=createEnvironment(W,R,settings),C=createCamera(W,R,D,camEl),A=createAudio(R,settings),Q=createRuntimeRegression(W,R);W.updateVisualWeather?.();try{window.__RACING_RACE__=R;window.__RACING_DIRECTOR__=D;window.__RACING_AUDIO__=A;window.__RACING_REGRESSION_MONITOR__=Q;}catch{}
+ const R=createRace(W,statusEl,settings),D=createDirector(R),E=createEnvironment(W,R,settings),F=createEnvironmentReflections(W,{mobile}),C=createCamera(W,R,D,camEl),A=createAudio(R,settings),Q=createRuntimeRegression(W,R),QL=createSceneQualityController(W,{mobile});W.updateVisualWeather?.();QL.apply(PM.level,R.cars);
+ try{window.__RACING_RACE__=R;window.__RACING_DIRECTOR__=D;window.__RACING_AUDIO__=A;window.__RACING_REGRESSION_MONITOR__=Q;window.__RACING_REFLECTIONS__=F;window.__RACING_SCENE_QUALITY__=QL;}catch{}
  A.setEnabled?.(settings.sound!==false);
  const U=createUI(W,R,D,E,C,A,settings,saveSettings),S=createSafetyCar(W,R),B=createBroadcast(W,R,D),P=createProfiler(W,{mobile,targetFps:PM.config.fps,race:R,director:D,audio:A});
  statusEl.textContent='GRID';
@@ -24,10 +26,10 @@ const timeout=(ms,msg)=>new Promise((_,r)=>setTimeout(()=>r(new Error(msg)),ms))
  W.renderer.setAnimationLoop(()=>{
    const now=performance.now(),rawDt=clock.getDelta(),dt=PM.beginFrame(now,rawDt);if(dt==null)return;const workStart=performance.now();P.beginFrame(now);
    P.measure('RACE AI',()=>R.update(dt));P.measure('REGRESSION',()=>Q.update(dt));P.measure('HUD',updateSessionHUD);P.measure('DIRECTOR',()=>D.update(dt));
-   envAcc+=dt;const envStep=PM.interval('weather');if(envAcc>=envStep){const e=envAcc;envAcc=0;P.measure('WEATHER',()=>{E.update(e);W.updateVisualWeather?.();});}
+   envAcc+=dt;const envStep=PM.interval('weather');if(envAcc>=envStep){const e=envAcc;envAcc=0;P.measure('WEATHER',()=>{E.update(e);W.updateVisualWeather?.();F.paint?.();});}
    P.measure('SAFETY CAR',()=>S.update(dt));
    const idx=P.measure('CAMERA',()=>C.update(dt,now)),c=R.cars[idx]||R.getStandings()[0];
-   lodAcc+=dt;const lodStep=PM.interval('lod');if(lodAcc>=lodStep){P.measure('LOD',()=>{W.updateVehicleLOD?.(R.cars);W.updateShadowVisibility?.(R.cars);});lodAcc=0;}
+   lodAcc+=dt;const lodStep=PM.interval('lod');if(lodAcc>=lodStep){P.measure('LOD',()=>{W.updateVehicleLOD?.(R.cars);W.updateShadowVisibility?.(R.cars);QL.apply(PM.level,R.cars);});lodAcc=0;}
    let shadowDid=false;const shadowStep=PM.interval('shadow');if(Number.isFinite(shadowStep)){shadowAcc+=dt;if(shadowAcc>=shadowStep){W.renderer.shadowMap.needsUpdate=true;shadowAcc=0;shadowDid=true;}}
    P.measure('AUDIO',()=>{A.setFocus(idx);A.update(dt);});P.measure('UI',()=>U.update(dt,idx));
    const q=P.gpuBegin();P.measure('RENDER CPU',()=>W.renderer.render(W.scene,W.camera));P.gpuEnd(q);if(!mobile)P.measure('PIP',()=>B.render());
