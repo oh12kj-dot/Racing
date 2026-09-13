@@ -24,7 +24,7 @@ export function createEnvironment(W,R,settings={}){
         float cloudMask=smoothstep(.72-uCloud*.42,.90-uCloud*.18,wave)*cloudBand*clamp(uCloud*1.55,0.0,1.0);
         col=mix(col,uCloudColor,cloudMask*(.58+uRain*.30));
         float sunDot=dot(d,normalize(uSunDir));
-        float sun= smoothstep(.9987,.99975,sunDot);
+        float sun=smoothstep(.9987,.99975,sunDot);
         float glow=smoothstep(.965,.9995,sunDot)*(.24+.34*uTwilight);
         vec3 sunCol=mix(vec3(1.0,.91,.70),vec3(1.0,.35,.10),uTwilight);
         col+=sunCol*(sun*1.30+glow*.28)*(1.0-cloudMask*.82)*(1.0-uRain*.72)*(1.0-uNight);
@@ -46,7 +46,8 @@ export function createEnvironment(W,R,settings={}){
   const tmpTop=new T.Color(),tmpHorizon=new T.Color(),tmpCloud=new T.Color();
 
   function updateSky(){
-    const hour=((W.env?.timeOfDay??Number(settings.time)||14.2)%24+24)%24,cloud=clamp(W.env?.cloud||0,0,1),rain=clamp(W.env?.rain||0,0,1);
+    const envHour=Number(W.env?.timeOfDay),settingHour=Number(settings.time),sourceHour=Number.isFinite(envHour)?envHour:(Number.isFinite(settingHour)?settingHour:14.2);
+    const hour=((sourceHour%24)+24)%24,cloud=clamp(W.env?.cloud||0,0,1),rain=clamp(W.env?.rain||0,0,1);
     const solar=Math.sin((hour-6)/12*Math.PI),day=clamp(solar*1.9+.08,0,1),night=1-day;
     const twilightWindow=(hour>=4.5&&hour<=8.0)||(hour>=16.0&&hour<=20.2),twilight=twilightWindow?clamp(1-Math.abs(solar)*3.5,0,1):0;
     tmpTop.copy(nightTop).lerp(dayTop,day).lerp(sunsetTop,twilight*.72).lerp(storm,cloud*.32+rain*.28);
