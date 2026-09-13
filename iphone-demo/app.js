@@ -2,13 +2,13 @@ import {TRACK} from './track.js';
 import {loadSettings,saveSettings,resolveCircuit} from './v10-settings.js';
 import {CIRCUITS,getCircuitTrack} from './v10-circuits.js';
 import {buildWorld} from './v23-world.js';
-import {createRace} from './v24-race.js';
+import {createRace} from './v25-race.js';
 import {createDirector} from './v22-director.js';
 import {createEnvironment} from './v21-environment.js';
 import {createCamera} from './v13-camera.js';
 import {createAudio} from './v20-audio.js';
 import {createUI} from './v24-ui.js';
-import {createSafetyCar} from './v14-safety-car.js';
+import {createSafetyCar} from './v25-safety-car.js';
 import {createBroadcast} from './v18-broadcast.js';
 import {createProfiler} from './v21-profiler.js';
 import {createPerformanceManager} from './v24-performance.js';
@@ -34,7 +34,7 @@ const timeout=(ms,msg)=>new Promise((_,r)=>setTimeout(()=>r(new Error(msg)),ms))
    const now=performance.now(),rawDt=clock.getDelta(),dt=PM.beginFrame(now,rawDt);if(dt==null)return;const workStart=performance.now();P.beginFrame();
    P.measure('RACE AI',()=>R.update(dt));P.measure('HUD',updateSessionHUD);P.measure('DIRECTOR',()=>D.update(dt));
    envAcc+=dt;const envStep=PM.interval('weather');if(envAcc>=envStep){const e=envAcc;envAcc=0;P.measure('WEATHER',()=>E.update(e));}
-   P.measure('SAFETY CAR',()=>S.update());
+   P.measure('SAFETY CAR',()=>S.update(dt));
    const idx=P.measure('CAMERA',()=>C.update(dt,now)),c=R.cars[idx]||R.getStandings()[0];
    lodAcc+=dt;const lodStep=PM.interval('lod');if(lodAcc>=lodStep){P.measure('LOD',()=>W.updateVehicleLOD?.(R.cars));lodAcc=0;}
    let shadowDid=false;const shadowStep=PM.interval('shadow');if(Number.isFinite(shadowStep)){shadowAcc+=dt;if(shadowAcc>=shadowStep){W.renderer.shadowMap.needsUpdate=true;shadowAcc=0;shadowDid=true;}}
