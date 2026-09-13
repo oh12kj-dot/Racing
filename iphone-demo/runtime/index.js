@@ -8,6 +8,7 @@ export {enhanceSurfaceDetail} from './surface-detail.js';
 export {createEnvironmentReflections} from './reflections.js';
 export {createSceneQualityController} from './quality-scene.js';
 export {cleanupLegacyWorld} from './world-cleanup.js';
+export {attachRuntimeAudit} from './audit-meta.js';
 export {loadThree} from './three-loader.js';
 export {createCamera} from './camera.js';
 export {createRuntimeRegression} from './regression.js';
