@@ -10,7 +10,7 @@ This audit covers the active `iphone-demo` runtime path used by `app.js`, with s
 - `v42-config.js` — central lifecycle and Suzuka pit-layout constants.
 - `v42-world.js` — final pit/home-straight architecture, physical guardrails, pit entry/exit openings, circuit audit.
 - `v42-race.js` — bounded event/radio/telemetry/crash-history lifecycle.
-- `v41-director.js` — broadcast event selection and cut history.
+- `v41-director.js` — broadcast event selection and time-bounded cut history.
 - `v41-camera.js` — camera placement/cut execution.
 - `v41-audio.js` — single AudioContext radio/engine implementation.
 - `v42-profiler.js` — bounded diagnostics, copy-only export, manual clear.
@@ -22,7 +22,7 @@ Historical modules remain because the current feature stack still imports select
 
 ### Unbounded diagnostics
 
-All active diagnostics are memory-only and capped:
+All active diagnostics are memory-only and bounded:
 
 - profiler samples: 90
 - exported profiler samples: 60
@@ -30,7 +30,7 @@ All active diagnostics are memory-only and capped:
 - race events: 180
 - radio messages: 60
 - physical crash history: 60
-- camera cut history: 120 seconds / max 80 intended entries
+- camera cut history: last 120 seconds only
 
 No diagnostics are written to `localStorage` or `sessionStorage`. Settings/championship state remain the only browser-persistent data.
 
