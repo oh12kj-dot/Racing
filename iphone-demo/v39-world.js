@@ -38,7 +38,18 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
   // A second small smoothing pass keeps steering continuous through chicanes while preserving side changes.
   const tmp=new Float32Array(line);for(let i=0;i<count;i++)line[i]=tmp[wrapIndex(i-2)]*.06+tmp[wrapIndex(i-1)]*.18+tmp[i]*.52+tmp[wrapIndex(i+1)]*.18+tmp[wrapIndex(i+2)]*.06;
 
+  // The speed model follows the curvature of the generated racing line itself, not the centreline.
+  // This makes outside-apex-outside genuinely carry more speed instead of being only a visual lane choice.
+  const linePoints=new Array(count),lineCurvRaw=new Float32Array(count),lineCurv=new Float32Array(count);
+  for(let i=0;i<count;i++)linePoints[i]=W.sample(i*step,line[i]).p;
+  for(let i=0;i<count;i++){
+    const p0=linePoints[wrapIndex(i-1)],p1=linePoints[i],p2=linePoints[wrapIndex(i+1)],aX=p1.x-p0.x,aZ=p1.z-p0.z,bX=p2.x-p1.x,bZ=p2.z-p1.z,l1=Math.hypot(aX,aZ)||1,l2=Math.hypot(bX,bZ)||1,dot=clamp((aX*bX+aZ*bZ)/(l1*l2),-1,1),cross=(aX*bZ-aZ*bX)/(l1*l2);
+    lineCurvRaw[i]=Math.atan2(cross,dot)/Math.max(.5,(l1+l2)*.5);
+  }
+  for(let i=0;i<count;i++)lineCurv[i]=lineCurvRaw[wrapIndex(i-2)]*.08+lineCurvRaw[wrapIndex(i-1)]*.18+lineCurvRaw[i]*.48+lineCurvRaw[wrapIndex(i+1)]*.18+lineCurvRaw[wrapIndex(i+2)]*.08;
+
   W.curvatureAt=s=>field(smooth,s);
+  W.racingCurvatureAt=s=>field(lineCurv,s);
   W.racingLineAt=s=>field(line,s);
   W.racingLineProfile={count,step,apexes:apex.map(a=>({s:a.s,k:a.k,strength:a.strength}))};
 
@@ -47,7 +58,7 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
   const look=[0,22,45,72,105,145,190,235];
   W.braking=s=>{
     const wet=clamp(W.env?.wetness||0,0,1),refTop=88,latAccel=3.70*9.81*(1-wet*.38),brakeAccel=20.0*(1-wet*.34);let allowed=refTop;
-    for(const d of look){const k=Math.abs(field(smooth,s+d));if(k<.00115)continue;const corner=Math.min(refTop,Math.sqrt(Math.max(1,latAccel/k))),now=Math.sqrt(corner*corner+2*brakeAccel*d);if(now<allowed)allowed=now;}
+    for(const d of look){const k=Math.abs(field(lineCurv,s+d));if(k<.00115)continue;const corner=Math.min(refTop,Math.sqrt(Math.max(1,latAccel/k))),now=Math.sqrt(corner*corner+2*brakeAccel*d);if(now<allowed)allowed=now;}
     return clamp((1-allowed/refTop)/.70,0,1);
   };
   return W;
