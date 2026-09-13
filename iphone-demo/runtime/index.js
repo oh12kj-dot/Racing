@@ -5,6 +5,7 @@ export {createUI} from './ui.js';
 export {createProfiler} from './profiler.js';
 export {enhanceVisuals} from './visuals.js';
 export {createCamera} from './camera.js';
+export {createRuntimeRegression} from './regression.js';
 export {createDirector} from '../v41-director.js';
 export {createEnvironment} from '../v38-environment.js';
 export {createSafetyCar} from '../v27-safety-car.js';
