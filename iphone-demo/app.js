@@ -1,8 +1,6 @@
 // Racing runtime: stable entry point. Versioned legacy modules are hidden behind ./runtime/index.js.
 import {TRACK} from './track.js';
-import {loadSettings,saveSettings,resolveCircuit} from './v10-settings.js';
-import {CIRCUITS,getCircuitTrack} from './v10-circuits.js';
-import {buildWorld,createRace,createDirector,createEnvironment,createCamera,createAudio,createUI,createSafetyCar,createBroadcast,createProfiler,createPerformanceManager} from './runtime/index.js';
+import {loadSettings,saveSettings,resolveCircuit,CIRCUITS,getCircuitTrack,buildWorld,createRace,createDirector,createEnvironment,createCamera,createAudio,createUI,createSafetyCar,createBroadcast,createProfiler,createPerformanceManager} from './runtime/index.js';
 const statusEl=document.getElementById('status'),speedEl=document.getElementById('speed'),camEl=document.getElementById('cam'),errorEl=document.getElementById('error');
 function fail(e){console.error(e);statusEl.textContent='ERROR';errorEl.style.display='block';errorEl.textContent='起動エラー: '+(e?.message||e)}
 window.addEventListener('error',e=>fail(e.error||e.message));window.addEventListener('unhandledrejection',e=>fail(e.reason));
