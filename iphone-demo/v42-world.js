@@ -2,7 +2,7 @@ import {buildWorld as buildV41World} from './v41-world.js';
 import {SUZUKA_PIT,BUILDING_LAYOUT} from './v42-config.js';
 
 export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
-  const W=buildV41World(THREE,TRACK,settings,circuitName),total=W.total;
+  const W=buildV41World(THREE,TRACK,settings,circuitName),total=W.total,cleanRuntime=!!settings.runtimeCleanWorld;
   const clamp=(v,a,b)=>Math.max(a,Math.min(b,v)),wrapF=f=>((f%1)+1)%1;
   const pitOld=W.pitPose?.bind(W);
   const oldPitComplex=W.scene.getObjectByName?.('PIT_COMPLEX_V41');
@@ -114,9 +114,11 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
     const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));g.setIndex(ind);g.computeVertexNormals();
     const m=new THREE.Mesh(g,mat);m.receiveShadow=true;root.add(m);return m;
   }
-  pathRibbon(5.15,concreteDark,.045);
-  pathRibbon(SUZUKA_PIT.laneHalfWidth,asphalt,.068);
-  pathRibbon(.42,blue,.086,-SUZUKA_PIT.laneHalfWidth-.55);
+  if(!cleanRuntime){
+    pathRibbon(5.15,concreteDark,.045);
+    pathRibbon(SUZUKA_PIT.laneHalfWidth,asphalt,.068);
+    pathRibbon(.42,blue,.086,-SUZUKA_PIT.laneHalfWidth-.55);
+  }
 
   const buildingStart=boxUF(0)-12/total,buildingEnd=boxUF(9)+12/total,buildingLength=(buildingEnd-buildingStart)*total;
   const bayPitch=8.2,bays=Math.max(18,Math.round(buildingLength/bayPitch));
@@ -125,14 +127,14 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
     g.position.copy(q.p);g.rotation.y=q.rotationY;root.add(g);
     const pitch=buildingLength/bays+0.22,x=-BUILDING_LAYOUT.garageCenterOffset;
     add(g,new THREE.BoxGeometry(BUILDING_LAYOUT.garageDepth,BUILDING_LAYOUT.garageHeight,pitch),concrete,x,BUILDING_LAYOUT.garageHeight/2,0);
-    add(g,new THREE.PlaneGeometry(pitch*.76,2.70),dark,x+BUILDING_LAYOUT.garageDepth*.5+.012,1.58,0,0,Math.PI/2,0);
+    if(!cleanRuntime)add(g,new THREE.PlaneGeometry(pitch*.76,2.70),dark,x+BUILDING_LAYOUT.garageDepth*.5+.012,1.58,0,0,Math.PI/2,0);
     add(g,new THREE.BoxGeometry(BUILDING_LAYOUT.garageDepth+.35,BUILDING_LAYOUT.hospitalityHeight,pitch),concrete,x-.10,5.62,0);
     add(g,new THREE.PlaneGeometry(pitch*.76,1.75),glass,x+BUILDING_LAYOUT.garageDepth*.5+.20,5.62,0,0,Math.PI/2,0);
     add(g,new THREE.BoxGeometry(10.6,.22,pitch+.12),roofMat,-7.65,BUILDING_LAYOUT.canopyHeight,0);
     const rail=add(g,new THREE.BoxGeometry(.09,1.05,pitch),dark,-6.20,6.98,0);rail.castShadow=false;
   }
 
-  for(let team=0;team<10;team++){
+  if(!cleanRuntime)for(let team=0;team<10;team++){
     const uf=boxUF(team),q=pitCenterUF(uf),g=new THREE.Group();g.position.copy(q.p);g.rotation.y=q.rotationY;root.add(g);
     add(g,new THREE.BoxGeometry(2.9,.026,5.6),concrete,0,.10,0);
     add(g,new THREE.BoxGeometry(2.60,.028,5.25),asphalt,0,.116,0);
@@ -280,10 +282,11 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
     version:'v42',
     removedLegacyPitBoxes:obsolete.length,
     removedLegacyPitSideStands:legacyStand.length,
+    cleanRuntimeGeometry:cleanRuntime,
     pitOpenings:auditPitOpenings(),
     minimumPitLaneBuildingClearance:Number.isFinite(laneBuildingMin)?laneBuildingMin:null,
     logPersistence:'NONE',
-    notes:['pit barriers use one geometry/collider mask','legacy home-straight pit buildings removed','main grandstand moved opposite pit building']
+    notes:['pit barriers use one geometry/collider mask','legacy home-straight pit buildings removed','main grandstand moved opposite pit building',cleanRuntime?'runtime replacement pit ribbons/boxes are not constructed twice':'legacy pit visuals constructed']
   };
   W.auditCircuit=()=>JSON.parse(JSON.stringify(W.circuitAudit));
   W.pitComplexV42={root,boxUF,buildingStart,buildingEnd,barrierRoot,pitWall};
