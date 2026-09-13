@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "vehicles": {},
+  "trackside": {},
+  "notes": "Optional optimized GLB/GLTF render assets. Physics/collision dimensions remain owned by the simulation; missing entries use the procedural fallback."
+}
