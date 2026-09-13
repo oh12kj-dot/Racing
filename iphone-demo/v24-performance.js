@@ -17,7 +17,13 @@ export function createPerformanceManager(W,settings={},mobile=false){
   function effective(){const q={...base};if(base.auto&&mobile){q.dpr*=level===0?1:level===1?.91:.80;q.shadowHz=level===0?q.shadowHz:level===1?Math.min(q.shadowHz,4):Math.min(q.shadowHz,2);q.effectHz=level===0?q.effectHz:level===1?Math.min(q.effectHz,24):Math.min(q.effectHz,16);q.weatherHz=Math.min(q.weatherHz,q.effectHz);q.lodHz=level===0?q.lodHz:Math.min(q.lodHz,5);}return q;}
   function apply(force=false){const q=effective();const maxDevice=mobile?1.35:1.75,target=Math.min(devicePixelRatio||1,maxDevice,q.dpr);if(force||Math.abs(renderer.getPixelRatio()-target)>.02)renderer.setPixelRatio(target);renderer.shadowMap.enabled=q.shadowHz>0;if(W.sun?.shadow){const size=q.shadowHz>=6?1024:q.shadowHz>=3?768:q.shadowHz>0?512:256;if(W.sun.shadow.mapSize.x!==size){W.sun.shadow.mapSize.set(size,size);W.sun.shadow.map?.dispose?.();W.sun.shadow.map=null;}renderer.shadowMap.autoUpdate=!mobile&&q.shadowHz>=8;renderer.shadowMap.needsUpdate=q.shadowHz>0;}current={...q,targetDpr:target};return current;}
   apply(true);
-  function beginFrame(now,rawDt){accumDt+=Math.min(.05,rawDt);const interval=1000/current.fps;if(now-lastRun+0.25<interval)return null;lastRun=now;const dt=Math.min(.05,Math.max(.001,accumDt));accumDt=0;return dt;}
+  function beginFrame(now,rawDt){
+    accumDt+=Math.min(.05,rawDt);const interval=1000/current.fps;
+    if(!lastRun){lastRun=now;const dt=Math.min(.05,Math.max(.001,accumDt));accumDt=0;return dt;}
+    if(now-lastRun+0.35<interval)return null;
+    if(now-lastRun>interval*2.5)lastRun=now;else lastRun+=interval;
+    const dt=Math.min(.05,Math.max(.001,accumDt));accumDt=0;return dt;
+  }
   function observe(workMs,now){workEMA=workEMA?workEMA+(workMs-workEMA)*.08:workMs;if(!base.auto||!mobile||now-lastTune<2500)return;lastTune=now;const budget=1000/current.fps;if(workEMA>budget*.88&&level<2){level++;apply();}else if(workEMA<budget*.52&&level>0){level--;apply();}}
   function resize(){apply(true);}
   return{
