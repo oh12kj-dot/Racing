@@ -1,3 +1,4 @@
+// Racing v30: staggered pit traffic + event-aware broadcast camera.
 import {TRACK} from './track.js';
 import {loadSettings,saveSettings,resolveCircuit} from './v10-settings.js';
 import {CIRCUITS,getCircuitTrack} from './v10-circuits.js';
