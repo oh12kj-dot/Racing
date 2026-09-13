@@ -1,14 +1,14 @@
-// Racing v33: physical barriers + real object collision damage.
+// Racing v34: persistent sound settings + realistic vehicle dimensions.
 import {TRACK} from './track.js';
 import {loadSettings,saveSettings,resolveCircuit} from './v10-settings.js';
 import {CIRCUITS,getCircuitTrack} from './v10-circuits.js';
-import {buildWorld} from './v33-world.js';
+import {buildWorld} from './v34-world.js';
 import {createRace} from './v33-race.js';
 import {createDirector} from './v30-director.js';
 import {createEnvironment} from './v29-environment.js';
 import {createCamera} from './v30-camera.js';
 import {createAudio} from './v32-audio.js';
-import {createUI} from './v26-ui.js';
+import {createUI} from './v34-ui.js';
 import {createSafetyCar} from './v27-safety-car.js';
 import {createBroadcast} from './v18-broadcast.js';
 import {createProfiler} from './v21-profiler.js';
@@ -26,7 +26,9 @@ const timeout=(ms,msg)=>new Promise((_,r)=>setTimeout(()=>r(new Error(msg)),ms))
  if(W.updateEffects){const f=W.updateEffects.bind(W);let a=0;W.updateEffects=(cars,dt=.016)=>{a+=dt;const step=PM.interval('effects');if(a<step)return;const s=a;a=0;f(cars,s);};}
  if(W.updateDynamicSurface){const f=W.updateDynamicSurface.bind(W);let a=0;W.updateDynamicSurface=(race,wet,dt=.016)=>{a+=dt;const step=PM.interval('surface');if(a<step)return;const s=a;a=0;f(race,wet,s);};}
  if(W.updateDebris){const f=W.updateDebris.bind(W);let a=0;W.updateDebris=(dt=.016)=>{a+=dt;const step=Math.min(.08,PM.interval('effects'));if(a<step)return;const s=a;a=0;f(s);};}
- const R=createRace(W,statusEl,settings),D=createDirector(R),E=createEnvironment(W,R,settings),C=createCamera(W,R,D,camEl),A=createAudio(R),U=createUI(W,R,D,E,C,A,settings,saveSettings),S=createSafetyCar(W,R),B=createBroadcast(W,R,D),P=createProfiler(W,{mobile});
+ const R=createRace(W,statusEl,settings),D=createDirector(R),E=createEnvironment(W,R,settings),C=createCamera(W,R,D,camEl),A=createAudio(R);
+ A.setEnabled?.(settings.sound!==false);
+ const U=createUI(W,R,D,E,C,A,settings,saveSettings),S=createSafetyCar(W,R),B=createBroadcast(W,R,D),P=createProfiler(W,{mobile});
  statusEl.textContent='GRID';
  addEventListener('resize',()=>{W.camera.aspect=innerWidth/innerHeight;W.camera.updateProjectionMatrix();W.renderer.setSize(innerWidth,innerHeight);PM.resize();},{passive:true});
  const clock=new THREE.Clock();let envAcc=0,lodAcc=0,shadowAcc=0;
