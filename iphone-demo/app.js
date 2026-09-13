@@ -1,13 +1,13 @@
 import {TRACK} from './track.js';
 import {loadSettings,saveSettings,resolveCircuit} from './v10-settings.js';
 import {CIRCUITS,getCircuitTrack} from './v10-circuits.js';
-import {buildWorld} from './v23-world.js';
-import {createRace} from './v25-race.js';
+import {buildWorld} from './v26-world.js';
+import {createRace} from './v26-race.js';
 import {createDirector} from './v22-director.js';
-import {createEnvironment} from './v21-environment.js';
+import {createEnvironment} from './v26-environment.js';
 import {createCamera} from './v13-camera.js';
 import {createAudio} from './v20-audio.js';
-import {createUI} from './v24-ui.js';
+import {createUI} from './v26-ui.js';
 import {createSafetyCar} from './v25-safety-car.js';
 import {createBroadcast} from './v18-broadcast.js';
 import {createProfiler} from './v21-profiler.js';
@@ -40,7 +40,7 @@ const timeout=(ms,msg)=>new Promise((_,r)=>setTimeout(()=>r(new Error(msg)),ms))
    let shadowDid=false;const shadowStep=PM.interval('shadow');if(Number.isFinite(shadowStep)){shadowAcc+=dt;if(shadowAcc>=shadowStep){W.renderer.shadowMap.needsUpdate=true;shadowAcc=0;shadowDid=true;}}
    P.measure('AUDIO',()=>{A.setFocus(idx);A.update(dt);});P.measure('UI',()=>U.update(dt,idx));
    const q=P.gpuBegin();P.measure('RENDER CPU',()=>W.renderer.render(W.scene,W.camera));P.gpuEnd(q);if(!mobile)P.measure('PIP',()=>B.render());
-   if(c){const flags=[c.blueFlag?'BLUE':'',c.hydroplaning?'HYDRO':'',c._doubleStackWait>0?'DOUBLE STACK':'',c.drsActive?'DRS':'',c.energyMode&&c.energyMode!=='BALANCED'?c.energyMode:'',c.spinState&&c.spinState!=='NONE'?c.spinState:''].filter(Boolean).join(' · ');speedEl.textContent=`${W.circuitName} · ${R.raceClass||'MIXED'} · ${String(c.type||'car').toUpperCase()} · CAR ${c.number} ${c.name} · P${c.position} · ${Math.round(c.v*3.6)} km/h${flags?' · '+flags:''}`;}
+   if(c){const flags=[c.localYellow?'LOCAL YELLOW':'',c.blueFlag?'BLUE':'',c.hydroplaning?'HYDRO':'',c._doubleStackWait>0?'DOUBLE STACK':'',c.drsActive?'DRS':'',c.energyMode&&c.energyMode!=='BALANCED'?c.energyMode:'',c.spinState&&c.spinState!=='NONE'?c.spinState:''].filter(Boolean).join(' · ');speedEl.textContent=`${W.circuitName} · ${R.raceClass||'MIXED'} · ${String(c.type||'car').toUpperCase()} · CAR ${c.number} ${c.name} · P${c.position} · ${Math.round(c.v*3.6)} km/h${flags?' · '+flags:''}`;}
    P.endFrame({shadow:shadowDid});PM.observe(performance.now()-workStart,performance.now());
  });
 }catch(e){fail(e)}})();
