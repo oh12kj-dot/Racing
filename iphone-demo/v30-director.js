@@ -2,7 +2,7 @@ import {createDirector as createV22Director} from './v22-director.js';
 
 export function createDirector(R){
   const base=createV22Director(R),seen=new Set(),pitPrev=new Map();
-  let focus=base.focus,shot=base.shot,holdUntil=0,reason='NORMAL',manualUntil=0,lastCut=-999,pitFocus=null;
+  let focus=base.focus,shot=base.shot,holdUntil=0,reason='NORMAL',manualUntil=0,lastCut=-999,pitEventFocus=null;
   const mobile=matchMedia?.('(pointer:coarse)')?.matches||innerWidth<760;
   const HOLD={NORMAL:7,BATTLE:10,SPIN:7,LOCKUP:4.5,CONTACT:7,INCIDENT:7,RETIREMENT:8,SAFETY_CAR:8,RED_FLAG:8,PIT:9};
 
@@ -39,15 +39,15 @@ export function createDirector(R){
     base.update(dt);const t=now();
     if(manualUntil>t){focus=base.focus;shot=base.shot;return;}
 
-    if(pitFocus!=null){
-      const pc=R.cars[pitFocus];
+    if(pitEventFocus!=null){
+      const pc=R.cars[pitEventFocus];
       if(pc&&!pc.retired&&pc.pitState!=='NONE'){
         focus=pc.id;shot='PIT';reason='PIT';
         if(pc.pitState==='STOP')holdUntil=Math.max(holdUntil,t+2.4);
         else if(pc.pitState==='EXIT')holdUntil=Math.max(holdUntil,t+1.4);
         if(t<holdUntil)return;
       }
-      if(!pc||pc.pitState==='NONE'||t>=holdUntil)pitFocus=null;
+      if(!pc||pc.pitState==='NONE'||t>=holdUntil)pitEventFocus=null;
     }
 
     const ev=latestEvent();
@@ -61,7 +61,7 @@ export function createDirector(R){
     }
 
     const pc=pitCandidate();
-    if(pc&&t>=holdUntil){pitFocus=pc.id;cut(pc.id,'PIT','PIT');return;}
+    if(pc&&t>=holdUntil){pitEventFocus=pc.id;cut(pc.id,'PIT','PIT');return;}
 
     if(t<holdUntil)return;
     const b=activeBattle();
@@ -71,13 +71,13 @@ export function createDirector(R){
     if(changed&&t-lastCut>=HOLD.NORMAL){focus=base.focus;shot=base.shot;reason='NORMAL';lastCut=t;holdUntil=t+HOLD.NORMAL;}
   }
 
-  function userFocus(id){base.userFocus(id);focus=id;shot=base.shot||shot;manualUntil=now()+12;lastCut=now();holdUntil=manualUntil;reason='MANUAL';pitFocus=null;}
+  function userFocus(id){base.userFocus(id);focus=id;shot=base.shot||shot;manualUntil=now()+12;lastCut=now();holdUntil=manualUntil;reason='MANUAL';pitEventFocus=null;}
 
   return{
     update,userFocus,
     get focus(){return focus},get shot(){return shot},get reason(){return reason},
     get banner(){return base.banner},get battles(){return base.battles||[]},
     get pipFocus(){return mobile?null:base.pipFocus},get pipActive(){return mobile?false:base.pipActive},
-    get holdRemaining(){return Math.max(0,holdUntil-now())},get pitFocus(){return pitFocus}
+    get holdRemaining(){return Math.max(0,holdUntil-now())},get pitEventFocus(){return pitEventFocus}
   };
 }
