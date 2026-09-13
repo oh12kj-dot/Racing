@@ -5,12 +5,13 @@ export function createRace(W,statusEl,settings={}){
   const physicalSCEnabled=settings.safetyCar!==false;
   const R=createV25Race(W,statusEl,{...settings,safetyCar:false}),baseUpdate=R.update,total=W.total;
   const clamp=(v,a,b)=>Math.max(a,Math.min(b,v)),wrap=v=>((v%total)+total)%total;
-  const targets={formula:[91,98],hyper:[105,115],lmh:[105,115],proto:[103,114],gt:[118,128],supercar:[120,132],touring:[128,145]};
+  const baseTargets={formula:[91,98],hyper:[105,115],lmh:[105,115],proto:[103,114],gt:[118,128],supercar:[120,132],touring:[128,145]};
+  const trackScale=clamp(total/5807,.65,1.35),targetFor=type=>(baseTargets[type]||baseTargets.gt).map(x=>x*trackScale);
   const baseCorner={formula:.63,hyper:.69,lmh:.69,proto:.71,gt:.77,supercar:.80,touring:.84};
   const seen=new Set(),reviews=[],localYellows=[],monitors=new Map(),sector=new Map(),calibration=new Map();
   const globalBest=[Infinity,Infinity,Infinity];
   let reviewId=0,scCount=0,scCooldownUntil=0;
-  const caution={type:'GREEN',reason:'',carId:null,startedAt:0,minUntil:0,severity:0};
+  const caution={type:'GREEN',reason:'',carId:null,startedAt:0,minUntil:0,severity:0,freeze:null};
 
   const emit=(type,car,data={})=>{R.events?.push({id:`v26-${Date.now()}-${Math.random()}`,type,t:R.race.t,carId:car?.id??null,data});while(R.events?.length>120)R.events.shift();};
   const radio=(car,text,kind='CONTROL')=>{if(!R.radio)return;R.radio.push({id:`v26r-${Date.now()}-${Math.random()}`,t:R.race.t,carId:car?.id??null,name:car?.name||'RACE CONTROL',text,kind});while(R.radio.length>38)R.radio.shift();};
@@ -20,7 +21,7 @@ export function createRace(W,statusEl,settings={}){
 
   for(const c of R.cars){
     sector.set(c.id,{current:sectorOf(c),start:R.race.t,last:[null,null,null],best:[Infinity,Infinity,Infinity],deltaPersonal:[null,null,null],deltaOverall:[null,null,null],status:['--','--','--']});
-    calibration.set(c.id,{samples:[],factor:1,average:null,target:targets[c.type]||targets.gt,lastLapSeen:null});
+    calibration.set(c.id,{samples:[],factor:1,average:null,target:targetFor(c.type),lastLapSeen:null});
     c.radarForecast={now:0,in60:0,in180:0};
   }
 
@@ -30,17 +31,20 @@ export function createRace(W,statusEl,settings={}){
 
   function startRecovery(car,reason){if(!car||W.recoveryActive?.(car.id))return;W.spawnRecovery?.(car,reason);emit('RECOVERY_STARTED',car,{reason});}
   function activeRecovery(){return (W.activeRecoveries?.()||[]).length>0;}
+  function freezeCars(){return R.cars.map(c=>({id:c.id,s:c.s,lane:c.lane,laneTarget:c.laneTarget,lap:c.lap,progress:c._v8Progress,visible:c.mesh?.visible!==false}));}
+  function restoreFrozen(){if(!caution.freeze)return;for(const x of caution.freeze){const c=R.cars[x.id];if(!c||c.retired)continue;c.s=x.s;c.lane=x.lane;c.laneTarget=x.laneTarget;c.lap=x.lap;c._v8Progress=x.progress;c.v=0;c.drsActive=false;c.drsEligible=false;c.overtake=0;const q=W.sample(c.s,c.lane);c.mesh.position.copy(q.p);c.mesh.position.y+=.12;c.mesh.rotation.y=Math.atan2(q.t.x,q.t.z);}}
 
   function deploy(type,reason,car,severity=.5){
     if(type==='SC'&&!physicalSCEnabled){addLocalYellow(car,reason,8,180);return 'LOCAL YELLOW';}
     if(type==='VSC'&&!physicalSCEnabled){addLocalYellow(car,reason,7,170);return 'LOCAL YELLOW';}
     if(type==='SC'&&R.race.t<scCooldownUntil&&severity<.88)type='VSC';
-    const rank={GREEN:0,VSC:1,SC:2},now=R.race.t;
+    const rank={GREEN:0,VSC:1,SC:2,RED:3},now=R.race.t;
     if(rank[type]<rank[caution.type]){caution.minUntil=Math.max(caution.minUntil,now+5);return caution.type;}
     const changed=type!==caution.type;
-    caution.type=type;caution.reason=reason;caution.carId=car?.id??null;caution.severity=Math.max(caution.severity,severity);caution.startedAt=changed?now:caution.startedAt;caution.minUntil=Math.max(caution.minUntil,now+(type==='SC'?16:10));
+    caution.type=type;caution.reason=reason;caution.carId=car?.id??null;caution.severity=Math.max(caution.severity,severity);caution.startedAt=changed?now:caution.startedAt;caution.minUntil=Math.max(caution.minUntil,now+(type==='RED'?18:type==='SC'?16:10));
     if(changed){
-      if(type==='SC'){scCount++;emit('SAFETY_CAR',null,{reason,physical:true});radio(null,`SAFETY CAR DEPLOYED · ${reason}`,'CONTROL');}
+      if(type==='RED'){caution.freeze=freezeCars();emit('RED_FLAG',null,{reason,physical:true});radio(null,`RED FLAG · ${reason}`,'CONTROL');}
+      else if(type==='SC'){scCount++;emit('SAFETY_CAR',null,{reason,physical:true});radio(null,`SAFETY CAR DEPLOYED · ${reason}`,'CONTROL');}
       else {emit('VSC',null,{reason,physical:true});radio(null,`VSC DEPLOYED · ${reason}`,'CONTROL');}
     }
     return type;
@@ -49,8 +53,8 @@ export function createRace(W,statusEl,settings={}){
   function closeCaution(){
     if(caution.type==='GREEN')return;
     const old=caution.type;if(old==='SC')scCooldownUntil=R.race.t+70;
-    caution.type='GREEN';caution.reason='';caution.carId=null;caution.severity=0;caution.minUntil=0;
-    emit('GREEN_FLAG',null,{from:old,physical:true});radio(null,'GREEN FLAG · TRACK CLEAR','CONTROL');
+    caution.type='GREEN';caution.reason='';caution.carId=null;caution.severity=0;caution.minUntil=0;caution.freeze=null;
+    emit(old==='RED'?'RED_RESTART':'GREEN_FLAG',null,{from:old,physical:true});radio(null,old==='RED'?'TRACK CLEAR · RESTART':'GREEN FLAG · TRACK CLEAR','CONTROL');
   }
 
   function reviewEvent(type,a,b,severity,cautionResult,data={}){
@@ -61,13 +65,14 @@ export function createRace(W,statusEl,settings={}){
 
   function classifyContact(e){
     const a=R.cars[e.carId],b=R.cars[e.data?.otherId],sev=clamp(Number(e.data?.severity)||0,0,1);if(!a)return;
-    const stopped=[a,b].some(c=>c&&(c.retired||c.v<5)),onLine=[a,b].some(c=>c&&Math.abs(c.lane||0)<3.0),recentSerious=reviews.filter(x=>R.race.t-x.t<5&&x.severity>.5).length;
-    const debris=Math.ceil(sev*8);if(sev>.34)W.spawnDebris?.(a,Math.max(2,debris));
+    const stoppedCars=[a,b].filter(c=>c&&(c.retired||c.v<5)),blocked=stoppedCars.filter(c=>Math.abs(c.lane||0)<3.0).length,recentSerious=reviews.filter(x=>R.race.t-x.t<5&&x.severity>.5).length;
+    const stopped=stoppedCars.length>0,onLine=[a,b].some(c=>c&&Math.abs(c.lane||0)<3.0),debris=Math.ceil(sev*8);if(sev>.34)W.spawnDebris?.(a,Math.max(2,debris));
     let result='LOCAL YELLOW';
-    if(sev>=.78||recentSerious>=1||(stopped&&onLine&&sev>.52)){result=deploy('SC',`CONTACT · CAR ${a.number}${b?` / CAR ${b.number}`:''}`,a,sev);startRecovery(stopped?(a.v<5||a.retired?a:b):null,'CONTACT');}
-    else if(sev>=.52||stopped){result=deploy('VSC',`CONTACT · CAR ${a.number}`,a,sev);if(stopped)startRecovery(a.v<5||a.retired?a:b,'CONTACT');}
+    if(sev>=.94&&(blocked>=2||recentSerious>=2)){result=deploy('RED',`TRACK BLOCKED · CAR ${a.number}${b?` / CAR ${b.number}`:''}`,a,sev);for(const c of stoppedCars)startRecovery(c,'MAJOR CONTACT');}
+    else if(sev>=.78||recentSerious>=1||(stopped&&onLine&&sev>.52)){result=deploy('SC',`CONTACT · CAR ${a.number}${b?` / CAR ${b.number}`:''}`,a,sev);for(const c of stoppedCars)startRecovery(c,'CONTACT');}
+    else if(sev>=.52||stopped){result=deploy('VSC',`CONTACT · CAR ${a.number}`,a,sev);for(const c of stoppedCars)startRecovery(c,'CONTACT');}
     else addLocalYellow(a,'CONTACT',5+sev*5,130+sev*80);
-    reviewEvent('CONTACT',a,b,sev,result,{debris});monitors.set(e.id,{carId:a.id,otherId:b?.id??null,expires:R.race.t+4,severity:sev});
+    reviewEvent('CONTACT',a,b,sev,result,{debris,blocked});monitors.set(e.id,{carId:a.id,otherId:b?.id??null,expires:R.race.t+4,severity:sev});
   }
 
   function classifySpin(e){
@@ -102,6 +107,7 @@ export function createRace(W,statusEl,settings={}){
       if(c.retired)continue;const local=localYellows.some(z=>trackDist(c.s,z.s)<z.radius);
       if(local){c.v=Math.min(c.v,42);c.drsActive=false;c.drsEligible=false;c.overtake=0;c.localYellow=true;}else c.localYellow=false;
     }
+    if(caution.type==='RED')restoreFrozen();
     if(caution.type==='VSC')for(const c of R.cars){if(c.retired||c.pitState==='STOP')continue;const target=37.5*(.92+.05*Math.sin((c.id+1)*1.73));c.v=Math.min(c.v,target);c.drsActive=false;c.drsEligible=false;c.overtake=0;}
     if(caution.type==='SC'){
       const st=R.getStandings();for(let i=0;i<st.length;i++){const c=st[i];if(c.retired||c.pitState==='STOP')continue;if(i===0){c.v=Math.min(c.v,24.5);continue;}const a=st[i-1],gap=Math.max(0,progress(a)-progress(c));const target=gap>42?29:gap>28?26:gap>18?23:gap<11?17:21.5;c.v=Math.min(c.v,target);c.drsActive=false;c.drsEligible=false;c.overtake=0;}
@@ -123,7 +129,7 @@ export function createRace(W,statusEl,settings={}){
   function updateCalibration(c,dt){
     const x=calibration.get(c.id);if(!x||c.retired)return;
     if(Number.isFinite(c.lastLap)&&c.lastLap!==x.lastLapSeen){
-      x.lastLapSeen=c.lastLap;if(effectiveFlag()==='GREEN'&&c.pitState==='NONE'&&c.lastLap>50&&c.lastLap<220){x.samples.push(c.lastLap);if(x.samples.length>3)x.samples.shift();if(x.samples.length===3){x.average=x.samples.reduce((a,b)=>a+b,0)/3;const mid=(x.target[0]+x.target[1])/2,err=clamp((x.average-mid)/mid,-.14,.14);x.factor=clamp(x.factor+err*.32,.88,1.12);}}
+      x.lastLapSeen=c.lastLap;if(effectiveFlag()==='GREEN'&&c.pitState==='NONE'&&c.lastLap>35&&c.lastLap<260){x.samples.push(c.lastLap);if(x.samples.length>3)x.samples.shift();if(x.samples.length===3){x.average=x.samples.reduce((a,b)=>a+b,0)/3;const mid=(x.target[0]+x.target[1])/2,err=clamp((x.average-mid)/mid,-.14,.14);x.factor=clamp(x.factor+err*.32,.88,1.12);}}
     }
     const load=clamp(W.braking?.(c.s)||0,0,1),base=baseCorner[c.type]||.77,top=c.classPerformance?.top||75,coeff=base/Math.max(.88,x.factor),floor=top*clamp(1-coeff*Math.pow(load,1.18),.24,1);
     if(x.factor>=1&&c.v<floor)c.v+=Math.min(floor-c.v,(floor-c.v)*(1-Math.exp(-5.2*dt)));else if(x.factor<.995&&load>.12)c.v*=1-dt*(1-x.factor)*.75;
@@ -146,7 +152,7 @@ export function createRace(W,statusEl,settings={}){
   return new Proxy(R,{get(target,prop){
     if(prop==='update')return update;
     if(prop==='flag')return effectiveFlag();
-    if(prop==='physicalCaution')return{...caution,scCount,cooldownRemaining:Math.max(0,scCooldownUntil-R.race.t),localYellows:localYellows.map(x=>({...x})),recoveries:W.activeRecoveries?.()||[]};
+    if(prop==='physicalCaution'){const{freeze,...pub}=caution;return{...pub,scCount,cooldownRemaining:Math.max(0,scCooldownUntil-R.race.t),localYellows:localYellows.map(x=>({...x})),recoveries:W.activeRecoveries?.()||[]};}
     if(prop==='incidentReviews')return reviews.map(x=>({...x}));
     if(prop==='sectorTimingFor')return id=>{const s=sector.get(Number(id));return s?{...s,last:[...s.last],best:[...s.best],deltaPersonal:[...s.deltaPersonal],deltaOverall:[...s.deltaOverall],status:[...s.status]}:null;};
     if(prop==='globalSectorBest')return[...globalBest];
