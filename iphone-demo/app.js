@@ -1,10 +1,9 @@
-// Racing v41: unified race dynamics, per-turn radio PTT, rebuilt pit lane and calmer broadcast camera.
+// Racing v42: bounded diagnostics, audited Suzuka pit complex, clean physical barrier openings.
 import {TRACK} from './track.js';
 import {loadSettings,saveSettings,resolveCircuit} from './v10-settings.js';
 import {CIRCUITS,getCircuitTrack} from './v10-circuits.js';
-import {buildWorld} from './v41-world.js';
-import {enhanceBarrierMaterials} from './v41-barriers.js';
-import {createRace} from './v41-race-final.js';
+import {buildWorld} from './v42-world.js';
+import {createRace} from './v42-race.js';
 import {createDirector} from './v41-director.js';
 import {createEnvironment} from './v38-environment.js';
 import {createCamera} from './v41-camera.js';
@@ -12,7 +11,7 @@ import {createAudio} from './v41-audio.js';
 import {createUI} from './v34-ui.js';
 import {createSafetyCar} from './v27-safety-car.js';
 import {createBroadcast} from './v18-broadcast.js';
-import {createProfiler} from './v41-profiler.js';
+import {createProfiler} from './v42-profiler.js';
 import {createPerformanceManager} from './v38-performance.js';
 const statusEl=document.getElementById('status'),speedEl=document.getElementById('speed'),camEl=document.getElementById('cam'),errorEl=document.getElementById('error');
 function fail(e){console.error(e);statusEl.textContent='ERROR';errorEl.style.display='block';errorEl.textContent='起動エラー: '+(e?.message||e)}
@@ -23,7 +22,7 @@ const timeout=(ms,msg)=>new Promise((_,r)=>setTimeout(()=>r(new Error(msg)),ms))
  const THREE=await Promise.race([import('https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.min.js'),timeout(16000,'Three.jsの読み込みがタイムアウトしました')]);
  const settings=loadSettings(),circuitId=resolveCircuit(settings),circuit=CIRCUITS[circuitId]||CIRCUITS.SUZUKA,track=getCircuitTrack(TRACK,circuitId);
  statusEl.textContent='BUILDING TRACK';
- const W=enhanceBarrierMaterials(buildWorld(THREE,track,settings,circuit.name)),mobile=matchMedia?.('(pointer:coarse)')?.matches||innerWidth<760,PM=createPerformanceManager(W,settings,mobile);try{window.__RACING_PM__=PM;}catch{}
+ const W=buildWorld(THREE,track,settings,circuit.name),mobile=matchMedia?.('(pointer:coarse)')?.matches||innerWidth<760,PM=createPerformanceManager(W,settings,mobile);try{window.__RACING_PM__=PM;window.__RACING_AUDIT__=W.auditCircuit?.();}catch{}
  if(W.updateEffects){const f=W.updateEffects.bind(W);let a=0;W.updateEffects=(cars,dt=.016)=>{a+=dt;const step=PM.interval('effects');if(a<step)return;const s=a;a=0;f(cars,s);};}
  if(W.updateDynamicSurface){const f=W.updateDynamicSurface.bind(W);let a=0;W.updateDynamicSurface=(race,wet,dt=.016)=>{a+=dt;const step=PM.interval('surface');if(a<step)return;const s=a;a=0;f(race,wet,s);};}
  if(W.updateDebris){const f=W.updateDebris.bind(W);let a=0;W.updateDebris=(dt=.016)=>{a+=dt;const step=Math.min(.08,PM.interval('effects'));if(a<step)return;const s=a;a=0;f(s);};}
