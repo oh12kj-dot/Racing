@@ -42,11 +42,11 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
   W.racingLineAt=s=>field(line,s);
   W.racingLineProfile={count,step,apexes:apex.map(a=>({s:a.s,k:a.k,strength:a.strength}))};
 
-  // Reference braking map used by the legacy core. Unlike the old fixed look-ahead weights,
-  // this derives the braking point from corner speed and available stopping distance.
+  // Reference map is intentionally the high-downforce upper envelope. Slower classes are
+  // restricted by v39-race's class/tyre/weather-specific speed envelope after the shared core.
   const look=[0,22,45,72,105,145,190,235];
   W.braking=s=>{
-    const wet=clamp(W.env?.wetness||0,0,1),refTop=82,latAccel=2.55*9.81*(1-wet*.38),brakeAccel=15.8*(1-wet*.34);let allowed=refTop;
+    const wet=clamp(W.env?.wetness||0,0,1),refTop=88,latAccel=3.70*9.81*(1-wet*.38),brakeAccel=20.0*(1-wet*.34);let allowed=refTop;
     for(const d of look){const k=Math.abs(field(smooth,s+d));if(k<.00115)continue;const corner=Math.min(refTop,Math.sqrt(Math.max(1,latAccel/k))),now=Math.sqrt(corner*corner+2*brakeAccel*d);if(now<allowed)allowed=now;}
     return clamp((1-allowed/refTop)/.70,0,1);
   };
