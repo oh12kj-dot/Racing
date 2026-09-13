@@ -1,18 +1,8 @@
-// Racing v42: bounded diagnostics, audited Suzuka pit complex, clean physical barrier openings.
+// Racing runtime: stable entry point. Versioned legacy modules are hidden behind ./runtime/index.js.
 import {TRACK} from './track.js';
 import {loadSettings,saveSettings,resolveCircuit} from './v10-settings.js';
 import {CIRCUITS,getCircuitTrack} from './v10-circuits.js';
-import {buildWorld} from './v42-world.js';
-import {createRace} from './v42-race.js';
-import {createDirector} from './v41-director.js';
-import {createEnvironment} from './v38-environment.js';
-import {createCamera} from './v41-camera.js';
-import {createAudio} from './v41-audio.js';
-import {createUI} from './v34-ui.js';
-import {createSafetyCar} from './v27-safety-car.js';
-import {createBroadcast} from './v18-broadcast.js';
-import {createProfiler} from './v42-profiler.js';
-import {createPerformanceManager} from './v38-performance.js';
+import {buildWorld,createRace,createDirector,createEnvironment,createCamera,createAudio,createUI,createSafetyCar,createBroadcast,createProfiler,createPerformanceManager} from './runtime/index.js';
 const statusEl=document.getElementById('status'),speedEl=document.getElementById('speed'),camEl=document.getElementById('cam'),errorEl=document.getElementById('error');
 function fail(e){console.error(e);statusEl.textContent='ERROR';errorEl.style.display='block';errorEl.textContent='起動エラー: '+(e?.message||e)}
 window.addEventListener('error',e=>fail(e.error||e.message));window.addEventListener('unhandledrejection',e=>fail(e.reason));
@@ -26,7 +16,7 @@ const timeout=(ms,msg)=>new Promise((_,r)=>setTimeout(()=>r(new Error(msg)),ms))
  if(W.updateEffects){const f=W.updateEffects.bind(W);let a=0;W.updateEffects=(cars,dt=.016)=>{a+=dt;const step=PM.interval('effects');if(a<step)return;const s=a;a=0;f(cars,s);};}
  if(W.updateDynamicSurface){const f=W.updateDynamicSurface.bind(W);let a=0;W.updateDynamicSurface=(race,wet,dt=.016)=>{a+=dt;const step=PM.interval('surface');if(a<step)return;const s=a;a=0;f(race,wet,s);};}
  if(W.updateDebris){const f=W.updateDebris.bind(W);let a=0;W.updateDebris=(dt=.016)=>{a+=dt;const step=Math.min(.08,PM.interval('effects'));if(a<step)return;const s=a;a=0;f(s);};}
- const R=createRace(W,statusEl,settings),D=createDirector(R),E=createEnvironment(W,R,settings),C=createCamera(W,R,D,camEl),A=createAudio(R);try{window.__RACING_RACE__=R;window.__RACING_DIRECTOR__=D;}catch{}
+ const R=createRace(W,statusEl,settings),D=createDirector(R),E=createEnvironment(W,R,settings),C=createCamera(W,R,D,camEl),A=createAudio(R,settings);try{window.__RACING_RACE__=R;window.__RACING_DIRECTOR__=D;window.__RACING_AUDIO__=A;}catch{}
  A.setEnabled?.(settings.sound!==false);
  const U=createUI(W,R,D,E,C,A,settings,saveSettings),S=createSafetyCar(W,R),B=createBroadcast(W,R,D),P=createProfiler(W,{mobile,targetFps:PM.config.fps,race:R,director:D,audio:A});
  statusEl.textContent='GRID';
