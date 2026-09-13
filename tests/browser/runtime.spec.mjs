@@ -1,0 +1,48 @@
+import {test,expect} from '@playwright/test';
+
+async function boot(page){
+  await page.goto('/iphone-demo/index.html?runtimeTest=1',{waitUntil:'domcontentloaded'});
+  await expect(page.locator('#status')).not.toHaveText('ERROR',{timeout:20000});
+  await page.waitForFunction(()=>window.__RACING_RACE__&&window.__RACING_WORLD__&&window.__RACING_REGRESSION_MONITOR__,null,{timeout:25000});
+}
+
+test('boots, renders non-empty frame, and runtime invariants stay clean',async({page})=>{
+  await boot(page);
+  await page.waitForTimeout(5000);
+  const result=await page.evaluate(()=>({status:document.querySelector('#status')?.textContent,reg:window.__RACING_REGRESSION_MONITOR__.run(),audit:window.__RACING_WORLD__.auditCircuit?.()}));
+  expect(result.status).not.toContain('ERROR');
+  expect(result.reg.failures.filter(x=>!['BARRIER_RESIDUAL_OVERLAP'].includes(x.code))).toEqual([]);
+  const shot=await page.screenshot({fullPage:false});
+  expect(shot.byteLength).toBeGreaterThan(25000);
+  expect(result.audit?.runtimePit?.mainTrackEdgeOverlapAtMerge??0).toBe(0);
+});
+
+test('guardrail contact is separated in the same runtime update',async({page})=>{
+  await boot(page);
+  const r=await page.evaluate(()=>{
+    const R=window.__RACING_RACE__,W=window.__RACING_WORLD__,c=R.cars.find(x=>!x.retired&&x.pitState==='NONE'),bar=W.trackBarriers?.colliders?.find(x=>x&&x.sideSign<0)||W.trackBarriers?.colliders?.[0];
+    if(!c||!bar)return{supported:false};
+    c.retired=false;c.pitState='NONE';c.spinState='NONE';c.s=bar.s;c.lane=bar.sideSign*W.trackBarriers.offset;c.laneTarget=c.lane;c.v=18;
+    const q=W.sample(c.s,c.lane);c.mesh.position.copy(q.p);c.mesh.position.y+=.12;c.mesh.rotation.y=Math.atan2(q.t.x,q.t.z);
+    const before=!!W.barrierContact(c);R.update(.016);const after=!!W.barrierContact(c);
+    return{supported:true,before,after,diag:R.barrierSafetyDiagnostics};
+  });
+  expect(r.supported).toBeTruthy();expect(r.before).toBeTruthy();expect(r.after).toBeFalsy();expect(r.diag.corrections).toBeGreaterThan(0);
+});
+
+test('different teams can service concurrently while same-team double stack queues',async({page})=>{
+  await boot(page);
+  const r=await page.evaluate(()=>{
+    const R=window.__RACING_RACE__,W=window.__RACING_WORLD__;
+    const byTeam=new Map();for(const c of R.cars){const a=byTeam.get(c.teamId)||[];a.push(c);byTeam.set(c.teamId,a);}
+    const teams=[...byTeam.entries()].filter(([,a])=>a.length).slice(0,2);if(teams.length<2)return{supported:false};
+    const a=teams[0][1][0],b=teams[1][1][0];
+    for(const c of[a,b]){c.retired=false;c.s=W.pitBoxS(c.teamId);c.v=0;c.pitState='STOP';c.pitTimer=2;c._pitStopInitial=2;c._runtimePitArrival=null;}
+    R.update(.016);const parallel=a.pitState==='STOP'&&b.pitState==='STOP';
+    const mate=teams.find(([,x])=>x.length>=2)?.[1];if(!mate)return{supported:true,parallel,doubleStack:null};
+    const x=mate[0],y=mate[1];for(const c of[x,y]){c.retired=false;c.s=W.pitBoxS(c.teamId);c.v=0;c.pitState='STOP';c.pitTimer=2;c._pitStopInitial=2;c._runtimePitArrival=null;c._runtimePitQueued=false;}
+    R.update(.016);const stopCount=[x,y].filter(c=>c.pitState==='STOP').length,queueCount=[x,y].filter(c=>c._runtimePitQueued).length;
+    return{supported:true,parallel,doubleStack:{stopCount,queueCount}};
+  });
+  expect(r.supported).toBeTruthy();expect(r.parallel).toBeTruthy();if(r.doubleStack){expect(r.doubleStack.stopCount).toBe(1);expect(r.doubleStack.queueCount).toBe(1);}
+});
