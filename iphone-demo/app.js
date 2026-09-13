@@ -12,7 +12,7 @@ window.addEventListener('error',e=>fail(e.error||e.message));window.addEventList
  statusEl.textContent='BUILDING TRACK';
  const W=buildWorld(THREE,track,settings,circuit.name),mobile=matchMedia?.('(pointer:coarse)')?.matches||innerWidth<760;
  const cleanup=cleanupLegacyWorld(W),surface=enhanceSurfaceDetail(W,{mobile}),PM=createPerformanceManager(W,settings,mobile),V=enhanceVisuals(W,settings,mobile);
- try{window.__RACING_PM__=PM;window.__RACING_VISUALS__=V;window.__RACING_WORLD_CLEANUP__=cleanup;window.__RACING_SURFACE__=surface;}catch{}
+ try{window.__RACING_WORLD__=W;window.__RACING_PM__=PM;window.__RACING_VISUALS__=V;window.__RACING_WORLD_CLEANUP__=cleanup;window.__RACING_SURFACE__=surface;}catch{}
  if(W.updateEffects){const f=W.updateEffects.bind(W);let a=0;W.updateEffects=(cars,dt=.016)=>{a+=dt;const step=PM.interval('effects');if(a<step)return;const s=a;a=0;f(cars,s);};}
  if(W.updateDynamicSurface){const f=W.updateDynamicSurface.bind(W);let a=0;W.updateDynamicSurface=(race,wet,dt=.016)=>{a+=dt;const step=PM.interval('surface');if(a<step)return;const s=a;a=0;f(race,wet,s);};}
  if(W.updateDebris){const f=W.updateDebris.bind(W);let a=0;W.updateDebris=(dt=.016)=>{a+=dt;const step=Math.min(.08,PM.interval('effects'));if(a<step)return;const s=a;a=0;f(s);};}
