@@ -9,12 +9,15 @@ export function createRace(W,statusEl,settings={}){
   function update(dt){
     for(const c of R.cars){
       prevPit[c.id]=c.pitState;
-      if(c.pitState==='ENTRY'&&!W.inPitWindow?.(c.s))c.laneTarget=Math.max(c.laneTarget||0,Math.min(SUZUKA_PIT.mergeTrackOffset-.25,3.8));
+      if(c.pitState==='ENTRY'&&!W.inPitWindow?.(c.s))c.laneTarget=Math.max(c.laneTarget||0,3.8);
     }
     baseUpdate(dt);
     for(const c of R.cars){
       if(prevPit[c.id]==='EXIT'&&c.pitState==='NONE'&&!c.retired){
-        c.lane=Math.min(SUZUKA_PIT.mergeTrackOffset,4.05);c.laneTarget=c.lane;c.pitLaneStatus='MERGE';poseTrack(c);
+        // Suzuka pit-out stays on the right edge before merging. Keep the car at
+        // the merge-edge position and let the normal racing-line controller
+        // bring laneTarget back in smoothly rather than snapping to centre.
+        c.lane=SUZUKA_PIT.mergeTrackOffset;c.laneTarget=4.0;c.pitLaneStatus='MERGE';poseTrack(c);
       }
     }
   }
