@@ -11,9 +11,6 @@ export function createBarrierSafety(W,R){
       c.mesh.position.addScaledVector(hit.inward,push);totalPush+=push;corrected=true;
       metrics.corrections++;metrics.maxPenetration=Math.max(metrics.maxPenetration,pen);metrics.lastCarId=c.id;
       if(pen>.8)metrics.deepCorrections++;
-      // Persist the correction for normal driving. Spin motion has its own lateral
-      // state in the legacy provider; visually correct it every frame here and let
-      // that provider absorb the lateral correction on its next impact tick.
       if(c.spinState==='NONE')c.lane=clamp((c.lane||0)+latPush,-5.6,5.6);
       c.laneTarget=clamp((c.laneTarget||0)+latPush*.9,-4.6,4.6);
       c.v=Math.max(0,(c.v||0)*(i===0?.992:.975));
@@ -21,18 +18,18 @@ export function createBarrierSafety(W,R){
     if(!corrected)return;
     const residual=W.barrierContact(c);
     if(residual){
-      // Emergency separation for broadside/deep contacts where the collider's
-      // regular penetration cap needs more than four iterations.
       const q=W.sample(c.s,c.lane),push=2.0,latPush=residual.inward.dot(q.side)*push;
       c.mesh.position.addScaledVector(residual.inward,push);
       if(c.spinState==='NONE')c.lane=clamp((c.lane||0)+latPush,-5.2,5.2);
       c.laneTarget=clamp((c.laneTarget||0)+latPush,-4.3,4.3);c.v=Math.min(c.v||0,16);
-      metrics.deepCorrections++;metrics.lastCarId=c.id;
+      metrics.deepCorrections++;metrics.lastCarId=c.id;totalPush+=push;
     }
     c.guardrailCorrection=true;c.guardrailCorrectionPush=totalPush;c.guardrailSide=lastHit?.collider?.sideSign??null;
   }
 
-  function update(){for(const c of R.cars)resolveCar(c);}
+  function update(){
+    for(const c of R.cars){c.guardrailCorrection=false;c.guardrailCorrectionPush=0;c.guardrailSide=null;resolveCar(c);}
+  }
   function diagnostics(){return{...metrics,active:R.cars.filter(c=>c.guardrailCorrection).map(c=>({id:c.id,push:c.guardrailCorrectionPush,side:c.guardrailSide,state:c.spinState}))};}
   return{update,diagnostics,get metrics(){return{...metrics}}};
 }
