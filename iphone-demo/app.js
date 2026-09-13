@@ -1,13 +1,13 @@
-// Racing v34: persistent sound settings + realistic vehicle dimensions.
+// Racing v35: smooth barriers + stable AUTO camera + realistic radio PTT.
 import {TRACK} from './track.js';
 import {loadSettings,saveSettings,resolveCircuit} from './v10-settings.js';
 import {CIRCUITS,getCircuitTrack} from './v10-circuits.js';
-import {buildWorld} from './v34-world.js';
+import {buildWorld} from './v35-world.js';
 import {createRace} from './v33-race.js';
 import {createDirector} from './v30-director.js';
 import {createEnvironment} from './v29-environment.js';
-import {createCamera} from './v30-camera.js';
-import {createAudio} from './v32-audio.js';
+import {createCamera} from './v35-camera.js';
+import {createAudio} from './v35-audio.js';
 import {createUI} from './v34-ui.js';
 import {createSafetyCar} from './v27-safety-car.js';
 import {createBroadcast} from './v18-broadcast.js';
