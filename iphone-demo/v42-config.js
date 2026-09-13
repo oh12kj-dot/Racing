@@ -6,7 +6,6 @@ export const LOG_POLICY=Object.freeze({
   radio:60,
   crashHistory:60,
   cameraCutSeconds:120,
-  cameraCutEntries:80,
   persistedGenerations:0
 });
 
