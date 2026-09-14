@@ -17,6 +17,29 @@ test('pit exit begins earlier while preserving a merge blend',()=>{
   expect(SUZUKA_PIT.exitEndUF-SUZUKA_PIT.exitBeginUF).toBeGreaterThanOrEqual(.025);
 });
 
+test('pit approach stays in fast lane until close to its own box',async({page})=>{
+  await boot(page);
+  const r=await page.evaluate(()=>{
+    const W=window.__RACING_WORLD__,R=window.__RACING_RACE__,cars=R.cars.filter(c=>!c.retired);const c=cars.find(x=>x.teamId>0)||cars[1];if(!c)return{supported:false};
+    const box=W.pitBoxS(c.teamId),q10=W.pitPose(box-10,c.teamId,'ENTRY'),q5=W.pitPose(box-5,c.teamId,'ENTRY');
+    return{supported:true,approach:W.runtimePit?.approachMeters,l10:q10?.lateral,l5:q5?.lateral,cleared:W.runtimePit?.clearedLegacyBarrierInstances||0};
+  });
+  expect(r.supported).toBeTruthy();expect(r.approach).toBeLessThanOrEqual(8);expect(Math.abs(r.l10||0)).toBeLessThan(.15);expect(r.l5).toBeGreaterThan(.2);expect(r.cleared).toBeGreaterThan(0);
+});
+
+test('different teams can start service concurrently',async({page})=>{
+  await boot(page);
+  const r=await page.evaluate(()=>{
+    const R=window.__RACING_RACE__,W=window.__RACING_WORLD__,cars=R.cars.filter(c=>!c.retired);const a=cars[0],b=cars.find(c=>c!==a&&c.teamId!==a.teamId);if(!a||!b)return{supported:false};
+    for(const c of cars){c.pitState='NONE';c._runtimePitPhase='TRACK';c._runtimePitQueued=false;c._runtimeReleaseWait=false;c._runtimePitArrival=null;c.pitTimer=0;}
+    const total=W.total||1;
+    for(const c of[a,b]){const box=W.pitBoxS(c.teamId);c.s=((box-.30)%total+total)%total;c.v=7;c.pitState='ENTRY';c._runtimePitPhase='WORKING_APPROACH';c._runtimePitQueued=false;c._runtimeReleaseWait=false;}
+    R.update(.05);
+    return{supported:true,a:{team:a.teamId,state:a.pitState,phase:a._runtimePitPhase,timer:a.pitTimer},b:{team:b.teamId,state:b.pitState,phase:b._runtimePitPhase,timer:b.pitTimer}};
+  });
+  expect(r.supported).toBeTruthy();expect(r.a.team).not.toBe(r.b.team);expect(r.a.state,JSON.stringify(r)).toBe('STOP');expect(r.b.state,JSON.stringify(r)).toBe('STOP');expect(r.a.phase).toBe('SERVICE');expect(r.b.phase).toBe('SERVICE');
+});
+
 test('working-lane exit traffic cannot deadlock another car release',async({page})=>{
   await boot(page);
   const r=await page.evaluate(()=>{
