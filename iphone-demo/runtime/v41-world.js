@@ -1,1 +1,1 @@
-export {buildWorld} from '../v41-world.js';
+export {buildWorld} from './world-simulation.js';
