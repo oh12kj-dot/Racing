@@ -1,1 +1,1 @@
-export {buildWorld} from '../v39-world.js';
+export {buildWorld} from './world-racing-line.js';

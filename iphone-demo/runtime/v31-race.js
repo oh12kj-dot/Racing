@@ -1,1 +1,1 @@
-export {createRace} from '../v31-race.js';
+export {createRace} from './race-spin.js';
