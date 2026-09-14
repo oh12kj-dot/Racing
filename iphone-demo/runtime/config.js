@@ -20,11 +20,11 @@ export const SUZUKA_PIT=Object.freeze({
   fullUF:.978,
   box0UF:.994,
   boxGapMeters:18,
-  // Start the pit-out blend shortly after the final garage instead of carrying
-  // a parallel lane deep into turn one. The last box still keeps a generous
-  // acceleration lane before the merge begins.
-  exitBeginUF:1.045,
-  exitEndUF:1.075,
+  // Suzuka's pit exit stays separated on the right for a long run toward Turn 1.
+  // Keep the full pit lane past the final garage, then taper gradually to the
+  // right-hand edge of the racing surface instead of cutting diagonally across it.
+  exitBeginUF:1.062,
+  exitEndUF:1.095,
   laneOffset:21.5,
   laneHalfWidth:3.35,
   mergeTrackOffset:5.55,
@@ -32,7 +32,9 @@ export const SUZUKA_PIT=Object.freeze({
   pitWallOffset:9.8,
   trackBarrierOffset:8.8,
   entryGap:[.932,.984],
-  exitGap:[.037,.088]
+  // Keep the physical positive-side guardrail open for the entire exit lane and
+  // a small safety margin after the painted blend finishes.
+  exitGap:[.037,.108]
 });
 
 export const BUILDING_LAYOUT=Object.freeze({
