@@ -104,5 +104,5 @@ export function createRenderAssetManager(W,{mobile=false}={}){
       W.renderAssets={state:loaded>0?'ready':'fallback',manifestVersion:m?.version||0,requested,loaded,vehicleRequested:jobs.length,vehicleLoaded:result.filter(Boolean).length,tracksideRequested:trackside.requested,tracksideLoaded:trackside.loaded,failed:failures.length,mobile,sources:[...new Set([...Object.values(entries),...Object.values(m?.trackside||{})].map(x=>x?.source).filter(Boolean))],loaderSource};return W.renderAssets;
     }catch(e){failures.push({type:'asset-manager',url:String(manifestUrl),error:String(e?.message||e)});W.renderAssets={...W.renderAssets,state:'fallback',failed:failures.length,error:String(e?.message||e),loaderSource};return W.renderAssets;}
   }
-  return{loadManifest,upgradeCars,get manifest(){return manifest},get failures(){return failures.slice()},get cacheSize(){return cache.size},get loaderSource(){return loaderSource}};
+  return{loadManifest,upgradeCars,detachLegacyCarLayers,get manifest(){return manifest},get failures(){return failures.slice()},get cacheSize(){return cache.size},get loaderSource(){return loaderSource}};
 }
