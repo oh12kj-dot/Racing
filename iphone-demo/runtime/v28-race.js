@@ -1,1 +1,1 @@
-export {createRace} from '../v28-race.js';
+export {createRace} from './race-launch-safety.js';
