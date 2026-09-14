@@ -1,7 +1,7 @@
-import {createCamera as createLegacyCamera} from '../v41-camera.js';
+import {createCameraBase} from './camera-base.js';
 
 export function createCamera(W,R,D,camEl){
-  const C=createLegacyCamera(W,R,D,camEl),baseUpdate=C.update,T=W.THREE;
+  const C=createCameraBase(W,R,D,camEl),baseUpdate=C.update,T=W.THREE;
   const pitPos=new T.Vector3(),pitLook=new T.Vector3(),desired=new T.Vector3(),target=new T.Vector3();
   let pitFocus=-1,pitSince=0,pitActive=false;
 
