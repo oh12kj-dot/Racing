@@ -1,4 +1,4 @@
-import {createUI as createCoreUI} from '../v16-ui.js';
+import {createUI as createCoreUI} from './ui-core.js';
 import {attachRadioUI} from './ui-radio.js';
 import {attachTelemetryUI} from './ui-telemetry.js';
 import {attachControlUI} from './ui-control.js';
