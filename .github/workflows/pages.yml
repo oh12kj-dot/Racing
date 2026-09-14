@@ -62,7 +62,7 @@ jobs:
           ref: master
       - run: npm install --no-audit --no-fund
       - run: npx playwright install --with-deps chromium
-      - name: Diagnose and verify CDN HTML execution
+      - name: Verify immutable rawgithack production build boots
         env:
           SITE_SHA: ${{ needs.publish.outputs.site_sha }}
         shell: bash
@@ -70,21 +70,20 @@ jobs:
           node --input-type=module <<'NODE'
           import { chromium } from '@playwright/test';
           const sha=process.env.SITE_SHA;
-          const url=`https://cdn.jsdelivr.net/gh/oh12kj-dot/Racing@${sha}/iphone-demo/index.html?runtimeTest=1`;
+          const url=`https://rawcdn.githack.com/oh12kj-dot/Racing/${sha}/iphone-demo/index.html?runtimeTest=1`;
           const browser=await chromium.launch({headless:true});
-          const page=await browser.newPage();
+          const context=await browser.newContext();
+          await context.addCookies([{name:'__Http-phish',value:'1',domain:'rawcdn.githack.com',path:'/',secure:true,httpOnly:true,sameSite:'Lax'}]);
+          const page=await context.newPage();
           page.on('console',m=>console.log(`[browser:${m.type()}] ${m.text()}`));
           page.on('pageerror',e=>console.log(`[pageerror] ${e.message}`));
           page.on('requestfailed',r=>console.log(`[requestfailed] ${r.url()} :: ${r.failure()?.errorText||''}`));
           const response=await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000});
-          const headers=response?.headers()||{};
-          const snapshot=await page.evaluate(()=>({contentType:document.contentType,title:document.title,status:document.querySelector('#status')?.textContent||null,body:(document.body?.innerText||'').slice(0,300),html:document.documentElement?.outerHTML?.slice(0,500)||''}));
-          console.log(JSON.stringify({httpStatus:response?.status(),headers,snapshot,url},null,2));
-          try{
-            await page.waitForFunction(()=>!!(window.__RACING_RACE__&&window.__RACING_WORLD__&&window.__RACING_REGRESSION_MONITOR__)||document.querySelector('#status')?.textContent==='ERROR',null,{timeout:15000});
-          }catch{}
+          console.log(`[navigate] status=${response?.status()} type=${response?.headers()?.['content-type']||''} url=${page.url()}`);
+          await page.waitForFunction(()=>!!(window.__RACING_RACE__&&window.__RACING_WORLD__&&window.__RACING_REGRESSION_MONITOR__)||document.querySelector('#status')?.textContent==='ERROR',null,{timeout:45000});
           const state=await page.evaluate(()=>({ready:!!(window.__RACING_RACE__&&window.__RACING_WORLD__&&window.__RACING_REGRESSION_MONITOR__),status:document.querySelector('#status')?.textContent||'',error:document.querySelector('#error')?.textContent||'',three:window.__RACING_THREE_SOURCE__||null}));
-          console.log(JSON.stringify({state},null,2));
+          console.log(JSON.stringify({url,state},null,2));
           await browser.close();
           if(!state.ready||state.status==='ERROR')throw new Error(state.error||`Remote boot failed: ${state.status||'NO_STATUS'}`);
+          if(state.three?.kind!=='local-npm')throw new Error(`Expected bundled Three.js, got ${JSON.stringify(state.three)}`);
           NODE
