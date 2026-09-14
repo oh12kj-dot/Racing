@@ -1,8 +1,15 @@
-import {createUI as createLegacyUI} from '../v24-ui.js';
+import {createUI as createCoreUI} from '../v16-ui.js';
+import {attachRadioUI} from './ui-radio.js';
+import {attachTelemetryUI} from './ui-telemetry.js';
+import {attachControlUI} from './ui-control.js';
 import {readAudioSettings} from './config.js';
 
 export function createUI(W,R,D,E,C,A,settings,saveSettings){
-  const base=createLegacyUI(W,R,D,E,C,A,settings,saveSettings),drawer=document.getElementById('v16Drawer'),tabs=document.getElementById('v16Tabs');
+  let base=createCoreUI(W,R,D,E,C,A,settings,saveSettings);
+  base=attachRadioUI(base,A);
+  base=attachTelemetryUI(base,W,R);
+  base=attachControlUI(base,W,R,D,settings,saveSettings);
+  const drawer=document.getElementById('v16Drawer'),tabs=document.getElementById('v16Tabs');
   let focus=0,acc=0,radarOpen=false,deltaOpen=false;
   if(!drawer||!tabs)return base;
 
