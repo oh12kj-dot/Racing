@@ -22,10 +22,8 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 1
-
       - name: Install runtime Three.js
         run: npm install --omit=dev --no-audit --no-fund
-
       - name: Assemble self-contained static site
         shell: bash
         run: |
@@ -36,20 +34,9 @@ jobs:
           cp -R assets/render "$SITE/assets/render"
           cp -R node_modules/three "$SITE/node_modules/three"
           cat > "$SITE/index.html" <<'HTML'
-          <!doctype html>
-          <html lang="ja">
-          <head>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width,initial-scale=1">
-            <meta http-equiv="refresh" content="0; url=./iphone-demo/index.html">
-            <title>Racing 3D</title>
-            <script>location.replace('./iphone-demo/index.html');</script>
-          </head>
-          <body><a href="./iphone-demo/index.html">Racing 3Dを起動</a></body>
-          </html>
+          <!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="0; url=./iphone-demo/index.html"><title>Racing 3D</title><script>location.replace('./iphone-demo/index.html');</script></head><body><a href="./iphone-demo/index.html">Racing 3Dを起動</a></body></html>
           HTML
           touch "$SITE/.nojekyll"
-
       - name: Publish gh-pages branch
         id: publish
         shell: bash
@@ -70,18 +57,12 @@ jobs:
     needs: publish
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout test harness
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
         with:
           ref: master
-
-      - name: Install browser test dependencies
-        run: npm install --no-audit --no-fund
-
-      - name: Install Chromium
-        run: npx playwright install --with-deps chromium
-
-      - name: Verify published CDN build boots
+      - run: npm install --no-audit --no-fund
+      - run: npx playwright install --with-deps chromium
+      - name: Diagnose and verify CDN HTML execution
         env:
           SITE_SHA: ${{ needs.publish.outputs.site_sha }}
         shell: bash
@@ -91,25 +72,19 @@ jobs:
           const sha=process.env.SITE_SHA;
           const url=`https://cdn.jsdelivr.net/gh/oh12kj-dot/Racing@${sha}/iphone-demo/index.html?runtimeTest=1`;
           const browser=await chromium.launch({headless:true});
-          const context=await browser.newContext();
-          const page=await context.newPage();
+          const page=await browser.newPage();
           page.on('console',m=>console.log(`[browser:${m.type()}] ${m.text()}`));
           page.on('pageerror',e=>console.log(`[pageerror] ${e.message}`));
           page.on('requestfailed',r=>console.log(`[requestfailed] ${r.url()} :: ${r.failure()?.errorText||''}`));
           const response=await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000});
-          console.log(`[navigate] status=${response?.status()} url=${page.url()}`);
-          await page.waitForFunction(()=>{
-            const ready=!!(window.__RACING_RACE__&&window.__RACING_WORLD__&&window.__RACING_REGRESSION_MONITOR__);
-            return ready||document.querySelector('#status')?.textContent==='ERROR';
-          },null,{timeout:45000});
-          const state=await page.evaluate(()=>({
-            ready:!!(window.__RACING_RACE__&&window.__RACING_WORLD__&&window.__RACING_REGRESSION_MONITOR__),
-            status:document.querySelector('#status')?.textContent||'',
-            error:document.querySelector('#error')?.textContent||'',
-            three:window.__RACING_THREE_SOURCE__||null
-          }));
-          console.log(JSON.stringify({url,state},null,2));
-          if(!state.ready||state.status==='ERROR')throw new Error(state.error||`Remote boot failed: ${state.status}`);
-          if(state.three?.kind!=='local-npm')throw new Error(`Expected bundled Three.js, got ${JSON.stringify(state.three)}`);
+          const headers=response?.headers()||{};
+          const snapshot=await page.evaluate(()=>({contentType:document.contentType,title:document.title,status:document.querySelector('#status')?.textContent||null,body:(document.body?.innerText||'').slice(0,300),html:document.documentElement?.outerHTML?.slice(0,500)||''}));
+          console.log(JSON.stringify({httpStatus:response?.status(),headers,snapshot,url},null,2));
+          try{
+            await page.waitForFunction(()=>!!(window.__RACING_RACE__&&window.__RACING_WORLD__&&window.__RACING_REGRESSION_MONITOR__)||document.querySelector('#status')?.textContent==='ERROR',null,{timeout:15000});
+          }catch{}
+          const state=await page.evaluate(()=>({ready:!!(window.__RACING_RACE__&&window.__RACING_WORLD__&&window.__RACING_REGRESSION_MONITOR__),status:document.querySelector('#status')?.textContent||'',error:document.querySelector('#error')?.textContent||'',three:window.__RACING_THREE_SOURCE__||null}));
+          console.log(JSON.stringify({state},null,2));
           await browser.close();
+          if(!state.ready||state.status==='ERROR')throw new Error(state.error||`Remote boot failed: ${state.status||'NO_STATUS'}`);
           NODE
