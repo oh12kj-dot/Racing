@@ -1,22 +1,31 @@
 export function createRenderAssetManager(W,{mobile=false}={}){
   const T=W.THREE,manifestUrl=new URL('../../assets/render/manifest.json',import.meta.url),cache=new Map(),failures=[];let manifest=null,loaderPromise=null;
+  const timeoutMs=mobile?5500:7500;
+  function timed(promise,ms,label){
+    let timer;return Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error(`${label} timed out after ${ms}ms`)),ms);})]).finally(()=>clearTimeout(timer));
+  }
   async function loadManifest(){
     if(manifest)return manifest;
-    const r=await fetch(manifestUrl,{cache:'no-cache'});if(!r.ok)throw new Error(`render asset manifest ${r.status}`);manifest=await r.json();return manifest;
+    const r=await timed(fetch(manifestUrl,{cache:'no-cache'}),4000,'render asset manifest');if(!r.ok)throw new Error(`render asset manifest ${r.status}`);manifest=await r.json();return manifest;
   }
   async function loader(){
     if(loaderPromise)return loaderPromise;
     loaderPromise=(async()=>{
-      // jsDelivr's +esm endpoint rewrites the add-on's bare `three` import so it
-      // works in this no-bundler browser build. unpkg ?module is the fallback.
+      // Add-on imports are optional. A CDN failure must never prevent the race from starting.
       const urls=['https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/loaders/GLTFLoader.js/+esm','https://unpkg.com/three@0.185.1/examples/jsm/loaders/GLTFLoader.js?module'];
-      let err;for(const u of urls){try{const m=await import(u);return new m.GLTFLoader();}catch(e){err=e;}}
+      let err;for(const u of urls){try{const m=await timed(import(u),4500,'GLTFLoader import');return new m.GLTFLoader();}catch(e){err=e;}}
       throw err||new Error('GLTFLoader unavailable');
     })();return loaderPromise;
   }
   async function loadModel(url){
     if(cache.has(url))return cache.get(url);
-    const L=await loader(),promise=new Promise((resolve,reject)=>L.load(new URL(url,manifestUrl).href,g=>resolve(g),undefined,reject));cache.set(url,promise);return promise;
+    const promise=(async()=>{
+      const L=await loader(),href=new URL(url,manifestUrl).href;
+      return timed(new Promise((resolve,reject)=>L.load(href,g=>resolve(g),undefined,reject)),timeoutMs,`GLB ${href}`);
+    })();
+    // Keep failures cached for this session so one unavailable source cannot cause
+    // repeated multi-second retries for every car or pit-box clone.
+    cache.set(url,promise);return promise;
   }
   function fallbackPaintColor(car){
     const visual=car.mesh?.userData?.visual;let best=null,bestScore=-1;
@@ -61,10 +70,15 @@ export function createRenderAssetManager(W,{mobile=false}={}){
     return{root,requested,loaded};
   }
   async function upgradeCars(cars=[]){
-    const m=await loadManifest(),entries=m?.vehicles||{},jobs=[];
-    for(const c of cars){const entry=entries[c.type];if(entry?.url)jobs.push(upgradeCar(c,entry));}
-    const [result,trackside]=await Promise.all([Promise.all(jobs),upgradeTrackside(m?.trackside||{})]);
-    W.renderAssets={manifestVersion:m?.version||0,requested:jobs.length+trackside.requested,loaded:result.filter(Boolean).length+trackside.loaded,vehicleRequested:jobs.length,vehicleLoaded:result.filter(Boolean).length,tracksideRequested:trackside.requested,tracksideLoaded:trackside.loaded,failed:failures.length,mobile,sources:[...new Set([...Object.values(entries),...Object.values(m?.trackside||{})].map(x=>x?.source).filter(Boolean))]};return W.renderAssets;
+    W.renderAssets={state:'loading',manifestVersion:0,requested:0,loaded:0,vehicleRequested:0,vehicleLoaded:0,tracksideRequested:0,tracksideLoaded:0,failed:0,mobile,sources:[]};
+    try{
+      const m=await loadManifest(),entries=m?.vehicles||{},jobs=[];
+      for(const c of cars){const entry=entries[c.type];if(entry?.url)jobs.push(upgradeCar(c,entry));}
+      W.renderAssets.manifestVersion=m?.version||0;W.renderAssets.vehicleRequested=jobs.length;
+      const [result,trackside]=await Promise.all([Promise.all(jobs),upgradeTrackside(m?.trackside||{})]);
+      const loaded=result.filter(Boolean).length+trackside.loaded,requested=jobs.length+trackside.requested;
+      W.renderAssets={state:loaded>0?'ready':'fallback',manifestVersion:m?.version||0,requested,loaded,vehicleRequested:jobs.length,vehicleLoaded:result.filter(Boolean).length,tracksideRequested:trackside.requested,tracksideLoaded:trackside.loaded,failed:failures.length,mobile,sources:[...new Set([...Object.values(entries),...Object.values(m?.trackside||{})].map(x=>x?.source).filter(Boolean))]};return W.renderAssets;
+    }catch(e){failures.push({type:'asset-manager',url:String(manifestUrl),error:String(e?.message||e)});W.renderAssets={...W.renderAssets,state:'fallback',failed:failures.length,error:String(e?.message||e)};return W.renderAssets;}
   }
   return{loadManifest,upgradeCars,get manifest(){return manifest},get failures(){return failures.slice()},get cacheSize(){return cache.size}};
 }
