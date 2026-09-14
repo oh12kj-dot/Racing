@@ -16,25 +16,23 @@ export const LOG_POLICY=Object.freeze({
 });
 
 export const SUZUKA_PIT=Object.freeze({
-  entryUF:.942,
-  fullUF:.978,
+  // 2026 Suzuka/FIA layout: keep the pit run compact around the home straight.
+  // Entry-to-merge is ~0.082 lap (~476 m on a 5.807 km lap); the speed-limited
+  // full lane is ~0.064 lap (~372 m), matching published 374-400 m references.
+  entryUF:.962,
+  fullUF:.970,
   box0UF:.994,
   boxGapMeters:18,
-  // Suzuka's pit exit stays separated on the right for a long run toward Turn 1.
-  // Keep the full pit lane past the final garage, then taper gradually to the
-  // right-hand edge of the racing surface instead of cutting diagonally across it.
-  exitBeginUF:1.062,
-  exitEndUF:1.095,
+  exitBeginUF:1.034,
+  exitEndUF:1.044,
   laneOffset:21.5,
   laneHalfWidth:3.35,
   mergeTrackOffset:5.55,
   mergeHalfWidth:1.50,
   pitWallOffset:9.8,
   trackBarrierOffset:8.8,
-  entryGap:[.932,.984],
-  // Keep the physical positive-side guardrail open for the entire exit lane and
-  // a small safety margin after the painted blend finishes.
-  exitGap:[.037,.108]
+  entryGap:[.955,.976],
+  exitGap:[.024,.050]
 });
 
 export const BUILDING_LAYOUT=Object.freeze({
