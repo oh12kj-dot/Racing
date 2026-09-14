@@ -11,10 +11,11 @@ async function boot(page){
   expect(state.status,state.error||'runtime boot status').not.toBe('ERROR');expect(state.ready,state.error||'runtime globals were not created').toBeTruthy();
 }
 
-test('pit exit begins earlier while preserving a merge blend',()=>{
-  expect(SUZUKA_PIT.exitBeginUF).toBeLessThanOrEqual(1.045);
-  expect(SUZUKA_PIT.exitEndUF).toBeLessThanOrEqual(1.075);
-  expect(SUZUKA_PIT.exitEndUF-SUZUKA_PIT.exitBeginUF).toBeGreaterThanOrEqual(.025);
+test('pit exit stays separated toward turn one before a gradual merge',()=>{
+  expect(SUZUKA_PIT.exitBeginUF).toBeGreaterThanOrEqual(1.060);
+  expect(SUZUKA_PIT.exitEndUF).toBeGreaterThanOrEqual(1.090);
+  expect(SUZUKA_PIT.exitEndUF).toBeLessThanOrEqual(1.105);
+  expect(SUZUKA_PIT.exitEndUF-SUZUKA_PIT.exitBeginUF).toBeGreaterThanOrEqual(.030);
 });
 
 test('pit approach stays in fast lane until close to its own box',async({page})=>{
