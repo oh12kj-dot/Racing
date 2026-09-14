@@ -16,8 +16,14 @@ test('all vehicle classes receive multi-tone liveries and decal graphics',async(
     const W=window.__RACING_WORLD__,types=['formula','proto','hyper','lmh','gt','supercar','touring'];
     return types.map(type=>{
       const car=W.makeCar(0x376fa8,type),l=car.userData?.livery||null,g=car.getObjectByName?.('RACING_LIVERY_V1');
-      const names=[];g?.traverse?.(o=>{if(o?.name)names.push(o.name);});
-      return{type,livery:!!l,version:l?.version??0,primary:l?.primary,secondary:l?.secondary,tertiary:l?.tertiary,sponsor:l?.sponsor,number:l?.number,parts:l?.parts??0,children:g?.children?.length??0,decals:names.filter(x=>x==='LIVERY_DECAL').length,sweeps:names.filter(x=>x==='LIVERY_SWEEP').length,parentIsRoot:g?.parent===car};
+      const names=[],decalParts=[],sweepParts=[];
+      g?.traverse?.(o=>{
+        if(o?.name)names.push(o.name);
+        const p=o?.geometry?.parameters||{};
+        if(o?.name==='LIVERY_DECAL')decalParts.push({x:Math.abs(o.position.x),y:o.position.y,width:p.width||0,height:p.height||0});
+        if(o?.name==='LIVERY_SWEEP')sweepParts.push({x:Math.abs(o.position.x),y:o.position.y,width:p.width||0,height:p.height||0});
+      });
+      return{type,livery:!!l,version:l?.version??0,primary:l?.primary,secondary:l?.secondary,tertiary:l?.tertiary,sponsor:l?.sponsor,number:l?.number,parts:l?.parts??0,children:g?.children?.length??0,decals:names.filter(x=>x==='LIVERY_DECAL').length,sweeps:names.filter(x=>x==='LIVERY_SWEEP').length,parentIsRoot:g?.parent===car,fit:l?.sideFit||null,decalParts,sweepParts};
     });
   });
   for(const car of result){
@@ -25,6 +31,12 @@ test('all vehicle classes receive multi-tone liveries and decal graphics',async(
     expect(car.parentIsRoot,JSON.stringify(car)).toBeTruthy();expect(car.secondary,JSON.stringify(car)).not.toBe(car.primary);expect(car.sponsor,JSON.stringify(car)).toBeTruthy();expect(car.number,JSON.stringify(car)).toBeGreaterThan(0);expect(car.decals,JSON.stringify(car)).toBe(2);expect(car.sweeps,JSON.stringify(car)).toBe(2);
   }
   expect(new Set(result.map(x=>x.secondary)).size).toBeGreaterThanOrEqual(3);
+
+  const gt=result.find(x=>x.type==='gt'),touring=result.find(x=>x.type==='touring');
+  expect(gt?.fit?.sideX,JSON.stringify(gt)).toBeLessThanOrEqual(1.18);expect(gt?.fit?.decalH,JSON.stringify(gt)).toBeLessThanOrEqual(.34);expect(gt?.fit?.tilt,JSON.stringify(gt)).toBeLessThan(-.20);
+  expect(Math.max(...gt.decalParts.map(x=>x.x)),JSON.stringify(gt)).toBeLessThanOrEqual(1.19);expect(Math.max(...gt.decalParts.map(x=>x.width)),JSON.stringify(gt)).toBeLessThanOrEqual(1.27);expect(Math.max(...gt.decalParts.map(x=>x.height)),JSON.stringify(gt)).toBeLessThanOrEqual(.35);
+  expect(touring?.fit?.sideX,JSON.stringify(touring)).toBeLessThanOrEqual(1.10);expect(touring?.fit?.decalH,JSON.stringify(touring)).toBeLessThanOrEqual(.30);expect(touring?.fit?.tilt,JSON.stringify(touring)).toBeLessThan(-.20);
+  expect(Math.max(...touring.decalParts.map(x=>x.x)),JSON.stringify(touring)).toBeLessThanOrEqual(1.11);expect(Math.max(...touring.decalParts.map(x=>x.width)),JSON.stringify(touring)).toBeLessThanOrEqual(1.15);expect(Math.max(...touring.decalParts.map(x=>x.height)),JSON.stringify(touring)).toBeLessThanOrEqual(.31);
 });
 
 test('livery survives procedural visual detachment used by GLB replacement',async({page})=>{
