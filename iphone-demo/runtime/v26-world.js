@@ -1,1 +1,1 @@
-export {buildWorld} from '../v26-world.js';
+export {buildWorld} from './world-recovery.js';
