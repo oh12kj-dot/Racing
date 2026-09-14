@@ -55,11 +55,19 @@ export function createRace(W,statusEl,settings={}){
     if(c.strategy)c.strategy.reason=p.reason;
   }
   function canAdmit(c){
-    cleanAdmissions();const p=planFor(c),hard=hardEmergency(c),weather=urgentWeather(c);
+    cleanAdmissions();const p=planFor(c),hard=hardEmergency(c),weather=urgentWeather(c),runtimeTraffic=!!W.runtimePitStateMachineOwner,clustered=weather||['SC','VSC'].includes(R.flag);
     if(hard)return{ok:true,why:'EMERGENCY'};
     if(!routineStopMakesSense(c))return{ok:false,why:'STAY OUT · SHORT RACE'};
-    if(!weather&&R.race.t<p.earliest)return{ok:false,why:'PIT WINDOW STAGGER'};
+    if(!clustered&&R.race.t<p.earliest)return{ok:false,why:'PIT WINDOW STAGGER'};
     if(c._v30LastPitLap!=null&&(c.lap||0)-c._v30LastPitLap<1.5)return{ok:false,why:'RECENT STOP'};
+
+    // When the stable runtime pit controller is present, this legacy layer owns
+    // only strategy intent/admission timing. Team-box occupancy, double-stack
+    // queuing, total pit traffic and safe release are exclusively handled by
+    // runtime/pit-state.js. Keeping the old gates here would prevent the runtime
+    // state machine from ever seeing realistic clustered pit stops.
+    if(runtimeTraffic)return{ok:true,why:clustered?'RUNTIME CLUSTERED PIT':'RUNTIME PIT CONTROL'};
+
     if(!weather&&teamBusy(c))return{ok:false,why:'TEAM BOX OCCUPIED'};
     const mateRecent=R.cars.some(o=>o!==c&&o.teamId===c.teamId&&Number.isFinite(o._v30PitAdmitAt)&&R.race.t-o._v30PitAdmitAt<TEAM_GAP);
     if(!weather&&mateRecent)return{ok:false,why:'DOUBLE STACK AVOIDANCE'};
@@ -86,7 +94,7 @@ export function createRace(W,statusEl,settings={}){
 
   return new Proxy(R,{get(target,prop){
     if(prop==='update')return update;
-    if(prop==='pitTraffic')return{active:activePitCars().map(c=>c.id),recentAdmissions:[...admissions],plans:[...plans].map(([carId,p])=>({carId,...p})),shortRace};
+    if(prop==='pitTraffic')return{active:activePitCars().map(c=>c.id),recentAdmissions:[...admissions],plans:[...plans].map(([carId,p])=>({carId,...p})),shortRace,runtimeOwner:W.runtimePitStateMachineOwner||null};
     return Reflect.get(target,prop,target);
   }});
 }
