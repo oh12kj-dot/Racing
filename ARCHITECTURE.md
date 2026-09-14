@@ -34,22 +34,30 @@ The iPhone/browser game starts here:
 - `runtime/performance.js` — performance / thermal quality manager
 - `runtime/settings.js` / `runtime/circuits.js` — active settings and circuit catalogue
 - `runtime/audio.js` — engine/effects/radio mixer
-- `runtime/ui.js` — runtime UI and audio controls
+- `runtime/ui-core.js` — stable base menu/timing/map/settings/camera UI
+- `runtime/ui-radio.js` — radio-test UI attachment
+- `runtime/ui-telemetry.js` — telemetry UI attachment
+- `runtime/ui-control.js` — performance and race-control UI attachment
+- `runtime/ui.js` — radar/delta/control augmentation and stable audio settings/mixer
 - `runtime/profiler.js` / `runtime/diagnostics-store.js` — bounded performance and persistent diagnostics
 - `runtime/world-cleanup.js` — disposes superseded hidden compatibility geometry after hand-off
-- `runtime/config.js` — stable runtime constants/defaults
+- `runtime/config.js` — stable runtime constants/defaults; no direct runtime dependency on `v42-config.js`
 - `runtime/index.js` — only application-facing facade
 
 ## 3. Compatibility-provider boundary
 
-Presentation/runtime ownership has been flattened into `runtime/`. The remaining direct historical dependencies are intentionally concentrated in the mature simulation cores:
+Presentation/runtime ownership has been flattened into `runtime/`. UI, camera, audio, environment, pit control, rendering policy, diagnostics and runtime configuration no longer require a historical `vNN-ui`/camera/config layer.
+
+The remaining direct historical dependencies are intentionally concentrated in the mature simulation cores:
 
 - `runtime/world.js -> v42-world.js -> historical world chain`
-- `runtime/race.js -> v42-race.js -> historical race chain`
+- `runtime/race.js -> v41-race.js -> historical race chain`
 
-Those chains still contain mature geometry/simulation behaviour accumulated across many regression fixes. They must be flattened incrementally with parity tests rather than copied wholesale.
+The former `v42-race.js` retention wrapper and `v41-race-final.js` barrier-material wrapper have been absorbed into `runtime/race.js`. The historical UI chain `v16/v17/v19/v24/v26/v34-ui.js` is no longer loaded by the active runtime.
 
-Rule: **runtime owns final externally visible state**. Compatibility providers may supply mature base behaviour, but stable runtime controllers own final pit movement, guardrail no-penetration, rendering, camera, environment and diagnostics state.
+Those remaining world/race chains contain mature geometry/simulation behaviour accumulated across many regression fixes. They must be flattened incrementally with parity tests rather than copied wholesale.
+
+Rule: **runtime owns final externally visible state**. Compatibility providers may supply mature base behaviour, but stable runtime controllers own final pit movement, guardrail no-penetration, rendering, camera, environment, UI, configuration and diagnostics state.
 
 ## 4. Pit ownership
 
@@ -57,19 +65,35 @@ The stable state model is:
 
 `TRACK -> PIT_ENTRY -> FAST_LANE -> WORKING_APPROACH -> QUEUE | SERVICE -> RELEASE_WAIT -> WORKING_EXIT -> FAST_LANE_EXIT -> MERGE -> TRACK`
 
-`runtime/pit-state.js` owns movement toward each team's box, Fast Lane/Working Lane transitions, same-team double-stack queueing, concurrent service across different teams, exact stop position, safe release and merge hand-off.
+`runtime/pit-state.js` owns movement toward each team's box, Fast Lane/Working Lane transitions, same-team double-stack queueing, concurrent service across different teams, exact stop position, service countdown, safe release and merge hand-off.
 
 Legacy strategy code may still decide **whether** a car should pit. During the compatibility race update, the old box-motion owner is disabled so it cannot compete with the runtime state machine.
 
 ## 5. Barrier/collision ownership
 
-Legacy physical collision code still owns impact severity, damage, incidents and crash state.
+Historical physical collision code still owns impact severity, base damage, incidents and crash state.
+
+`runtime/race.js` owns the current barrier-material post-processing that was previously in `v41-race-final.js` (including tyre-barrier damage relief).
 
 `runtime/barrier-safety.js` owns the final no-penetration invariant. It runs after simulation update and separates any normal on-track car still intersecting a guardrail collider even while legacy impact damage is on cooldown. Persistent spin/barrier overlap forces recovery so a lateral spin offset cannot repeatedly drive the visual mesh through the rail.
 
 Invariant: after runtime race update, a normal non-pit car should not remain in `W.barrierContact(car)`.
 
-## 6. Rendering ownership
+## 6. World construction and cleanup
+
+The final browser world still receives mature base geometry/physics through the historical world provider, but obsolete construction is being removed at source rather than only hidden later.
+
+With `settings.runtimeCleanWorld=true`:
+
+- `v38-world.js` skips construction of the superseded V38 physical guardrails, posts, tyre barriers and collider set entirely;
+- `v41-world.js` keeps the mature pit path/kinematic API but does not construct the superseded V41 pit visual complex;
+- `v42-world.js` supplies the authoritative physical barrier set and mature home-complex base;
+- `runtime/world.js` owns the final dual-lane pit geometry, garage-aligned pit positions/entrances and merge geometry;
+- `runtime/world-cleanup.js` disposes any remaining hidden compatibility render trees after hand-off.
+
+This avoids the former V38-barrier build -> dispose -> V42-barrier rebuild cost on every clean-runtime boot.
+
+## 7. Rendering ownership
 
 Three.js remains the active renderer for the browser/iPhone spectator build.
 
@@ -88,35 +112,42 @@ The visual stack is:
 
 Mobile policy: spend GPU budget on asset/material fidelity, grounding, useful shadows and surface detail before expensive full-screen effects.
 
-## 7. Runtime regression policy
+## 8. Runtime regression policy
 
 `runtime/regression.js` continuously checks non-finite state, invalid pit state and residual guardrail overlap.
 
 Playwright browser regression covers:
 
 - application boot and non-empty rendered frame
+- local npm Three.js boot and optional-asset independence
 - pit-surface merge geometry
-- guardrail re-entry during legacy impact cooldown
+- V38 compatibility barriers are skipped while V42 barriers are authoritative
+- visual guardrail penetration and spin recovery
 - multi-team parallel pit service
 - same-team double stack queueing
 - safe release against Fast Lane traffic
 - wet/night PMREM switching
+- stable telemetry/control/radar/delta UI
+- runtime audio mixer controls
+- absence of historical `v16/v17/v19/v24/v26/v34-ui.js` resource loads
 
 Remote GLB availability is **not** a boot invariant. A network or asset failure must degrade to procedural visuals while simulation remains usable.
 
-## 8. Performance and diagnostics
+GitHub Actions uses Node 24 and cancels stale runs for the same branch so only the newest browser runtime state is authoritative.
+
+## 9. Performance and diagnostics
 
 The runtime records CPU/GPU/frame interval, DPR, draw calls, triangle counts, long-frame rate, quality level, pit state and race events. Rendering diagnostics also record reflection state, selective glow, render-asset state, shadow projection and scene-quality state.
 
 Quality adaptation reduces background cadence and scene complexity before materially reducing render scale.
 
-## 9. Runtime dependencies
+## 10. Runtime dependencies
 
 `three` is pinned to `0.185.1` in `package.json`. The browser loader prefers the local npm package and falls back to jsDelivr then unpkg. GLTFLoader follows the same local-first policy.
 
 External GLBs are presentation-only. They load asynchronously after race initialization and have bounded timeouts; missing assets leave the procedural fallback visible.
 
-## 10. Migration rule
+## 11. Migration rule
 
 Do not create another application-facing `vNN-*` layer.
 
@@ -127,4 +158,4 @@ When a remaining historical subsystem requires meaningful work:
 3. keep the old provider only while it supplies mature behaviour not yet reproduced;
 4. remove that dependency once parity is proven.
 
-The remaining high-risk flattening targets are the world and race simulation cores. World cleanup already removes inactive legacy render trees after hand-off; preventing every obsolete object from being constructed in the first place is the next world-core migration step.
+The remaining high-risk flattening targets are now the **world core** and **race simulation core**. They should be decomposed by ownership boundary (track sampling/physics, race strategy, vehicle dynamics, incident logic) rather than copied wholesale into one replacement file.
