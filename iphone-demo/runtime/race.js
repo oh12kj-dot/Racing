@@ -29,6 +29,7 @@ export function createRace(W,statusEl,settings={}){
     if(prop==='logGeneration')return generation;
     if(prop==='pitStateDiagnostics')return pit.diagnostics();
     if(prop==='barrierSafetyDiagnostics')return barrierSafety.diagnostics();
+    if(prop==='barrierSafetyController')return barrierSafety;
     if(prop==='runtimeSafety')return{pit:pit.diagnostics(),barrier:barrierSafety.diagnostics()};
     return Reflect.get(target,prop,target);
   }});
