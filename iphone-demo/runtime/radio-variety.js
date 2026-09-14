@@ -109,7 +109,7 @@ export function createRadioVariety(R){
       'Understood. Keep feeding me the gap.'
     ]);
     return choose(car,'DRIVER_ACK',[
-      'Copy. Understood.',
+      'Copy, I understand.',
       'Understood.',
       'Copy that.',
       'Okay, understood.',
