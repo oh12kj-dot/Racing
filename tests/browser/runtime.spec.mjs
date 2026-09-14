@@ -66,3 +66,17 @@ test('weather reflection profiles switch to wet and night PMREM',async({page})=>
   });
   expect(r.supported).toBeTruthy();expect(r.wet).toBe('WET');expect(r.night).toBe('NIGHT');expect(r.pmrem).toBeTruthy();expect(r.profiles).toContain('DAY');expect(r.profiles).toContain('WET');
 });
+
+test('stable UI keeps telemetry/control/radar tabs and runtime audio mixer controls',async({page})=>{
+  await boot(page);
+  await page.locator('#v16Menu').click();
+  await page.locator('#v16Tabs [data-tab="set"]').click();
+  await page.waitForFunction(()=>!!document.querySelector('#runtimeAudioMixer'));
+  const result=await page.evaluate(()=>{
+    const ids=['v19TelemetryTab','v24CtrlTab','v26RadarTab','v26DeltaTab'];
+    const before=window.__RACING_AUDIO__?.volumes?.engine??null,input=document.querySelector('#audioEngine');
+    if(input){input.value='37';input.dispatchEvent(new Event('input',{bubbles:true}));}
+    return{tabs:Object.fromEntries(ids.map(id=>[id,!!document.getElementById(id)])),sound:!!document.getElementById('setSound'),mixer:!!document.getElementById('runtimeAudioMixer'),slider:!!input,before,after:window.__RACING_AUDIO__?.volumes?.engine??null};
+  });
+  expect(Object.values(result.tabs).every(Boolean)).toBeTruthy();expect(result.sound).toBeTruthy();expect(result.mixer).toBeTruthy();expect(result.slider).toBeTruthy();expect(result.after).toBeCloseTo(.37,2);
+});
