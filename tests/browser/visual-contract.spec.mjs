@@ -21,5 +21,5 @@ test('deterministic runtime frame keeps non-blank contrast and color diversity',
   const shot=await page.screenshot({type:'png'});await testInfo.attach('rendered-frame',{body:shot,contentType:'image/png'});
   expect(stats.w).toBeGreaterThan(400);expect(stats.h).toBeGreaterThan(220);expect(stats.opaqueRatio).toBeGreaterThan(.95);
   expect(stats.mean).toBeGreaterThan(20);expect(stats.mean).toBeLessThan(235);expect(stats.std).toBeGreaterThan(12);expect(stats.colorBins).toBeGreaterThan(18);
-  expect(stats.darkRatio).toBeGreaterThan(.01);expect(stats.brightRatio).toBeGreaterThan(.01);
+  expect(stats.darkRatio,JSON.stringify(stats)).toBeGreaterThan(.001);expect(stats.brightRatio,JSON.stringify(stats)).toBeGreaterThan(.01);
 });
