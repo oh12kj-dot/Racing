@@ -6,6 +6,9 @@
     "test:browser": "playwright test",
     "test:browser:headed": "playwright test --headed"
   },
+  "dependencies": {
+    "three": "0.185.1"
+  },
   "devDependencies": {
     "@playwright/test": "^1.55.0"
   }
