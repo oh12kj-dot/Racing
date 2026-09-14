@@ -7,7 +7,9 @@ export function createRenderAssetManager(W,{mobile=false}={}){
   async function loader(){
     if(loaderPromise)return loaderPromise;
     loaderPromise=(async()=>{
-      const urls=['https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/loaders/GLTFLoader.js','https://unpkg.com/three@0.185.1/examples/jsm/loaders/GLTFLoader.js'];
+      // jsDelivr's +esm endpoint rewrites the add-on's bare `three` import so it
+      // works in this no-bundler browser build. unpkg ?module is the fallback.
+      const urls=['https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/loaders/GLTFLoader.js/+esm','https://unpkg.com/three@0.185.1/examples/jsm/loaders/GLTFLoader.js?module'];
       let err;for(const u of urls){try{const m=await import(u);return new m.GLTFLoader();}catch(e){err=e;}}
       throw err||new Error('GLTFLoader unavailable');
     })();return loaderPromise;
