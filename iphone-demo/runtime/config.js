@@ -36,7 +36,10 @@ export const SUZUKA_PIT=Object.freeze({
 });
 
 export const BUILDING_LAYOUT=Object.freeze({
-  garageCenterOffset:10.4,
+  // The runtime pit surface extends farther garage-side than the original V42
+  // lane. Keep the garage face outside the widened apron as well as the working
+  // lane, leaving the intended 3.35 m pedestrian/equipment clearance.
+  garageCenterOffset:13.9,
   garageDepth:7.4,
   garageNearClearance:3.35,
   garageHeight:4.15,
@@ -46,7 +49,7 @@ export const BUILDING_LAYOUT=Object.freeze({
   timingTowerOffset:35
 });
 
-export const RUNTIME_VERSION='2026.09.14';
+export const RUNTIME_VERSION='2026.09.15';
 
 export const AUDIO_DEFAULTS=Object.freeze({
   master:.78,

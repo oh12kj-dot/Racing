@@ -32,6 +32,79 @@ test('pit intent stays on the circuit until the physical pit entry',async({page}
   expect(r.diag?.preEntryCorrections||0).toBeGreaterThan(0);
 });
 
+test('pit longitudinal coordinate stays continuous across the entry line',async({page})=>{
+  await boot(page);
+  const r=await page.evaluate(()=>{
+    const W=window.__RACING_WORLD__,R=window.__RACING_RACE__,entry=W.pitCoordinateAudit?.entryUF??.962,total=W.total,team=R.cars.find(c=>!c.retired)?.teamId??0;
+    const before=(entry-.0005)*total,after=(entry+.0005)*total;
+    return{
+      owner:W.pitCoordinateAudit?.owner||null,
+      beforeUF:W.pitUnwrappedFraction(before),
+      afterUF:W.pitUnwrappedFraction(after),
+      beforeDist:W.pitDistanceToBox(before,team),
+      afterDist:W.pitDistanceToBox(after,team),
+      beforeInPit:W.inPitWindow(before),
+      afterInPit:W.inPitWindow(after)
+    };
+  });
+  expect(r.owner).toBe('runtime-pit-coordinate-v2');
+  expect(r.afterUF-r.beforeUF,JSON.stringify(r)).toBeGreaterThan(0);
+  expect(r.afterUF-r.beforeUF,JSON.stringify(r)).toBeLessThan(.003);
+  expect(r.beforeDist,JSON.stringify(r)).toBeGreaterThan(r.afterDist);
+  expect(r.beforeDist,JSON.stringify(r)).toBeGreaterThan(0);
+  expect(r.afterDist,JSON.stringify(r)).toBeGreaterThan(0);
+  expect(r.beforeInPit).toBeFalsy();
+  expect(r.afterInPit).toBeTruthy();
+});
+
+test('pit garages have real open fronts and stay clear of every working box',async({page})=>{
+  await boot(page);
+  const r=await page.evaluate(()=>{
+    const W=window.__RACING_WORLD__,root=W.scene.getObjectByName?.('SUZUKA_HOME_COMPLEX_V42'),garages=W.runtimePit?.garageOpenings;
+    if(!root||!garages?.children?.length)return{supported:false};
+    let visibleLegacyGarageBodies=0,visibleLegacyCanopies=0;
+    root.traverse(o=>{
+      if(!o?.isMesh||o.geometry?.type!=='BoxGeometry'||o.visible===false)return;
+      const p=o.geometry.parameters||{};
+      if(Math.abs((p.width||0)-7.4)<.08&&Math.abs((p.height||0)-4.15)<.08&&(p.depth||0)>5&&(p.depth||0)<12)visibleLegacyGarageBodies++;
+      if(Math.abs((p.width||0)-10.6)<.08&&Math.abs((p.height||0)-.22)<.04&&(p.depth||0)>5&&(p.depth||0)<12)visibleLegacyCanopies++;
+    });
+    const rows=garages.children.map((garage,team)=>{
+      const u=garage.userData||{},work=W.pitPose(W.pitBoxS(team),team,'STOP'),theta=garage.rotation.y;
+      const frontWorld={x:garage.position.x+Math.cos(theta)*(Number(u.frontLocal)||0),z:garage.position.z-Math.sin(theta)*(Number(u.frontLocal)||0)};
+      const centerClearance=Math.hypot(frontWorld.x-work.p.x,frontWorld.z-work.p.z);
+      let solidCount=0,frontBlockers=0;
+      garage.traverse(o=>{
+        if(!o?.isMesh||!o.userData?.pitGarageSolid||o.geometry?.type!=='BoxGeometry')return;
+        solidCount++;
+        const p=o.geometry.parameters||{},hx=(p.width||0)*.5,hy=(p.height||0)*.5,hz=(p.depth||0)*.5;
+        const crossesFront=(o.position.x-hx)<=u.frontLocal+.05&&(o.position.x+hx)>=u.frontLocal-.35;
+        const crossesOpeningCenter=(o.position.z-hz)<.15&&(o.position.z+hz)>-.15;
+        const crossesUsableHeight=(o.position.y-hy)<u.openingHeight-.22&&(o.position.y+hy)>.30;
+        if(crossesFront&&crossesOpeningCenter&&crossesUsableHeight)frontBlockers++;
+      });
+      return{team,opening:!!u.pitGarageOpening,openingWidth:u.openingWidth,openingHeight:u.openingHeight,recessDepth:u.recessDepth,workEdgeToFront:u.workEdgeToGarageFront,centerClearance,solidCount,frontBlockers};
+    });
+    return{supported:true,count:garages.children.length,visibleLegacyGarageBodies,visibleLegacyCanopies,rows,audit:W.circuitAudit?.runtimePit||null};
+  });
+  expect(r.supported,JSON.stringify(r)).toBeTruthy();
+  expect(r.count,JSON.stringify(r)).toBe(10);
+  expect(r.visibleLegacyGarageBodies,JSON.stringify(r)).toBe(0);
+  expect(r.visibleLegacyCanopies,JSON.stringify(r)).toBe(0);
+  for(const g of r.rows){
+    expect(g.opening,JSON.stringify(g)).toBeTruthy();
+    expect(g.openingWidth,JSON.stringify(g)).toBeGreaterThanOrEqual(7.5);
+    expect(g.openingHeight,JSON.stringify(g)).toBeGreaterThanOrEqual(3.0);
+    expect(g.recessDepth,JSON.stringify(g)).toBeGreaterThanOrEqual(6.0);
+    expect(g.workEdgeToFront,JSON.stringify(g)).toBeGreaterThan(4.5);
+    expect(g.centerClearance,JSON.stringify(g)).toBeGreaterThan(6.0);
+    expect(g.solidCount,JSON.stringify(g)).toBeGreaterThanOrEqual(8);
+    expect(g.frontBlockers,JSON.stringify(g)).toBe(0);
+  }
+  expect(r.audit?.garageOpeningWidth,JSON.stringify(r)).toBeGreaterThanOrEqual(7.5);
+  expect(r.audit?.workEdgeToGarageFront,JSON.stringify(r)).toBeGreaterThan(4.5);
+});
+
 test('fast-lane traffic passes a stationary working-lane service car',async({page})=>{
   await boot(page);
   const r=await page.evaluate(()=>{

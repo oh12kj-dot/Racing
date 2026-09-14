@@ -25,10 +25,27 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
       o.visible=false;hidden.push(o.name||'pit-ribbon');
       return;
     }
-    // v42 drew generic garage doors at an independent ~8 m pitch and pit boxes
-    // on the lane centre. Hide only those decorative pieces; replacements below
-    // use the exact same longitudinal datum as each team's pit box.
     const p=o?.geometry?.parameters||{};
+    // V42 built the lower garage row from solid boxes, then painted dark door
+    // planes on the lane-side face. That meant there was never a real opening.
+    // Its wide canopy also projected over the working boxes. Suppress those two
+    // lower-level pieces; the runtime garage modules below replace them with an
+    // actually open front while leaving the hospitality level intact.
+    if(o?.isMesh&&o.geometry?.type==='BoxGeometry'){
+      const legacyGarageBody=Math.abs((p.width||0)-BUILDING_LAYOUT.garageDepth)<.08
+        &&Math.abs((p.height||0)-BUILDING_LAYOUT.garageHeight)<.08
+        &&(p.depth||0)>5&&(p.depth||0)<12;
+      const legacyCanopy=Math.abs((p.width||0)-10.6)<.08
+        &&Math.abs((p.height||0)-.22)<.04
+        &&(p.depth||0)>5&&(p.depth||0)<12;
+      if(legacyGarageBody||legacyCanopy){
+        o.visible=false;o.userData.runtimePitSuppressed=legacyGarageBody?'solid-garage-body':'working-lane-canopy';
+        hidden.push(o.userData.runtimePitSuppressed);return;
+      }
+    }
+    // V42 also drew generic garage-door planes at an independent ~8 m pitch and
+    // pit boxes on the lane centre. Hide those decorative pieces; replacements
+    // use the exact same longitudinal datum as each team's pit box.
     if(o?.isMesh&&o.geometry?.type==='PlaneGeometry'&&Math.abs((p.height||0)-2.70)<.05){
       o.visible=false;hidden.push(o.name||'generic-garage-door');
     }
@@ -118,6 +135,8 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
   const blue=new THREE.MeshStandardMaterial({color:0x1683cc,roughness:.72,side:THREE.DoubleSide});
   const concrete=new THREE.MeshStandardMaterial({color:0xd9dbd8,roughness:.86});
   const dark=new THREE.MeshStandardMaterial({color:0x171b1e,roughness:.72,metalness:.12});
+  const interior=new THREE.MeshStandardMaterial({color:0x252b2f,roughness:.84,metalness:.03});
+  const lightStrip=new THREE.MeshBasicMaterial({color:0xe8f3ff});
   const teamColors=[0xe3312d,0x287de1,0xf2c52f,0xf3f3f3,0x20bd7b,0x9362df,0xed7b27,0x22aab8,0xe04a90,0xaeb6c1];
   const N=320,ufs=new Float32Array(N),pts=new Array(N),sides=new Array(N),roadEdge=(W.roadWidth||14.4)*.5+.04;
   for(let i=0;i<N;i++){const uf=SUZUKA_PIT.entryUF+(SUZUKA_PIT.exitEndUF-SUZUKA_PIT.entryUF)*i/(N-1);ufs[i]=uf;pts[i]=pointUF(uf);}
@@ -178,6 +197,9 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
   function add(parent,geo,mat,x=0,y=0,z=0,rx=0,ry=0,rz=0){
     const m=new THREE.Mesh(geo,mat);m.position.set(x,y,z);m.rotation.set(rx,ry,rz);m.receiveShadow=true;parent.add(m);return m;
   }
+  function solid(parent,geo,mat,x=0,y=0,z=0,rx=0,ry=0,rz=0,front=false){
+    const m=add(parent,geo,mat,x,y,z,rx,ry,rz);m.userData.pitGarageSolid=true;if(front)m.userData.pitGarageFrontSolid=true;return m;
+  }
   function signTexture(text,bg='#20262b'){
     const c=document.createElement('canvas');c.width=512;c.height=112;const g=c.getContext('2d');
     g.fillStyle=bg;g.fillRect(0,0,c.width,c.height);g.fillStyle='#fff';
@@ -185,20 +207,40 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
     const t=new THREE.CanvasTexture(c);t.colorSpace=THREE.SRGBColorSpace;return t;
   }
 
-  // One visible garage entrance per team, longitudinally tied to the same
-  // boxUF(team) used by vehicle stopping logic. This eliminates visual drift
-  // between a team's door and its actual stopping point.
+  // Build ten genuinely open garage bays. The former implementation only placed
+  // a black plane on a solid wall, so the visual "door" could never be an actual
+  // entrance. Each module is tied to boxUF(team), has an unobstructed centre
+  // opening and is recessed behind the service box by more than a car width.
   const alignedEntrances=new THREE.Group();alignedEntrances.name='PIT_ALIGNED_ENTRANCES_RUNTIME';root.add(alignedEntrances);
-  const garageFrontLocal=-BUILDING_LAYOUT.garageCenterOffset+BUILDING_LAYOUT.garageDepth*.5+.022;
+  const GARAGE_OPENING_WIDTH=8.0,GARAGE_OPENING_HEIGHT=3.15,GARAGE_BAY_WIDTH=Math.min(17.4,SUZUKA_PIT.boxGapMeters-.5);
+  const GARAGE_RECESS_DEPTH=Math.max(6.2,BUILDING_LAYOUT.garageDepth-.6);
+  const garageFrontLocal=-BUILDING_LAYOUT.garageCenterOffset+BUILDING_LAYOUT.garageDepth*.5;
+  const workCenterLocal=-WORK_LANE_SHIFT,workBoxHalfWidth=3.15*.5,workOuterLocal=workCenterLocal-workBoxHalfWidth;
+  const workEdgeToGarageFront=Math.abs(garageFrontLocal-workOuterLocal);
+  const infillWidth=(GARAGE_BAY_WIDTH-GARAGE_OPENING_WIDTH)*.5;
   for(let team=0;team<10;team++){
     const uf=boxUF(team),fast=lanePoseUF(uf,0),work=lanePoseUF(uf,WORK_LANE_SHIFT);
-    const entrance=new THREE.Group();entrance.position.copy(fast.p);entrance.rotation.y=fast.rotationY;alignedEntrances.add(entrance);
+    const entrance=new THREE.Group();entrance.position.copy(fast.p);entrance.rotation.y=fast.rotationY;entrance.name=`PIT_GARAGE_OPENING_${team+1}`;
+    entrance.userData={pitGarageOpening:true,team,frontLocal:garageFrontLocal,openingWidth:GARAGE_OPENING_WIDTH,openingHeight:GARAGE_OPENING_HEIGHT,recessDepth:GARAGE_RECESS_DEPTH,workCenterLocal,workEdgeToGarageFront};
+    alignedEntrances.add(entrance);
     const color=teamColors[team],tm=new THREE.MeshStandardMaterial({color,roughness:.58});
-    const doorMat=new THREE.MeshStandardMaterial({color:0x11171b,roughness:.76});
-    add(entrance,new THREE.PlaneGeometry(7.0,2.72),doorMat,garageFrontLocal,1.58,0,0,Math.PI/2,0);
-    add(entrance,new THREE.BoxGeometry(.28,.72,7.15),tm,garageFrontLocal-.03,3.37,0);
+    const recessCenter=garageFrontLocal-GARAGE_RECESS_DEPTH*.5,backX=garageFrontLocal-GARAGE_RECESS_DEPTH+.12;
+    // Open centre: nothing is placed across z +/- openingWidth/2 at the front.
+    solid(entrance,new THREE.BoxGeometry(GARAGE_RECESS_DEPTH,.08,GARAGE_OPENING_WIDTH),dark,recessCenter,.04,0);
+    solid(entrance,new THREE.BoxGeometry(.24,GARAGE_OPENING_HEIGHT,GARAGE_BAY_WIDTH),interior,backX,GARAGE_OPENING_HEIGHT*.5,0);
+    solid(entrance,new THREE.BoxGeometry(GARAGE_RECESS_DEPTH,GARAGE_OPENING_HEIGHT,.26),concrete,recessCenter,GARAGE_OPENING_HEIGHT*.5,-GARAGE_OPENING_WIDTH*.5);
+    solid(entrance,new THREE.BoxGeometry(GARAGE_RECESS_DEPTH,GARAGE_OPENING_HEIGHT,.26),concrete,recessCenter,GARAGE_OPENING_HEIGHT*.5,GARAGE_OPENING_WIDTH*.5);
+    const infillZ=GARAGE_OPENING_WIDTH*.5+infillWidth*.5;
+    solid(entrance,new THREE.BoxGeometry(.30,GARAGE_OPENING_HEIGHT,infillWidth),concrete,garageFrontLocal-.15,GARAGE_OPENING_HEIGHT*.5,-infillZ,0,0,0,true);
+    solid(entrance,new THREE.BoxGeometry(.30,GARAGE_OPENING_HEIGHT,infillWidth),concrete,garageFrontLocal-.15,GARAGE_OPENING_HEIGHT*.5,infillZ,0,0,0,true);
+    solid(entrance,new THREE.BoxGeometry(GARAGE_RECESS_DEPTH,.18,GARAGE_BAY_WIDTH),concrete,recessCenter,GARAGE_OPENING_HEIGHT+.09,0);
+    solid(entrance,new THREE.BoxGeometry(.34,.72,GARAGE_OPENING_WIDTH+.50),tm,garageFrontLocal-.17,GARAGE_OPENING_HEIGHT+.45,0,0,0,0,true);
+    // Raised shutter roll and interior light make the open cavity legible from
+    // broadcast cameras without placing any panel across the usable opening.
+    solid(entrance,new THREE.BoxGeometry(.24,.18,GARAGE_OPENING_WIDTH-.40),dark,garageFrontLocal-.10,GARAGE_OPENING_HEIGHT-.08,0,0,0,0,true);
+    add(entrance,new THREE.BoxGeometry(2.6,.035,.12),lightStrip,garageFrontLocal-GARAGE_RECESS_DEPTH*.55,GARAGE_OPENING_HEIGHT-.18,0);
     const sign=new THREE.Mesh(new THREE.PlaneGeometry(5.8,.62),new THREE.MeshBasicMaterial({map:signTexture(`PIT ${String(team+1).padStart(2,'0')}`,`#${color.toString(16).padStart(6,'0')}`),side:THREE.DoubleSide}));
-    sign.rotation.y=-Math.PI/2;sign.position.set(garageFrontLocal+.16,3.38,0);entrance.add(sign);
+    sign.rotation.y=-Math.PI/2;sign.position.set(garageFrontLocal+.03,GARAGE_OPENING_HEIGHT+.46,0);entrance.add(sign);
 
     const box=new THREE.Group();box.position.copy(work.p);box.rotation.y=work.rotationY;root.add(box);
     add(box,new THREE.BoxGeometry(3.15,.026,7.1),concrete,0,.10,0);
@@ -223,7 +265,11 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
       workingLaneCenterOffset:SUZUKA_PIT.laneOffset+WORK_LANE_SHIFT,
       fastToWorkingCenterGap:WORK_LANE_SHIFT,
       fullPitAsphaltWidth:fullWidth,
-      alignedGarageEntrances:10
+      alignedGarageEntrances:alignedEntrances.children.length,
+      garageOpeningWidth:GARAGE_OPENING_WIDTH,
+      garageOpeningHeight:GARAGE_OPENING_HEIGHT,
+      garageRecessDepth:GARAGE_RECESS_DEPTH,
+      workEdgeToGarageFront
     };
   }
   const priorAudit=W.auditCircuit?.bind(W);
@@ -231,7 +277,7 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
     const a=priorAudit?priorAudit():{};
     return{
       ...a,
-      version:'runtime-2026.09.14-r4',
+      version:'runtime-2026.09.15-r5',
       pitGeometry:a.pitGeometry,
       runtimePit:auditRuntimePit(),
       notes:[
@@ -240,6 +286,7 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
         'cars remain in the fast lane until seven metres before their own pit box',
         'legacy guardrail and fence instances intersecting the runtime pit corridor are suppressed',
         'all ten pit-stop centres share the exact longitudinal datum of their garage entrances',
+        'solid V42 lower garage boxes and working-lane canopy are replaced by physically open recessed garage bays',
         'garage-side pavement widened without moving the clipped track-side merge edge'
       ]
     };
@@ -248,7 +295,9 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
   W.runtimePit={
     root,offsetUF,widthUF,outerExtraUF,poseUF,lanePoseUF,roadEdge,
     workLaneShift:WORK_LANE_SHIFT,approachMeters:PIT_APPROACH_METERS,
-    exitBlendMeters:PIT_EXIT_BLEND_METERS,alignedEntrances,clearedLegacyBarrierInstances
+    exitBlendMeters:PIT_EXIT_BLEND_METERS,alignedEntrances,garageOpenings:alignedEntrances,
+    garageFrontLocal,garageOpeningWidth:GARAGE_OPENING_WIDTH,garageOpeningHeight:GARAGE_OPENING_HEIGHT,
+    garageRecessDepth:GARAGE_RECESS_DEPTH,workEdgeToGarageFront,clearedLegacyBarrierInstances
   };
   return W;
 }
