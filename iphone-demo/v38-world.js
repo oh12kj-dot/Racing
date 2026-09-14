@@ -1,10 +1,19 @@
 import {buildWorld as buildV26World} from './v26-world.js';
 
 export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
-  const W=buildV26World(THREE,TRACK,settings,circuitName),baseMake=W.makeCar.bind(W);
+  const W=buildV26World(THREE,TRACK,settings,circuitName),baseMake=W.makeCar.bind(W),cleanRuntime=!!settings.runtimeCleanWorld;
   const target={formula:{length:5.50,width:1.90,heightScale:.86},gt:{length:5.05,width:2.05,heightScale:.90},proto:{length:5.10,width:2.00,heightScale:.90},hyper:{length:5.05,width:2.00,heightScale:.90},lmh:{length:5.05,width:2.00,heightScale:.90},touring:{length:4.80,width:1.95,heightScale:.92},supercar:{length:4.75,width:2.00,heightScale:.92}};
   W.makeCar=(color,type)=>{const car=baseMake(color,type),d=car.userData?.dims,t=target[type]||target.gt;if(!d)return car;const sx=t.width/d.width,sz=t.length/d.length,sy=t.heightScale;car.scale.set(sx,sy,sz);car.userData.originalDims={...d};car.userData.dims={length:t.length,width:t.width};const a=car.userData.cameraAnchors;if(a){for(const k of Object.keys(a)){const v=a[k];if(Array.isArray(v)&&v.length>=3)a[k]=[v[0]*sx,v[1]*sy,v[2]*sz];}}car.userData.realScale={sx,sy,sz,target:{...t}};return car;};
   W.roadWidth=14.4;W.vehicleDimensionTargets=target;
+
+  // Shadow culling remains part of the mature vehicle presentation contract even
+  // when the superseded v38 barrier tree is skipped by the clean runtime.
+  W.updateShadowVisibility=(cars=[])=>{const cp=W.camera.position;for(const c of cars){if(!c.mesh)continue;let list=c.mesh.userData.v38ShadowMeshes;if(!list){list=[];c.mesh.traverse(o=>{if(o.isMesh&&o.castShadow)list.push(o);});c.mesh.userData.v38ShadowMeshes=list;}const dx=c.mesh.position.x-cp.x,dy=c.mesh.position.y-cp.y,dz=c.mesh.position.z-cp.z,enable=c.mesh.visible!==false&&(dx*dx+dy*dy+dz*dz)<360*360;for(const m of list)if(m.castShadow!==enable)m.castShadow=enable;}};
+
+  // v42 builds the authoritative physical barriers later in the world chain.
+  // Avoid constructing thousands of v38 rail/tyre vertices and colliders only to
+  // dispose them immediately when app.js requests runtimeCleanWorld.
+  if(cleanRuntime){W.compatibilitySkipped={...(W.compatibilitySkipped||{}),v38Barriers:true};return W;}
 
   const root=new THREE.Group();root.name='PHYSICAL_BARRIERS_V38';W.scene.add(root);
   const offset=8.8,width=.34,height=.88,count=Math.max(640,Math.min(1400,Math.round(W.total/4.5))),step=W.total/count;
@@ -30,7 +39,5 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
     if(!best)return null;hitResult.collider=best;hitResult.inward.copy(best.side).multiplyScalar(-best.sideSign);hitResult.penetration=Math.min(bestPen,1.2);hitResult.long=bestLong;hitResult.normal=bestNormal;hitResult.forwardX=fx;hitResult.forwardZ=fz;return hitResult;
   };
   W.trackBarriers={root,rails:{left,right},posts,tyres:{black,red},colliders,count,offset,step,smooth:true,instancedTyres:true};
-
-  W.updateShadowVisibility=(cars=[])=>{const cp=W.camera.position;for(const c of cars){if(!c.mesh)continue;let list=c.mesh.userData.v38ShadowMeshes;if(!list){list=[];c.mesh.traverse(o=>{if(o.isMesh&&o.castShadow)list.push(o);});c.mesh.userData.v38ShadowMeshes=list;}const dx=c.mesh.position.x-cp.x,dy=c.mesh.position.y-cp.y,dz=c.mesh.position.z-cp.z,enable=c.mesh.visible!==false&&(dx*dx+dy*dy+dz*dz)<360*360;for(const m of list)if(m.castShadow!==enable)m.castShadow=enable;}};
   return W;
 }
