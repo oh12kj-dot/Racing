@@ -1,1 +1,1 @@
-export {buildWorld} from '../v16-world.js';
+export {buildWorld} from './world-effects.js';
