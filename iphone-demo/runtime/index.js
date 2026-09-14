@@ -7,6 +7,7 @@ export {enhanceVisuals} from './visuals.js';
 export {enhanceSurfaceDetail} from './surface-detail.js';
 export {createEnvironmentReflections} from './reflections.js';
 export {createSceneQualityController} from './quality-scene.js';
+export {createSelectiveGlow} from './glow.js';
 export {createRenderAssetManager} from './assets.js';
 export {cleanupLegacyWorld} from './world-cleanup.js';
 export {attachRuntimeAudit} from './audit-meta.js';
