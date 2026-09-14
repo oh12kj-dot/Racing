@@ -79,13 +79,16 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
     const q=W.pitPose?.(0,team,'STOP');if(!q)continue;
     const g=new THREE.Group();g.position.copy(q.p);g.rotation.y=q.rotationY;g.visible=false;pitAnimRoot.add(g);const roles=[];
     const service=[[-1.58,0,-1.62],[1.58,0,-1.62],[-1.58,0,1.62],[1.58,0,1.62]];
+    // In the pit-box local frame +X points toward the fast lane and -X points
+    // toward the garages. Keep idle crews and equipment behind the working lane;
+    // they only cross to the car after service has actually started.
     for(let i=0;i<4;i++){
-      const rig=crewRig(TEAM_COLORS[team]),home=new THREE.Vector3(4.8,0,-2.5+i*1.65),target=new THREE.Vector3(...service[i]);rig.position.copy(home);g.add(rig);const wheel=wheelProp();wheel.position.set(home.x-.35,.38,home.z);g.add(wheel);const gun=wrenchProp();gun.position.set(home.x-.20,.65,home.z);g.add(gun);roles.push({kind:'wheel',rig,home,target,wheel,gun,index:i});
+      const rig=crewRig(TEAM_COLORS[team]),home=new THREE.Vector3(-4.8,0,-2.5+i*1.65),target=new THREE.Vector3(...service[i]);rig.position.copy(home);g.add(rig);const wheel=wheelProp();wheel.position.set(home.x-.35,.38,home.z);g.add(wheel);const gun=wrenchProp();gun.position.set(home.x-.20,.65,home.z);g.add(gun);roles.push({kind:'wheel',rig,home,target,wheel,gun,index:i});
     }
     for(const [kind,z] of [['frontJack',2.55],['rearJack',-2.55]]){
-      const rig=crewRig(TEAM_COLORS[team]),home=new THREE.Vector3(5.2,0,z),target=new THREE.Vector3(0,0,z);rig.position.copy(home);g.add(rig);const jack=jackProp();jack.position.set(home.x-.4,.16,z);g.add(jack);roles.push({kind,rig,home,target,jack});
+      const rig=crewRig(TEAM_COLORS[team]),home=new THREE.Vector3(-5.2,0,z),target=new THREE.Vector3(0,0,z);rig.position.copy(home);g.add(rig);const jack=jackProp();jack.position.set(home.x-.4,.16,z);g.add(jack);roles.push({kind,rig,home,target,jack});
     }
-    const release=crewRig(TEAM_COLORS[team]),releaseHome=new THREE.Vector3(4.4,0,.2),releaseTarget=new THREE.Vector3(-2.6,0,.1);release.position.copy(releaseHome);g.add(release);const paddle=new THREE.Mesh(new THREE.BoxGeometry(.72,.05,.38),new THREE.MeshStandardMaterial({color:TEAM_COLORS[team],roughness:.6}));paddle.position.set(releaseHome.x,.95,.2);g.add(paddle);roles.push({kind:'release',rig:release,home:releaseHome,target:releaseTarget,paddle});crewSets[team]={group:g,roles};
+    const release=crewRig(TEAM_COLORS[team]),releaseHome=new THREE.Vector3(-4.4,0,.2),releaseTarget=new THREE.Vector3(-2.6,0,.1);release.position.copy(releaseHome);g.add(release);const paddle=new THREE.Mesh(new THREE.BoxGeometry(.72,.05,.38),new THREE.MeshStandardMaterial({color:TEAM_COLORS[team],roughness:.6}));paddle.position.set(releaseHome.x,.95,.2);g.add(paddle);roles.push({kind:'release',rig:release,home:releaseHome,target:releaseTarget,paddle});crewSets[team]={group:g,roles};
   }
 
   function ease(t){t=clamp(t,0,1);return t*t*(3-2*t);}
