@@ -1,12 +1,13 @@
 const DEFAULT_SERVICE_TIME=Object.freeze({formula:2.6,proto:3.1,hyper:3.3,lmh:3.2,gt:4.1,supercar:4.3,touring:4.7});
 
 const finite=(...values)=>{
-  for(const value of values){const n=Number(value);if(Number.isFinite(n))return n;}
+  for(const value of values){if(value==null||value==='')continue;const n=Number(value);if(Number.isFinite(n))return n;}
   return null;
 };
 const positive=(fallback,...values)=>{const n=finite(...values);return n!=null&&n>0?n:fallback;};
 
 function unwrapExitFraction(value){
+  if(value==null||value==='')return null;
   const n=Number(value);if(!Number.isFinite(n))return null;
   const wrapped=((n%1)+1)%1;return n>=1?n:(wrapped<.5?1+wrapped:wrapped);
 }
