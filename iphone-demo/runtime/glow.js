@@ -1,7 +1,7 @@
 export function createSelectiveGlow(W,cars=[],{mobile=false}={}){
   const T=W.THREE,items=[];
   if(mobile){
-    W.runtimeSelectiveGlow={enabled:false,reason:'mobile-budget',count:0,update:()=>{}};
+    W.runtimeSelectiveGlow={enabled:false,reason:'mobile-budget',count:0,state:{enabled:false,count:0,qualityLevel:0,maxDistance:0},update:()=>W.runtimeSelectiveGlow.state};
     return W.runtimeSelectiveGlow;
   }
 
@@ -20,15 +20,16 @@ export function createSelectiveGlow(W,cars=[],{mobile=false}={}){
   const pit=W.scene.getObjectByName?.('PIT_ALIGNED_ENTRANCES_RUNTIME');
   pit?.traverse?.(o=>{if(o.isMesh&&o.material?.emissive&&Number(o.material.emissiveIntensity)>.4)addGlow(o,'pit');});
 
+  const runtime={enabled:true,count:items.length,texture:tex,state:null,update:null,dispose:()=>{for(const x of items)x.sprite.material.dispose?.();tex.dispose?.();}};
+  W.runtimeSelectiveGlow=runtime;
   function update(level=0){
     const day=Math.max(0,Math.min(1,Number(W.env?.skyState?.day??1))),rain=Math.max(0,Math.min(1,Number(W.env?.rain)||0)),maxDist=level>=2?150:260;
     for(const x of items){
       const world=new T.Vector3();x.mesh.getWorldPosition(world);const d=W.camera.position.distanceTo(world),nightBoost=.75+(1-day)*.75+rain*.22;
       x.sprite.visible=level<3&&d<maxDist;x.sprite.material.opacity=x.base*nightBoost*Math.max(.18,1-d/maxDist*.55);
     }
-    W.runtimeSelectiveGlow.state={enabled:true,count:items.length,qualityLevel:level,maxDistance:maxDist};return W.runtimeSelectiveGlow.state;
+    runtime.state={enabled:true,count:items.length,qualityLevel:level,maxDistance:maxDist};return runtime.state;
   }
-  update(0);
-  W.runtimeSelectiveGlow={enabled:true,count:items.length,texture:tex,update,dispose:()=>{for(const x of items)x.sprite.material.dispose?.();tex.dispose?.();}};
-  return W.runtimeSelectiveGlow;
+  runtime.update=update;update(0);
+  return runtime;
 }
