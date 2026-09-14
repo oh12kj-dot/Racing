@@ -10,16 +10,16 @@ async function boot(page){
 test('director retains simultaneous events instead of dropping lower-priority stories',async({page})=>{
   await boot(page);
   const x=await page.evaluate(()=>{
-    const R=window.__RACING_RACE__,D=window.__RACING_DIRECTOR__,c=R.cars.find(v=>!v.retired)||R.cars[0],tag=`audit-${Date.now()}`,t=R.race.t;
+    const R=window.__RACING_RACE__,D=window.__RACING_DIRECTOR__,c=R.cars.find(v=>!v.retired)||R.cars[0],tag=`audit-${Date.now()}`,t=R.race.t,ours=()=>D.pendingEvents.filter(e=>String(e.id||'').startsWith(tag));
     R.events.push({id:`${tag}-fast`,type:'FASTEST_LAP',carId:c.id,t},{id:`${tag}-pass`,type:'OVERTAKE',carId:c.id,t},{id:`${tag}-contact`,type:'CONTACT',carId:c.id,t});
-    D.update();const afterFirst={banner:D.banner,pending:D.pendingEventCount,queue:D.pendingEvents};
-    D.update();const second=D.banner,pending2=D.pendingEventCount;
-    D.update();const third=D.banner,pending3=D.pendingEventCount;
-    return{afterFirst,second,pending2,third,pending3};
+    D.update();const afterFirst={banner:D.banner,pending:ours()};
+    D.update();const afterSecond={banner:D.banner,pending:ours()};
+    D.update();const afterThird={banner:D.banner,pending:ours()};
+    return{afterFirst,afterSecond,afterThird};
   });
-  expect(x.afterFirst.banner).toContain('CONTACT');expect(x.afterFirst.pending).toBeGreaterThanOrEqual(2);
-  expect(x.second).toContain('OVERTAKE');expect(x.pending2).toBeGreaterThanOrEqual(1);
-  expect(x.third).toContain('FASTEST LAP');expect(x.pending3).toBe(0);
+  expect(x.afterFirst.banner).toContain('CONTACT');expect(x.afterFirst.pending.map(e=>e.type).sort()).toEqual(['FASTEST_LAP','OVERTAKE']);
+  expect(x.afterSecond.banner).toContain('OVERTAKE');expect(x.afterSecond.pending.map(e=>e.type)).toEqual(['FASTEST_LAP']);
+  expect(x.afterThird.banner).toContain('FASTEST LAP');expect(x.afterThird.pending).toHaveLength(0);
 });
 
 test('pit state machine resolves circuit-owned layout into a generic runtime spec',async({page})=>{
