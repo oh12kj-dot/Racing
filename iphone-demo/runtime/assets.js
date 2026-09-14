@@ -1,5 +1,5 @@
 export function createRenderAssetManager(W,{mobile=false}={}){
-  const T=W.THREE,manifestUrl=new URL('../../assets/render/manifest.json',import.meta.url),cache=new Map(),failures=[];let manifest=null,loaderPromise=null;
+  const T=W.THREE,manifestUrl=new URL('../../assets/render/manifest.json',import.meta.url),cache=new Map(),failures=[];let manifest=null,loaderPromise=null,loaderSource='none';
   const timeoutMs=mobile?5500:7500;
   function timed(promise,ms,label){
     let timer;return Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error(`${label} timed out after ${ms}ms`)),ms);})]).finally(()=>clearTimeout(timer));
@@ -11,9 +11,13 @@ export function createRenderAssetManager(W,{mobile=false}={}){
   async function loader(){
     if(loaderPromise)return loaderPromise;
     loaderPromise=(async()=>{
-      // Add-on imports are optional. A CDN failure must never prevent the race from starting.
-      const urls=['https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/loaders/GLTFLoader.js/+esm','https://unpkg.com/three@0.185.1/examples/jsm/loaders/GLTFLoader.js?module'];
-      let err;for(const u of urls){try{const m=await timed(import(u),4500,'GLTFLoader import');return new m.GLTFLoader();}catch(e){err=e;}}
+      // Prefer the pinned local npm package. CDN add-ons remain fallback only.
+      const sources=[
+        {url:new URL('../../node_modules/three/examples/jsm/loaders/GLTFLoader.js',import.meta.url).href,kind:'local-npm'},
+        {url:'https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/loaders/GLTFLoader.js/+esm',kind:'jsdelivr'},
+        {url:'https://unpkg.com/three@0.185.1/examples/jsm/loaders/GLTFLoader.js?module',kind:'unpkg'}
+      ];
+      let err;for(const source of sources){try{const m=await timed(import(source.url),source.kind==='local-npm'?3500:4500,'GLTFLoader import');loaderSource=source.kind;return new m.GLTFLoader();}catch(e){err=e;}}
       throw err||new Error('GLTFLoader unavailable');
     })();return loaderPromise;
   }
@@ -70,15 +74,15 @@ export function createRenderAssetManager(W,{mobile=false}={}){
     return{root,requested,loaded};
   }
   async function upgradeCars(cars=[]){
-    W.renderAssets={state:'loading',manifestVersion:0,requested:0,loaded:0,vehicleRequested:0,vehicleLoaded:0,tracksideRequested:0,tracksideLoaded:0,failed:0,mobile,sources:[]};
+    W.renderAssets={state:'loading',manifestVersion:0,requested:0,loaded:0,vehicleRequested:0,vehicleLoaded:0,tracksideRequested:0,tracksideLoaded:0,failed:0,mobile,sources:[],loaderSource};
     try{
       const m=await loadManifest(),entries=m?.vehicles||{},jobs=[];
       for(const c of cars){const entry=entries[c.type];if(entry?.url)jobs.push(upgradeCar(c,entry));}
       W.renderAssets.manifestVersion=m?.version||0;W.renderAssets.vehicleRequested=jobs.length;
       const [result,trackside]=await Promise.all([Promise.all(jobs),upgradeTrackside(m?.trackside||{})]);
       const loaded=result.filter(Boolean).length+trackside.loaded,requested=jobs.length+trackside.requested;
-      W.renderAssets={state:loaded>0?'ready':'fallback',manifestVersion:m?.version||0,requested,loaded,vehicleRequested:jobs.length,vehicleLoaded:result.filter(Boolean).length,tracksideRequested:trackside.requested,tracksideLoaded:trackside.loaded,failed:failures.length,mobile,sources:[...new Set([...Object.values(entries),...Object.values(m?.trackside||{})].map(x=>x?.source).filter(Boolean))]};return W.renderAssets;
-    }catch(e){failures.push({type:'asset-manager',url:String(manifestUrl),error:String(e?.message||e)});W.renderAssets={...W.renderAssets,state:'fallback',failed:failures.length,error:String(e?.message||e)};return W.renderAssets;}
+      W.renderAssets={state:loaded>0?'ready':'fallback',manifestVersion:m?.version||0,requested,loaded,vehicleRequested:jobs.length,vehicleLoaded:result.filter(Boolean).length,tracksideRequested:trackside.requested,tracksideLoaded:trackside.loaded,failed:failures.length,mobile,sources:[...new Set([...Object.values(entries),...Object.values(m?.trackside||{})].map(x=>x?.source).filter(Boolean))],loaderSource};return W.renderAssets;
+    }catch(e){failures.push({type:'asset-manager',url:String(manifestUrl),error:String(e?.message||e)});W.renderAssets={...W.renderAssets,state:'fallback',failed:failures.length,error:String(e?.message||e),loaderSource};return W.renderAssets;}
   }
-  return{loadManifest,upgradeCars,get manifest(){return manifest},get failures(){return failures.slice()},get cacheSize(){return cache.size}};
+  return{loadManifest,upgradeCars,get manifest(){return manifest},get failures(){return failures.slice()},get cacheSize(){return cache.size},get loaderSource(){return loaderSource}};
 }
