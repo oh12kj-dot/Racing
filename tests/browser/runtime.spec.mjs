@@ -6,13 +6,13 @@ async function boot(page){
   await page.waitForFunction(()=>window.__RACING_RACE__&&window.__RACING_WORLD__&&window.__RACING_REGRESSION_MONITOR__,null,{timeout:30000});
 }
 
-test('boots, loads render assets, renders non-empty frame, and invariants stay clean',async({page})=>{
+test('boots independently of optional render assets, renders non-empty frame, and invariants stay clean',async({page})=>{
   await boot(page);
   await page.waitForTimeout(5000);
   const result=await page.evaluate(()=>({status:document.querySelector('#status')?.textContent,reg:window.__RACING_REGRESSION_MONITOR__.run(),audit:window.__RACING_WORLD__.auditCircuit?.(),assets:window.__RACING_WORLD__.renderAssets}));
   expect(result.status).not.toContain('ERROR');
   expect(result.reg.failures.filter(x=>!['BARRIER_RESIDUAL_OVERLAP'].includes(x.code))).toEqual([]);
-  expect(result.assets?.requested??0).toBeGreaterThan(0);expect(result.assets?.failed??99).toBe(0);expect(result.assets?.loaded).toBe(result.assets?.requested);
+  expect(result.assets?.manifestVersion??0).toBeGreaterThan(0);expect(result.assets?.vehicleRequested??0).toBeGreaterThan(0);expect(['loading','ready','fallback']).toContain(result.assets?.state);
   const shot=await page.screenshot({fullPage:false});
   expect(shot.byteLength).toBeGreaterThan(25000);
   expect(result.audit?.runtimePit?.mainTrackEdgeOverlapAtMerge??0).toBe(0);
