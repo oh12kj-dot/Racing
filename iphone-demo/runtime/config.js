@@ -20,8 +20,11 @@ export const SUZUKA_PIT=Object.freeze({
   fullUF:.978,
   box0UF:.994,
   boxGapMeters:18,
-  exitBeginUF:1.062,
-  exitEndUF:1.095,
+  // Start the pit-out blend shortly after the final garage instead of carrying
+  // a parallel lane deep into turn one. The last box still keeps a generous
+  // acceleration lane before the merge begins.
+  exitBeginUF:1.045,
+  exitEndUF:1.075,
   laneOffset:21.5,
   laneHalfWidth:3.35,
   mergeTrackOffset:5.55,
@@ -29,7 +32,7 @@ export const SUZUKA_PIT=Object.freeze({
   pitWallOffset:9.8,
   trackBarrierOffset:8.8,
   entryGap:[.932,.984],
-  exitGap:[.054,.108]
+  exitGap:[.037,.088]
 });
 
 export const BUILDING_LAYOUT=Object.freeze({
