@@ -1,9 +1,15 @@
 export function createBarrierSafety(W,R){
-  const metrics={corrections:0,deepCorrections:0,spinRecoveries:0,maxPenetration:0,lastCarId:null};
+  const metrics={corrections:0,deepCorrections:0,spinRecoveries:0,pitIntentCorrections:0,maxPenetration:0,lastCarId:null};
   const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 
   function resolveCar(c){
-    if(!c?.mesh||c.retired||c.pitState!=='NONE'||!W.barrierContact)return false;
+    // A car can be marked ENTRY before it physically reaches the pit opening.
+    // Keep guardrail protection active until the car is actually inside the
+    // runtime pit corridor; otherwise pit-bound cars can visually drive through
+    // the normal track barrier on approach.
+    const physicallyInPit=c?.pitState!=='NONE'&&!!W.inPitWindow?.(c.s);
+    if(!c?.mesh||c.retired||physicallyInPit||!W.barrierContact)return false;
+    const pitIntent=c.pitState!=='NONE';
     let corrected=false,totalPush=0,lastHit=null,maxPen=0;
     for(let i=0;i<5;i++){
       const hit=W.barrierContact(c);if(!hit)break;lastHit=hit;
@@ -14,6 +20,7 @@ export function createBarrierSafety(W,R){
       c.laneTarget=clamp((c.laneTarget||0)+latPush*.95,-4.6,4.6);c.v=Math.max(0,(c.v||0)*(i===0?.988:.965));
     }
     if(!corrected)return false;
+    if(pitIntent)metrics.pitIntentCorrections++;
 
     let residual=W.barrierContact(c);
     if(residual){
