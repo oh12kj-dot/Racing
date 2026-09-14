@@ -57,19 +57,22 @@ export function createRenderAssetManager(W,{mobile=false}={}){
     scene.position.set((Number(off[0])||0)-center.x,(Number(off[1])||0)+groundY-fitted.min.y,(Number(off[2])||0)-center.z);
     scene.updateMatrixWorld(true);
   }
-  function hideLegacyCarLayers(car){
-    const u=car.mesh?.userData||{},hidden=new Set(),hide=o=>{if(!o||hidden.has(o))return;o.visible=false;hidden.add(o);};
-    hide(u.visual);hide(u.v13Fine);hide(u.damageParts?.group);hide(u.classVisualUpgrade?.group);
-    car.mesh?.traverse?.(o=>{if(o===car.mesh)return;if(['V13_FINE_INTERIOR','V13_DAMAGE_PARTS','CLASS_VISUAL_UPGRADE_V1'].includes(o.name))hide(o);});
-    u.renderAssetHiddenLegacy=[...hidden].map(o=>o.name||o.type||'legacy');
+  function detachLegacyCarLayers(car){
+    const root=car.mesh,u=root?.userData||{},legacy=new Set(),add=o=>{if(o&&o!==root)legacy.add(o);};
+    add(u.visual);add(u.v13Fine);add(u.damageParts?.group);add(u.classVisualUpgrade?.group);
+    root?.traverse?.(o=>{if(['V13_FINE_INTERIOR','V13_DAMAGE_PARTS','CLASS_VISUAL_UPGRADE_V1'].includes(o.name))add(o);});
+    // LOD code in older world layers can turn V13_FINE_INTERIOR visible again every
+    // frame. Detaching the procedural visual hierarchy is therefore safer than
+    // toggling visible=false: no later LOD update can resurrect the old driver,
+    // roll cage or damage meshes through the imported GLB shell.
+    const detached=[];for(const o of legacy){o.visible=false;if(o.parent)o.parent.remove(o);detached.push(o.name||o.type||'legacy');}
+    u.renderAssetHiddenLegacy=detached;u.renderAssetUsesDetachedFallback=true;
   }
   async function upgradeCar(car,entry){
     try{
       const gltf=await loadModel(entry.url),scene=gltf.scene.clone(true),tint=fallbackPaintColor(car);prepareScene(scene,tint,Number(entry.teamTint??.32));fitScene(scene,car,entry);
-      // Only hide the procedural fallback after a GLB has loaded successfully. The old
-      // interior/damage groups live outside userData.visual, so hide them explicitly as
-      // well; otherwise their roll cage and body parts poke through the imported shell.
-      hideLegacyCarLayers(car);
+      // Only remove the procedural fallback after the replacement GLB has loaded.
+      detachLegacyCarLayers(car);
       scene.name=`GLB_${car.type||'CAR'}`;car.mesh.add(scene);car.mesh.userData.renderAsset=scene;car.mesh.userData.renderAssetSource=entry.source||entry.url;return true;
     }catch(e){failures.push({type:car.type,url:entry.url,error:String(e?.message||e)});return false;}
   }
