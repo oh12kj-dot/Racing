@@ -32,7 +32,7 @@ Implemented on the audit-remediation branch:
 4. Dedicated iPhone WebKit regression coverage is added alongside desktop Chromium coverage.
 5. Formula/prototype/hyper/LMH procedural fallback silhouettes receive lightweight class-specific aero/detail polish.
 6. Rendered-frame visual contracts attach screenshots and verify non-blank contrast/color diversity.
-7. Production static packaging vendors approved CC0 GLBs at build time so deployed visual quality does not require runtime access to the asset CDN.
+7. Approved remote GLBs are persisted in browser Cache Storage after a successful fetch, allowing later launches to reuse the verified asset when the source CDN is unavailable. Procedural fallback remains the first-load safety net.
 8. Rust workspace CI covers format, clippy, tests and wasm32 build.
 
 Explicitly excluded by user request: **AUTO quality/thermal FPS policy**. Do not change that policy as part of this remediation.
@@ -46,7 +46,7 @@ Required before merge:
 - Pit runtime diagnostics report `runtime-pit-config-v1` and preserve current Suzuka merge/exit behavior.
 - Simultaneous Director events remain queued and are consumed without loss.
 - Runtime boot remains independent of optional render-asset success.
-- Static production package contains local copies of approved GLB assets.
+- Asset manager exposes persistent-cache diagnostics while preserving procedural fallback behavior.
 - Rust format/clippy/tests/wasm build pass when Rust paths are affected.
 
 ## Next visual-quality work
