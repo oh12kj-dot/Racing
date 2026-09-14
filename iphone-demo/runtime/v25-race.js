@@ -1,1 +1,1 @@
-export {createRace} from '../v25-race.js';
+export {createRace} from './race-pace-policy.js';
