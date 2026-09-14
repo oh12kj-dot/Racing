@@ -9,11 +9,11 @@ async function boot(page){
 
 test('Suzuka pit run is compact and merges on the home straight',async({page})=>{
   await boot(page);
-  const x=await page.evaluate(()=>{const W=window.__RACING_WORLD__,p=W.realisticPitLayout;return{total:W.total,p,entry:W.pitEntryFraction,exit:W.pitExitFraction,afterExitOffset:W.pitOffsetAtS(W.total*.055)};});
+  const x=await page.evaluate(()=>{const W=window.__RACING_WORLD__,p=W.realisticPitLayout,s=W.total*.055;return{total:W.total,p,entry:W.pitEntryFraction,exit:W.pitExitFraction,afterExitOffset:W.pitOffsetAtS(s),afterExitInPit:W.inPitWindow(s)};});
   expect(x.total).toBeGreaterThan(5200);expect(x.total).toBeLessThan(6400);
   expect(x.p?.owner).toBe('runtime-pit-realism-v1');expect(x.p.totalMeters).toBeGreaterThan(420);expect(x.p.totalMeters).toBeLessThan(520);
   expect(x.p.speedZoneMeters).toBeGreaterThan(330);expect(x.p.speedZoneMeters).toBeLessThan(410);expect(x.p.mergeAfterLineMeters).toBeLessThan(300);
-  expect(x.entry).toBeCloseTo(.962,3);expect(x.exit).toBeCloseTo(.044,3);expect(Math.abs(x.afterExitOffset)).toBeLessThan(.01);
+  expect(x.entry).toBeCloseTo(.962,3);expect(x.exit).toBeCloseTo(.044,3);expect(x.afterExitInPit).toBeFalsy();expect(x.afterExitOffset).toBeCloseTo(5.55,1);
 });
 
 test('GT and touring hide free-floating decals and keep real-scale dimensions',async({page})=>{
