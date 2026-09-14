@@ -1,6 +1,28 @@
 {
-  "version": 1,
-  "vehicles": {},
+  "version": 2,
+  "vehicles": {
+    "gt": {
+      "url": "https://cdn.3dassets.dev/assets/14834/v1/model.glb",
+      "source": "https://3dassets.dev/assets/endurance-and-gt-paddock-front-engine-gt-coupe-ff0949d7",
+      "license": "CC0-1.0",
+      "fitToCar": true,
+      "teamTint": 0.34
+    },
+    "touring": {
+      "url": "https://cdn.3dassets.dev/assets/14836/v1/model.glb",
+      "source": "https://3dassets.dev/assets/endurance-and-gt-paddock-touring-saloon-6a1eafc8",
+      "license": "CC0-1.0",
+      "fitToCar": true,
+      "teamTint": 0.36
+    },
+    "supercar": {
+      "url": "https://cdn.3dassets.dev/assets/14833/v1/model.glb",
+      "source": "https://3dassets.dev/assets/endurance-and-gt-paddock-mid-engine-gt-coupe-0cbb6f3a",
+      "license": "CC0-1.0",
+      "fitToCar": true,
+      "teamTint": 0.32
+    }
+  },
   "trackside": {},
-  "notes": "Optional optimized GLB/GLTF render assets. Physics/collision dimensions remain owned by the simulation; missing entries use the procedural fallback."
+  "notes": "CC0 web-optimized GLB upgrades are used where the source silhouette matches the simulated class. Formula/prototype/hyper classes intentionally retain the procedural fallback until a suitable class-correct asset is available. Physics/collision dimensions remain simulation-owned."
 }
