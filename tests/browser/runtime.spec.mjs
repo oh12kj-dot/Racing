@@ -2,15 +2,27 @@ import {test,expect} from '@playwright/test';
 
 async function boot(page){
   await page.goto('/iphone-demo/index.html?runtimeTest=1',{waitUntil:'domcontentloaded'});
-  await expect(page.locator('#status')).not.toHaveText('ERROR',{timeout:20000});
-  await page.waitForFunction(()=>window.__RACING_RACE__&&window.__RACING_WORLD__&&window.__RACING_REGRESSION_MONITOR__,null,{timeout:30000});
+  await page.waitForFunction(()=>{
+    const ready=!!(window.__RACING_RACE__&&window.__RACING_WORLD__&&window.__RACING_REGRESSION_MONITOR__);
+    return ready||document.querySelector('#status')?.textContent==='ERROR';
+  },null,{timeout:30000});
+  const state=await page.evaluate(()=>({
+    ready:!!(window.__RACING_RACE__&&window.__RACING_WORLD__&&window.__RACING_REGRESSION_MONITOR__),
+    status:document.querySelector('#status')?.textContent||'',
+    error:document.querySelector('#error')?.textContent||'',
+    three:window.__RACING_THREE_SOURCE__||null
+  }));
+  expect(state.status,state.error||'runtime boot status').not.toBe('ERROR');
+  expect(state.ready,state.error||'runtime globals were not created').toBeTruthy();
+  return state;
 }
 
 test('boots independently of optional render assets, renders non-empty frame, and invariants stay clean',async({page})=>{
-  await boot(page);
+  const bootState=await boot(page);
   await page.waitForTimeout(5000);
   const result=await page.evaluate(()=>({status:document.querySelector('#status')?.textContent,reg:window.__RACING_REGRESSION_MONITOR__.run(),audit:window.__RACING_WORLD__.auditCircuit?.(),assets:window.__RACING_WORLD__.renderAssets}));
   expect(result.status).not.toContain('ERROR');
+  expect(bootState.three?.kind).toBe('local-npm');
   expect(result.reg.failures.filter(x=>!['BARRIER_RESIDUAL_OVERLAP'].includes(x.code))).toEqual([]);
   expect(result.assets?.manifestVersion??0).toBeGreaterThan(0);expect(result.assets?.vehicleRequested??0).toBeGreaterThan(0);expect(['loading','ready','fallback']).toContain(result.assets?.state);
   const shot=await page.screenshot({fullPage:false});
