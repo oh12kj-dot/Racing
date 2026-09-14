@@ -17,17 +17,27 @@ test('boots, renders non-empty frame, and runtime invariants stay clean',async({
   expect(result.audit?.runtimePit?.mainTrackEdgeOverlapAtMerge??0).toBe(0);
 });
 
-test('guardrail contact is separated in the same runtime update',async({page})=>{
+test('guardrail re-entry during impact cooldown is separated and spin recovers',async({page})=>{
   await boot(page);
   const r=await page.evaluate(()=>{
     const R=window.__RACING_RACE__,W=window.__RACING_WORLD__,c=R.cars.find(x=>!x.retired&&x.pitState==='NONE'),bar=W.trackBarriers?.colliders?.find(x=>x&&x.sideSign<0)||W.trackBarriers?.colliders?.[0];
     if(!c||!bar)return{supported:false};
-    c.retired=false;c.pitState='NONE';c.spinState='NONE';c.s=bar.s;c.lane=bar.sideSign*W.trackBarriers.offset;c.laneTarget=c.lane;c.v=18;
-    const q=W.sample(c.s,c.lane);c.mesh.position.copy(q.p);c.mesh.position.y+=.12;c.mesh.rotation.y=Math.atan2(q.t.x,q.t.z);
-    const before=!!W.barrierContact(c);R.update(.016);const after=!!W.barrierContact(c);
-    return{supported:true,before,after,diag:R.barrierSafetyDiagnostics};
+    const place=()=>{
+      c.retired=false;c.pitState='NONE';c.s=bar.s;c.lane=bar.sideSign*W.trackBarriers.offset;c.laneTarget=c.lane;c.v=18;
+      const q=W.sample(c.s,c.lane);c.mesh.position.copy(q.p);c.mesh.position.y+=.12;c.mesh.rotation.y=Math.atan2(q.t.x,q.t.z);
+    };
+    // First contact arms the legacy barrier damage cooldown and may be resolved by
+    // the legacy solver itself.
+    c.spinState='NONE';place();R.update(.016);
+    // Reinsert immediately while the legacy 0.42 s impact cooldown is still active.
+    // This is the regression that previously allowed a car to run inside the rail.
+    c.spinState='SLIDE';c.spinTimer=1;c.spinSeverity=.75;place();
+    const before=!!W.barrierContact(c),correctionsBefore=R.barrierSafetyDiagnostics.corrections;
+    R.update(.016);
+    const after=!!W.barrierContact(c),diag=R.barrierSafetyDiagnostics;
+    return{supported:true,before,after,corrections:diag.corrections-correctionsBefore,spinState:c.spinState,diag};
   });
-  expect(r.supported).toBeTruthy();expect(r.before).toBeTruthy();expect(r.after).toBeFalsy();expect(r.diag.corrections).toBeGreaterThan(0);
+  expect(r.supported).toBeTruthy();expect(r.before).toBeTruthy();expect(r.after).toBeFalsy();expect(r.corrections).toBeGreaterThan(0);expect(r.spinState).not.toBe('SLIDE');
 });
 
 test('different teams can service concurrently while same-team double stack queues',async({page})=>{
