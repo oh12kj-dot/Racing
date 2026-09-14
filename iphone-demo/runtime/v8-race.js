@@ -1,1 +1,1 @@
-export {createRace} from '../v8-race.js';
+export {createRace} from './race-championship-core.js';
