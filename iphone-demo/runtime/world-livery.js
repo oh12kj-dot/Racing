@@ -33,6 +33,15 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
   function add(group,geo,mat,x,y,z,rx=0,ry=0,rz=0,name='LIVERY_PART'){
     const m=new THREE.Mesh(geo,mat);m.name=name;m.position.set(x,y,z);m.rotation.set(rx,ry,rz);m.castShadow=false;m.receiveShadow=false;m.renderOrder=4;group.add(m);return m;
   }
+  function sideFit(type,L,Wd){
+    // GT and touring dims include tyre/fender envelope, which is wider than the
+    // actual door skin. Fit their graphics to the tapered body surface instead
+    // of treating the overall vehicle width as a vertical billboard plane.
+    if(type==='gt')return{sideX:1.17,sideY:.70,sideZ:-.04,sweepW:L*.46,sweepH:.22,pinW:L*.40,pinLift:.16,decalW:1.26,decalH:.34,decalLift:.03,decalZ:-L*.07,tilt:-.28};
+    if(type==='touring')return{sideX:1.09,sideY:.65,sideZ:-.02,sweepW:L*.44,sweepH:.20,pinW:L*.38,pinLift:.15,decalW:1.14,decalH:.30,decalLift:.03,decalZ:-L*.06,tilt:-.30};
+    const sideX=Wd*.405,sideY=type==='formula'?.64:.67,sideZ=type==='formula'?.20:-.08;
+    return{sideX,sideY,sideZ,sweepW:L*.56,sweepH:.34,pinW:L*.48,pinLift:.22,decalW:Math.min(1.62,L*.24),decalH:.58,decalLift:.12,decalZ:-L*.10,tilt:0};
+  }
   function attachLivery(root,color,type){
     const d=root.userData?.dims||{length:7,width:3},h=hash(color,type);
     let secondary=accentPalette[(h>>>3)%accentPalette.length];
@@ -45,19 +54,21 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
     // detach the old visual hierarchy after loading; the livery must survive that
     // replacement so GT/touring/supercar assets keep their team graphics too.
     root.add(group);
-    const sec=paint(secondary,.10,.22),third=paint(tertiary,.08,.27),L=d.length,Wd=d.width;
-    const sideX=Wd*.405,sideY=type==='formula'?.64:.67,sideZ=type==='formula'?.20:-.08;
+    const sec=paint(secondary,.10,.22),third=paint(tertiary,.08,.27),L=d.length,Wd=d.width,fit=sideFit(type,L,Wd);
     // Two paint graphics per side: a broad sweep plus a narrow tertiary pin-stripe.
+    // Closed GT/touring bodies are tapered, so their side planes lean inward to
+    // follow the door skin and stay inside the body silhouette from broadcast views.
     for(const s of[-1,1]){
-      add(group,new THREE.PlaneGeometry(L*.56,.34),sec,s*sideX,sideY,sideZ,0,s*Math.PI/2,variant%2?.045*s:-.045*s,'LIVERY_SWEEP');
-      add(group,new THREE.PlaneGeometry(L*.48,.065),third,s*(sideX+.008),sideY+.22,sideZ-.10,0,s*Math.PI/2,variant%2?-.025*s:.025*s,'LIVERY_PINSTRIPE');
-      const tex=decalTexture(tertiary,secondary,sponsor,number,variant);add(group,new THREE.PlaneGeometry(Math.min(1.62,L*.24),.58),decalMaterial(tex),s*(sideX+.015),sideY+.12,-L*.10,0,s*Math.PI/2,0,'LIVERY_DECAL');
+      const sweep=add(group,new THREE.PlaneGeometry(fit.sweepW,fit.sweepH),sec,s*fit.sideX,fit.sideY,fit.sideZ,0,s*Math.PI/2,variant%2?.045*s:-.045*s,'LIVERY_SWEEP');
+      const pin=add(group,new THREE.PlaneGeometry(fit.pinW,.065),third,s*(fit.sideX+.008),fit.sideY+fit.pinLift,fit.sideZ-.10,0,s*Math.PI/2,variant%2?-.025*s:.025*s,'LIVERY_PINSTRIPE');
+      const tex=decalTexture(tertiary,secondary,sponsor,number,variant),decal=add(group,new THREE.PlaneGeometry(fit.decalW,fit.decalH),decalMaterial(tex),s*(fit.sideX+.012),fit.sideY+fit.decalLift,fit.decalZ,0,s*Math.PI/2,0,'LIVERY_DECAL');
+      if(fit.tilt){sweep.rotateX(fit.tilt);pin.rotateX(fit.tilt);decal.rotateX(fit.tilt);}
     }
     // A nose/bonnet stripe makes the livery readable from broadcast and chase cameras.
     const topY=type==='formula'?.79:type==='touring'?1.23:type==='gt'?1.02:.88,topZ=type==='formula'?L*.22:L*.18;
     add(group,new THREE.BoxGeometry(Wd*(variant%2?.16:.24),.022,L*.30),sec,0,topY,topZ,0,0,variant===3?.035:0,'LIVERY_TOP_STRIPE');
     add(group,new THREE.BoxGeometry(Wd*.045,.025,L*.34),third,(variant%2?1:-1)*Wd*.16,topY+.004,topZ,0,0,variant===2?-.025:0,'LIVERY_TOP_PIN');
-    root.userData.livery={version:2,scheme:variant,primary:color>>>0,secondary:secondary>>>0,tertiary:tertiary>>>0,sponsor,number,parts:8,group};
+    root.userData.livery={version:2,scheme:variant,primary:color>>>0,secondary:secondary>>>0,tertiary:tertiary>>>0,sponsor,number,parts:8,sideFit:{...fit},group};
     return root;
   }
   W.makeCar=(color,type)=>attachLivery(baseMake(color,type),color,type);
