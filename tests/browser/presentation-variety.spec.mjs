@@ -17,14 +17,26 @@ test('all vehicle classes receive multi-tone liveries and decal graphics',async(
     return types.map(type=>{
       const car=W.makeCar(0x376fa8,type),l=car.userData?.livery||null,g=car.getObjectByName?.('RACING_LIVERY_V1');
       const names=[];g?.traverse?.(o=>{if(o?.name)names.push(o.name);});
-      return{type,livery:!!l,version:l?.version??0,primary:l?.primary,secondary:l?.secondary,tertiary:l?.tertiary,sponsor:l?.sponsor,number:l?.number,parts:l?.parts??0,children:g?.children?.length??0,decals:names.filter(x=>x==='LIVERY_DECAL').length,sweeps:names.filter(x=>x==='LIVERY_SWEEP').length};
+      return{type,livery:!!l,version:l?.version??0,primary:l?.primary,secondary:l?.secondary,tertiary:l?.tertiary,sponsor:l?.sponsor,number:l?.number,parts:l?.parts??0,children:g?.children?.length??0,decals:names.filter(x=>x==='LIVERY_DECAL').length,sweeps:names.filter(x=>x==='LIVERY_SWEEP').length,parentIsRoot:g?.parent===car};
     });
   });
   for(const car of result){
-    expect(car.livery,JSON.stringify(car)).toBeTruthy();expect(car.version,JSON.stringify(car)).toBe(1);expect(car.parts,JSON.stringify(car)).toBeGreaterThanOrEqual(8);expect(car.children,JSON.stringify(car)).toBeGreaterThanOrEqual(8);
-    expect(car.secondary,JSON.stringify(car)).not.toBe(car.primary);expect(car.sponsor,JSON.stringify(car)).toBeTruthy();expect(car.number,JSON.stringify(car)).toBeGreaterThan(0);expect(car.decals,JSON.stringify(car)).toBe(2);expect(car.sweeps,JSON.stringify(car)).toBe(2);
+    expect(car.livery,JSON.stringify(car)).toBeTruthy();expect(car.version,JSON.stringify(car)).toBe(2);expect(car.parts,JSON.stringify(car)).toBeGreaterThanOrEqual(8);expect(car.children,JSON.stringify(car)).toBeGreaterThanOrEqual(8);
+    expect(car.parentIsRoot,JSON.stringify(car)).toBeTruthy();expect(car.secondary,JSON.stringify(car)).not.toBe(car.primary);expect(car.sponsor,JSON.stringify(car)).toBeTruthy();expect(car.number,JSON.stringify(car)).toBeGreaterThan(0);expect(car.decals,JSON.stringify(car)).toBe(2);expect(car.sweeps,JSON.stringify(car)).toBe(2);
   }
   expect(new Set(result.map(x=>x.secondary)).size).toBeGreaterThanOrEqual(3);
+});
+
+test('livery survives procedural visual detachment used by GLB replacement',async({page})=>{
+  await boot(page);
+  const result=await page.evaluate(()=>{
+    const W=window.__RACING_WORLD__,AM=window.__RACING_ASSETS__,car=W.makeCar(0x3f78c5,'gt'),before=car.getObjectByName?.('RACING_LIVERY_V1');
+    if(!before||typeof AM?.detachLegacyCarLayers!=='function')return{supported:false};
+    const visual=car.userData?.visual;AM.detachLegacyCarLayers({mesh:car,type:'gt'});
+    const after=car.getObjectByName?.('RACING_LIVERY_V1');
+    return{supported:true,beforeParentRoot:before.parent===car,afterAttached:!!after,afterParentRoot:after?.parent===car,visualDetached:visual?.parent!==car,decals:after?.children?.filter(x=>x.name==='LIVERY_DECAL').length??0};
+  });
+  expect(result.supported,JSON.stringify(result)).toBeTruthy();expect(result.beforeParentRoot,JSON.stringify(result)).toBeTruthy();expect(result.visualDetached,JSON.stringify(result)).toBeTruthy();expect(result.afterAttached,JSON.stringify(result)).toBeTruthy();expect(result.afterParentRoot,JSON.stringify(result)).toBeTruthy();expect(result.decals,JSON.stringify(result)).toBe(2);
 });
 
 test('radio repeats are rewritten into varied context-aware dialogue without losing critical values',async({page})=>{
