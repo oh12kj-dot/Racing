@@ -16,9 +16,12 @@ window.addEventListener('error',e=>fail(e.error||e.message));window.addEventList
  if(W.updateEffects){const f=W.updateEffects.bind(W);let a=0;W.updateEffects=(cars,dt=.016)=>{a+=dt;const step=PM.interval('effects');if(a<step)return;const s=a;a=0;f(cars,s);};}
  if(W.updateDynamicSurface){const f=W.updateDynamicSurface.bind(W);let a=0;W.updateDynamicSurface=(race,wet,dt=.016)=>{a+=dt;const step=PM.interval('surface');if(a<step)return;const s=a;a=0;f(race,wet,s);};}
  if(W.updateDebris){const f=W.updateDebris.bind(W);let a=0;W.updateDebris=(dt=.016)=>{a+=dt;const step=Math.min(.08,PM.interval('effects'));if(a<step)return;const s=a;a=0;f(s);};}
- const R=createRace(W,statusEl,settings),AM=createRenderAssetManager(W,{mobile});statusEl.textContent='LOADING ASSETS';await AM.upgradeCars(R.cars);
+ const R=createRace(W,statusEl,settings),AM=createRenderAssetManager(W,{mobile});
+ // External GLBs improve presentation but are never allowed to gate simulation boot.
+ // The procedural vehicles/trackside objects remain the authoritative fallback.
+ const assetLoad=AM.upgradeCars(R.cars).catch(e=>{console.warn('Optional render asset upgrade failed; keeping procedural fallback.',e);return W.renderAssets;});
  const D=createDirector(R),E=createEnvironment(W,R,settings),F=createEnvironmentReflections(W,{mobile}),C=createCamera(W,R,D,camEl),A=createAudio(R,settings),Q=createRuntimeRegression(W,R),QL=createSceneQualityController(W,{mobile}),G=createSelectiveGlow(W,R.cars,{mobile});W.updateVisualWeather?.();QL.apply(PM.level,R.cars);G.update?.(PM.level);attachRuntimeAudit(W,{race:R,performance:PM,regression:Q,quality:QL,reflections:F});
- try{window.__RACING_RACE__=R;window.__RACING_DIRECTOR__=D;window.__RACING_AUDIO__=A;window.__RACING_ASSETS__=AM;window.__RACING_REGRESSION_MONITOR__=Q;window.__RACING_REFLECTIONS__=F;window.__RACING_SCENE_QUALITY__=QL;window.__RACING_GLOW__=G;window.__RACING_AUDIT__=W.auditCircuit?.();}catch{}
+ try{window.__RACING_RACE__=R;window.__RACING_DIRECTOR__=D;window.__RACING_AUDIO__=A;window.__RACING_ASSETS__=AM;window.__RACING_ASSET_LOAD__=assetLoad;window.__RACING_REGRESSION_MONITOR__=Q;window.__RACING_REFLECTIONS__=F;window.__RACING_SCENE_QUALITY__=QL;window.__RACING_GLOW__=G;window.__RACING_AUDIT__=W.auditCircuit?.();}catch{}
  A.setEnabled?.(settings.sound!==false);
  const U=createUI(W,R,D,E,C,A,settings,saveSettings),S=createSafetyCar(W,R),B=createBroadcast(W,R,D),P=createProfiler(W,{mobile,targetFps:PM.config.fps,race:R,director:D,audio:A});
  statusEl.textContent='GRID';
