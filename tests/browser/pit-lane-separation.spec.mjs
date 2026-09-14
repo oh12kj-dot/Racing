@@ -57,30 +57,52 @@ test('pit longitudinal coordinate stays continuous across the entry line',async(
   expect(r.afterInPit).toBeTruthy();
 });
 
-test('pit building face stays outside the working lane with service clearance',async({page})=>{
+test('pit garages have real open fronts and stay clear of every working box',async({page})=>{
   await boot(page);
   const r=await page.evaluate(()=>{
-    const W=window.__RACING_WORLD__,root=W.scene.getObjectByName?.('SUZUKA_HOME_COMPLEX_V42'),entrances=W.runtimePit?.alignedEntrances;
-    if(!root||!entrances?.children?.length)return{supported:false};
-    let garage=null;
+    const W=window.__RACING_WORLD__,root=W.scene.getObjectByName?.('SUZUKA_HOME_COMPLEX_V42'),garages=W.runtimePit?.garageOpenings;
+    if(!root||!garages?.children?.length)return{supported:false};
+    let visibleLegacyGarageBodies=0,visibleLegacyCanopies=0;
     root.traverse(o=>{
-      if(garage||!o?.isMesh||o.geometry?.type!=='BoxGeometry')return;
+      if(!o?.isMesh||o.geometry?.type!=='BoxGeometry'||o.visible===false)return;
       const p=o.geometry.parameters||{};
-      if(Math.abs((p.width||0)-7.4)<.08&&Math.abs((p.height||0)-4.15)<.08)garage=o;
+      if(Math.abs((p.width||0)-7.4)<.08&&Math.abs((p.height||0)-4.15)<.08&&(p.depth||0)>5&&(p.depth||0)<12)visibleLegacyGarageBodies++;
+      if(Math.abs((p.width||0)-10.6)<.08&&Math.abs((p.height||0)-.22)<.04&&(p.depth||0)>5&&(p.depth||0)<12)visibleLegacyCanopies++;
     });
-    const entrance=entrances.children[0];let door=null;
-    entrance?.traverse?.(o=>{
-      if(door||!o?.isMesh||o.geometry?.type!=='PlaneGeometry')return;
-      const p=o.geometry.parameters||{};
-      if(Math.abs((p.height||0)-2.72)<.06)door=o;
+    const rows=garages.children.map((garage,team)=>{
+      const u=garage.userData||{},work=W.pitPose(W.pitBoxS(team),team,'STOP');
+      const frontWorld=garage.localToWorld(new THREE.Vector3(Number(u.frontLocal)||0,0,0));
+      const centerClearance=Math.hypot(frontWorld.x-work.p.x,frontWorld.z-work.p.z);
+      let solidCount=0,frontBlockers=0;
+      garage.traverse(o=>{
+        if(!o?.isMesh||!o.userData?.pitGarageSolid||o.geometry?.type!=='BoxGeometry')return;
+        solidCount++;
+        const p=o.geometry.parameters||{},hx=(p.width||0)*.5,hy=(p.height||0)*.5,hz=(p.depth||0)*.5;
+        const crossesFront=(o.position.x-hx)<=u.frontLocal+.05&&(o.position.x+hx)>=u.frontLocal-.35;
+        const crossesOpeningCenter=(o.position.z-hz)<.15&&(o.position.z+hz)>-.15;
+        const crossesUsableHeight=(o.position.y-hy)<u.openingHeight-.22&&(o.position.y+hy)>.30;
+        if(crossesFront&&crossesOpeningCenter&&crossesUsableHeight)frontBlockers++;
+      });
+      return{team,opening:!!u.pitGarageOpening,openingWidth:u.openingWidth,openingHeight:u.openingHeight,recessDepth:u.recessDepth,workEdgeToFront:u.workEdgeToGarageFront,centerClearance,solidCount,frontBlockers};
     });
-    if(!garage||!door)return{supported:false};
-    const gp=garage.geometry.parameters,frontLocal=Math.abs(garage.position.x)-gp.width*.5,doorLocal=Math.abs(door.position.x),workingGap=W.runtimePit?.workLaneShift??0;
-    return{supported:true,frontLocal,doorLocal,workingGap,workingCenterToBuilding:frontLocal-workingGap};
+    return{supported:true,count:garages.children.length,visibleLegacyGarageBodies,visibleLegacyCanopies,rows,audit:W.circuitAudit?.runtimePit||null};
   });
   expect(r.supported,JSON.stringify(r)).toBeTruthy();
-  expect(r.workingCenterToBuilding,JSON.stringify(r)).toBeGreaterThan(6.0);
-  expect(Math.abs(r.frontLocal-r.doorLocal),JSON.stringify(r)).toBeLessThan(.10);
+  expect(r.count,JSON.stringify(r)).toBe(10);
+  expect(r.visibleLegacyGarageBodies,JSON.stringify(r)).toBe(0);
+  expect(r.visibleLegacyCanopies,JSON.stringify(r)).toBe(0);
+  for(const g of r.rows){
+    expect(g.opening,JSON.stringify(g)).toBeTruthy();
+    expect(g.openingWidth,JSON.stringify(g)).toBeGreaterThanOrEqual(7.5);
+    expect(g.openingHeight,JSON.stringify(g)).toBeGreaterThanOrEqual(3.0);
+    expect(g.recessDepth,JSON.stringify(g)).toBeGreaterThanOrEqual(6.0);
+    expect(g.workEdgeToFront,JSON.stringify(g)).toBeGreaterThan(4.5);
+    expect(g.centerClearance,JSON.stringify(g)).toBeGreaterThan(6.0);
+    expect(g.solidCount,JSON.stringify(g)).toBeGreaterThanOrEqual(8);
+    expect(g.frontBlockers,JSON.stringify(g)).toBe(0);
+  }
+  expect(r.audit?.garageOpeningWidth,JSON.stringify(r)).toBeGreaterThanOrEqual(7.5);
+  expect(r.audit?.workEdgeToGarageFront,JSON.stringify(r)).toBeGreaterThan(4.5);
 });
 
 test('fast-lane traffic passes a stationary working-lane service car',async({page})=>{
