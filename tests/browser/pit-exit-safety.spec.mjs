@@ -7,20 +7,19 @@ async function boot(page){
   expect(state.status,state.error||'runtime boot status').not.toBe('ERROR');expect(state.ready,state.error||'runtime globals were not created').toBeTruthy();
 }
 
-test('Suzuka pit exit keeps a long separated right-side lane toward turn one',async({page})=>{
+test('Suzuka pit exit blends compactly onto the home straight',async({page})=>{
   await boot(page);
   const r=await page.evaluate(()=>{
     const W=window.__RACING_WORLD__,P=W.runtimePit;if(!P)return{supported:false};
-    const start=P.offsetUF(1.062),mid=P.offsetUF((1.062+1.095)/2),late=P.offsetUF(1.080),end=P.offsetUF(1.095);
-    const positiveExitBarrier=(W.trackBarriers?.colliders||[]).filter(c=>{if(!c||c.sideSign<=0||!Number.isFinite(c.s))return false;const f=((c.s/W.total)%1+1)%1;return f>=.040&&f<=.105;}).length;
+    const start=P.offsetUF(1.034),mid=P.offsetUF(1.039),end=P.offsetUF(1.044);
+    const positiveExitBarrier=(W.trackBarriers?.colliders||[]).filter(c=>{if(!c||c.sideSign<=0||!Number.isFinite(c.s))return false;const f=((c.s/W.total)%1+1)%1;return f>=.024&&f<=.050;}).length;
     const audit=W.auditCircuit?.()?.runtimePit||{};
-    return{supported:true,start,mid,late,end,positiveExitBarrier,audit};
+    return{supported:true,start,mid,end,positiveExitBarrier,audit};
   });
   expect(r.supported).toBeTruthy();
   expect(r.start).toBeGreaterThan(20);
   expect(r.mid).toBeGreaterThan(6);
   expect(r.mid).toBeLessThan(r.start);
-  expect(r.late).toBeGreaterThan(6);
   expect(r.end).toBeCloseTo(5.55,1);
   expect(r.positiveExitBarrier).toBe(0);
   expect(r.audit?.exit?.hits??0).toBe(0);
