@@ -1,0 +1,70 @@
+name: Deploy Racing Game to GitHub Pages
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install runtime Three.js
+        run: npm install --omit=dev --no-audit --no-fund
+
+      - name: Assemble static site
+        shell: bash
+        run: |
+          rm -rf _site
+          mkdir -p _site/assets _site/node_modules
+          cp -R iphone-demo _site/iphone-demo
+          cp -R assets/render _site/assets/render
+          cp -R node_modules/three _site/node_modules/three
+          cat > _site/index.html <<'HTML'
+          <!doctype html>
+          <html lang="ja">
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width,initial-scale=1">
+            <meta http-equiv="refresh" content="0; url=./iphone-demo/index.html">
+            <title>Racing 3D</title>
+            <script>location.replace('./iphone-demo/index.html');</script>
+          </head>
+          <body><a href="./iphone-demo/index.html">Racing 3Dを起動</a></body>
+          </html>
+          HTML
+          touch _site/.nojekyll
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v6
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
