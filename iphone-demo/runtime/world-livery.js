@@ -81,7 +81,10 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
   const baseLOD=W.updateVehicleLOD?.bind(W);
   W.updateVehicleLOD=(cars=[])=>{
     baseLOD?.(cars);const cp=W.camera?.position;if(!cp)return;
-    for(const c of cars){const g=c?.mesh?.userData?.livery?.group;if(g)g.visible=c.mesh.visible!==false&&cp.distanceTo(c.mesh.position)<180;}
+    for(const c of cars){
+      const livery=c?.mesh?.userData?.livery,g=livery?.group;
+      if(g)g.visible=livery?.freeFloatingGraphics!==false&&c.mesh.visible!==false&&cp.distanceTo(c.mesh.position)<180;
+    }
   };
   return W;
 }
