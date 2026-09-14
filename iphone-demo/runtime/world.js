@@ -9,11 +9,11 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
 
   // The pit lane now has two functional paths in the fully separated section:
   // a clear fast lane on the pit-wall side and a working lane on the garage side.
-  // The garage-side edge is widened without moving the track-side edge back onto
-  // the racing surface, preserving the clipped entry/exit merge from r2.
+  // Cars stay in the fast lane until they are close to their own box so that a
+  // stopped car in an earlier box cannot block every team behind it.
   const WORK_LANE_SHIFT=3.55;
   const OUTER_EXTENSION=2.35;
-  const PIT_APPROACH_METERS=24;
+  const PIT_APPROACH_METERS=7.0;
   const PIT_EXIT_BLEND_METERS=18;
   const LANE_DIVIDER_SHIFT=1.72;
 
@@ -123,6 +123,29 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
   for(let i=0;i<N;i++){const uf=SUZUKA_PIT.entryUF+(SUZUKA_PIT.exitEndUF-SUZUKA_PIT.entryUF)*i/(N-1);ufs[i]=uf;pts[i]=pointUF(uf);}
   for(let i=0;i<N;i++){const a=pts[Math.max(0,i-1)],b=pts[Math.min(N-1,i+1)],t=b.clone().sub(a).setY(0).normalize();sides[i]=new THREE.Vector3(-t.z,0,t.x).normalize();}
 
+  // The original circuit has continuous +24 m guardrails and +27 m fence posts.
+  // The runtime pit lane reaches +21.5 m and its working lane sits even farther
+  // outside, so those legacy instances physically crossed the pit path. Collapse
+  // only instances close to the runtime pit centreline; the opposite-side barriers
+  // and the rest of the circuit stay untouched.
+  function clearLegacyPitBarrierInstances(){
+    const m=new THREE.Matrix4(),pos=new THREE.Vector3(),quat=new THREE.Quaternion(),scale=new THREE.Vector3();let cleared=0;
+    W.scene.traverse(o=>{
+      if(!o?.isInstancedMesh||!o.geometry)return;const p=o.geometry.parameters||{};
+      const rail=o.geometry.type==='BoxGeometry'&&Math.abs((p.width||0)-5)<.08&&Math.abs((p.height||0)-.48)<.05&&Math.abs((p.depth||0)-.32)<.05;
+      const post=o.geometry.type==='BoxGeometry'&&Math.abs((p.width||0)-.15)<.04&&Math.abs((p.height||0)-3.8)<.08&&Math.abs((p.depth||0)-.15)<.04;
+      if(!rail&&!post)return;
+      for(let i=0;i<o.count;i++){
+        o.getMatrixAt(i,m);m.decompose(pos,quat,scale);let minSq=Infinity;
+        for(let k=0;k<N;k+=3){const dx=pos.x-pts[k].x,dz=pos.z-pts[k].z,d=dx*dx+dz*dz;if(d<minSq)minSq=d;}
+        if(minSq>9*9)continue;scale.setScalar(.001);m.compose(pos,quat,scale);o.setMatrixAt(i,m);cleared++;
+      }
+      o.instanceMatrix.needsUpdate=true;
+    });
+    return cleared;
+  }
+  const clearedLegacyBarrierInstances=clearLegacyPitBarrierInstances();
+
   function clippedRibbon(extraHalf,material,y=.07){
     const pos=[],ind=[];
     for(let i=0;i<N;i++){
@@ -195,6 +218,7 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
       mergeCenterInsideMainTrack:centerInside,
       surfaceInnerClamp:roadEdge,
       hiddenLegacyPieces:hidden.length,
+      clearedLegacyBarrierInstances,
       fastLaneCenterOffset:SUZUKA_PIT.laneOffset,
       workingLaneCenterOffset:SUZUKA_PIT.laneOffset+WORK_LANE_SHIFT,
       fastToWorkingCenterGap:WORK_LANE_SHIFT,
@@ -207,12 +231,14 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
     const a=priorAudit?priorAudit():{};
     return{
       ...a,
-      version:'runtime-2026.09.14-r3',
+      version:'runtime-2026.09.14-r4',
       pitGeometry:a.pitGeometry,
       runtimePit:auditRuntimePit(),
       notes:[
         ...(a.notes||[]),
         'pit lane split into a clear fast lane and garage-side working lane',
+        'cars remain in the fast lane until seven metres before their own pit box',
+        'legacy guardrail and fence instances intersecting the runtime pit corridor are suppressed',
         'all ten pit-stop centres share the exact longitudinal datum of their garage entrances',
         'garage-side pavement widened without moving the clipped track-side merge edge'
       ]
@@ -222,7 +248,7 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
   W.runtimePit={
     root,offsetUF,widthUF,outerExtraUF,poseUF,lanePoseUF,roadEdge,
     workLaneShift:WORK_LANE_SHIFT,approachMeters:PIT_APPROACH_METERS,
-    exitBlendMeters:PIT_EXIT_BLEND_METERS,alignedEntrances
+    exitBlendMeters:PIT_EXIT_BLEND_METERS,alignedEntrances,clearedLegacyBarrierInstances
   };
   return W;
 }
