@@ -1,5 +1,5 @@
 export function createRenderAssetManager(W,{mobile=false}={}){
-  const T=W.THREE,manifestUrl=new URL('../../assets/render/manifest.json',import.meta.url),cache=new Map(),failures=[];let manifest=null,loaderPromise=null,loaderSource='none';
+  const T=W.THREE,manifestUrl=new URL('../../assets/render/manifest.json',import.meta.url),cache=new Map(),failures=[];let manifest=null,loaderPromise=null,loaderSource='none',persistentCacheHits=0,persistentCacheWrites=0,persistentCacheFallbacks=0;
   const timeoutMs=mobile?5500:7500;
   function timed(promise,ms,label){
     let timer;return Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error(`${label} timed out after ${ms}ms`)),ms);})]).finally(()=>clearTimeout(timer));
@@ -11,7 +11,6 @@ export function createRenderAssetManager(W,{mobile=false}={}){
   async function loader(){
     if(loaderPromise)return loaderPromise;
     loaderPromise=(async()=>{
-      // Prefer the pinned local npm package. CDN add-ons remain fallback only.
       const sources=[
         {url:new URL('../../node_modules/three/examples/jsm/loaders/GLTFLoader.js',import.meta.url).href,kind:'local-npm'},
         {url:'https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/loaders/GLTFLoader.js/+esm',kind:'jsdelivr'},
@@ -21,14 +20,23 @@ export function createRenderAssetManager(W,{mobile=false}={}){
       throw err||new Error('GLTFLoader unavailable');
     })();return loaderPromise;
   }
+  const directLoad=(L,href)=>timed(new Promise((resolve,reject)=>L.load(href,g=>resolve(g),undefined,reject)),timeoutMs,`GLB ${href}`);
+  async function persistentLoad(L,href){
+    if(!globalThis.caches||!globalThis.fetch||!globalThis.URL?.createObjectURL)return directLoad(L,href);
+    try{
+      const cacheName=`racing-render-assets-v${manifest?.version||'current'}`,store=await caches.open(cacheName);let response=await store.match(href);
+      if(response)persistentCacheHits++;
+      else{
+        response=await timed(fetch(href,{mode:'cors',cache:'force-cache'}),timeoutMs,`GLB fetch ${href}`);if(!response.ok)throw new Error(`GLB fetch ${response.status}`);
+        await store.put(href,response.clone());persistentCacheWrites++;
+      }
+      const blob=await response.blob();if(blob.size<1024)throw new Error(`cached GLB too small: ${blob.size}`);
+      const objectUrl=URL.createObjectURL(blob);try{return await directLoad(L,objectUrl);}finally{URL.revokeObjectURL(objectUrl);}
+    }catch(e){persistentCacheFallbacks++;return directLoad(L,href);}
+  }
   async function loadModel(url){
     if(cache.has(url))return cache.get(url);
-    const promise=(async()=>{
-      const L=await loader(),href=new URL(url,manifestUrl).href;
-      return timed(new Promise((resolve,reject)=>L.load(href,g=>resolve(g),undefined,reject)),timeoutMs,`GLB ${href}`);
-    })();
-    // Keep failures cached for this session so one unavailable source cannot cause
-    // repeated multi-second retries for every car or pit-box clone.
+    const promise=(async()=>{const L=await loader(),href=new URL(url,manifestUrl).href;return persistentLoad(L,href);})();
     cache.set(url,promise);return promise;
   }
   function fallbackPaintColor(car){
@@ -48,9 +56,6 @@ export function createRenderAssetManager(W,{mobile=false}={}){
     if(entry.fitToCar){
       const box=new T.Box3().setFromObject(scene),size=new T.Vector3();box.getSize(size);const d=car.mesh?.userData?.dims||{},sx=(Number(d.width)||size.x)/Math.max(.001,size.x),sz=(Number(d.length)||size.z)/Math.max(.001,size.z),sy=Math.sqrt(Math.max(.001,sx*sz));scene.scale.set(sx*base,sy*base,sz*base);
     }else scene.scale.setScalar(base);
-    // Imported cars do not share one authoring origin. Recompute the fitted bounds,
-    // center the shell on the simulation root, and put the lowest point at tyre level.
-    // This prevents floating cars and keeps differently-authored GLBs aligned alike.
     scene.updateMatrixWorld(true);
     const fitted=new T.Box3().setFromObject(scene),center=new T.Vector3();fitted.getCenter(center);
     const groundY=Number.isFinite(Number(entry.groundY))?Number(entry.groundY):-.06;
@@ -61,17 +66,12 @@ export function createRenderAssetManager(W,{mobile=false}={}){
     const root=car.mesh,u=root?.userData||{},legacy=new Set(),add=o=>{if(o&&o!==root)legacy.add(o);};
     add(u.visual);add(u.v13Fine);add(u.damageParts?.group);add(u.classVisualUpgrade?.group);
     root?.traverse?.(o=>{if(['V13_FINE_INTERIOR','V13_DAMAGE_PARTS','CLASS_VISUAL_UPGRADE_V1'].includes(o.name))add(o);});
-    // LOD code in older world layers can turn V13_FINE_INTERIOR visible again every
-    // frame. Detaching the procedural visual hierarchy is therefore safer than
-    // toggling visible=false: no later LOD update can resurrect the old driver,
-    // roll cage or damage meshes through the imported GLB shell.
     const detached=[];for(const o of legacy){o.visible=false;if(o.parent)o.parent.remove(o);detached.push(o.name||o.type||'legacy');}
     u.renderAssetHiddenLegacy=detached;u.renderAssetUsesDetachedFallback=true;
   }
   async function upgradeCar(car,entry){
     try{
       const gltf=await loadModel(entry.url),scene=gltf.scene.clone(true),tint=fallbackPaintColor(car);prepareScene(scene,tint,Number(entry.teamTint??.32));fitScene(scene,car,entry);
-      // Only remove the procedural fallback after the replacement GLB has loaded.
       detachLegacyCarLayers(car);
       scene.name=`GLB_${car.type||'CAR'}`;car.mesh.add(scene);car.mesh.userData.renderAsset=scene;car.mesh.userData.renderAssetSource=entry.source||entry.url;return true;
     }catch(e){failures.push({type:car.type,url:entry.url,error:String(e?.message||e)});return false;}
@@ -94,15 +94,15 @@ export function createRenderAssetManager(W,{mobile=false}={}){
     return{root,requested,loaded};
   }
   async function upgradeCars(cars=[]){
-    W.renderAssets={state:'loading',manifestVersion:0,requested:0,loaded:0,vehicleRequested:0,vehicleLoaded:0,tracksideRequested:0,tracksideLoaded:0,failed:0,mobile,sources:[],loaderSource};
+    W.renderAssets={state:'loading',manifestVersion:0,requested:0,loaded:0,vehicleRequested:0,vehicleLoaded:0,tracksideRequested:0,tracksideLoaded:0,failed:0,mobile,sources:[],loaderSource,persistentCacheHits,persistentCacheWrites,persistentCacheFallbacks};
     try{
       const m=await loadManifest(),entries=m?.vehicles||{},jobs=[];
       for(const c of cars){const entry=entries[c.type];if(entry?.url)jobs.push(upgradeCar(c,entry));}
       W.renderAssets.manifestVersion=m?.version||0;W.renderAssets.vehicleRequested=jobs.length;
       const [result,trackside]=await Promise.all([Promise.all(jobs),upgradeTrackside(m?.trackside||{})]);
       const loaded=result.filter(Boolean).length+trackside.loaded,requested=jobs.length+trackside.requested;
-      W.renderAssets={state:loaded>0?'ready':'fallback',manifestVersion:m?.version||0,requested,loaded,vehicleRequested:jobs.length,vehicleLoaded:result.filter(Boolean).length,tracksideRequested:trackside.requested,tracksideLoaded:trackside.loaded,failed:failures.length,mobile,sources:[...new Set([...Object.values(entries),...Object.values(m?.trackside||{})].map(x=>x?.source).filter(Boolean))],loaderSource};return W.renderAssets;
-    }catch(e){failures.push({type:'asset-manager',url:String(manifestUrl),error:String(e?.message||e)});W.renderAssets={...W.renderAssets,state:'fallback',failed:failures.length,error:String(e?.message||e),loaderSource};return W.renderAssets;}
+      W.renderAssets={state:loaded>0?'ready':'fallback',manifestVersion:m?.version||0,requested,loaded,vehicleRequested:jobs.length,vehicleLoaded:result.filter(Boolean).length,tracksideRequested:trackside.requested,tracksideLoaded:trackside.loaded,failed:failures.length,mobile,sources:[...new Set([...Object.values(entries),...Object.values(m?.trackside||{})].map(x=>x?.source).filter(Boolean))],loaderSource,persistentCacheHits,persistentCacheWrites,persistentCacheFallbacks};return W.renderAssets;
+    }catch(e){failures.push({type:'asset-manager',url:String(manifestUrl),error:String(e?.message||e)});W.renderAssets={...W.renderAssets,state:'fallback',failed:failures.length,error:String(e?.message||e),loaderSource,persistentCacheHits,persistentCacheWrites,persistentCacheFallbacks};return W.renderAssets;}
   }
-  return{loadManifest,upgradeCars,detachLegacyCarLayers,get manifest(){return manifest},get failures(){return failures.slice()},get cacheSize(){return cache.size},get loaderSource(){return loaderSource}};
+  return{loadManifest,upgradeCars,detachLegacyCarLayers,get manifest(){return manifest},get failures(){return failures.slice()},get cacheSize(){return cache.size},get loaderSource(){return loaderSource},get persistentCache(){return{hits:persistentCacheHits,writes:persistentCacheWrites,fallbacks:persistentCacheFallbacks}}};
 }

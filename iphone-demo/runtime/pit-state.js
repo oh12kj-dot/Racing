@@ -1,8 +1,8 @@
-import {SUZUKA_PIT} from './config.js';
+import {resolvePitRuntimeSpec} from './pit-config.js';
 
 export function createPitStateMachine(W,R){
-  const QUEUE_GAP_METERS=8.5,QUEUE_TRIGGER_METERS=11.0,RELEASE_BEHIND_METERS=18,RELEASE_AHEAD_METERS=8,WORKING_EXIT_BLEND_METERS=18;
-  const serviceTime={formula:2.6,proto:3.1,hyper:3.3,lmh:3.2,gt:4.1,supercar:4.3,touring:4.7};
+  const spec=resolvePitRuntimeSpec(W),QUEUE_GAP_METERS=spec.queueGapMeters,QUEUE_TRIGGER_METERS=spec.queueTriggerMeters,RELEASE_BEHIND_METERS=spec.releaseBehindMeters,RELEASE_AHEAD_METERS=spec.releaseAheadMeters,WORKING_EXIT_BLEND_METERS=spec.workingExitBlendMeters;
+  const serviceTime=spec.serviceTime;
   let arrivalSerial=0;
   const metrics={queued:0,released:0,services:0,legacyStopsRejected:0,doubleStacks:0,invariantRepairs:0,releaseWaits:0,safeReleases:0,serviceCompletions:0,stallRecoveries:0};
   const wrapS=s=>{const total=W.total||1;return((s%total)+total)%total;};
@@ -27,9 +27,6 @@ export function createPitStateMachine(W,R){
     for(const o of R.cars){
       if(o===c||o.retired||o._runtimePitQueued||o.pitState==='STOP'||o.pitState==='NONE')continue;
       const phase=o._runtimePitPhase||'';
-      // A car waiting for release or still crossing the working lane is not fast-lane
-      // traffic. Treating every EXIT car as fast-lane traffic made adjacent pit boxes
-      // wait on each other forever when two teams completed service together.
       const fast=phase==='FAST_LANE'||phase==='FAST_LANE_EXIT'||phase==='PIT_ENTRY'||(o.pitState==='EXIT'&&!['WORKING_EXIT','RELEASE_WAIT'].includes(phase));
       if(!fast||Math.max(0,o.v||0)<1)continue;
       const delta=pitMeters(o.s)-u;if(delta>-RELEASE_BEHIND_METERS&&delta<RELEASE_AHEAD_METERS)near.push({car:o,delta});
@@ -102,9 +99,6 @@ export function createPitStateMachine(W,R){
 
   function afterUpdate(dt,snapshot,eventStart){
     for(const c of R.cars){ensureArrival(c);const b=snapshot[c.id]||{state:'NONE',v:c.v||0};rejectPrematureLegacyStop(c,b.state,b.v,dt,eventStart);}
-    // Service duration and STOP -> release transition are owned here, not by the
-    // historical pit controller hidden during baseUpdate(). This prevents the
-    // old controller from being disabled together with the service countdown.
     for(const c of R.cars){const b=snapshot[c.id];if(b?.state==='STOP')advanceService(c,b,dt,eventStart);}
 
     const stopGroups=new Map();for(const c of R.cars){if(c.retired||c.pitState!=='STOP')continue;const team=c.teamId??0,list=stopGroups.get(team)||[];list.push(c);stopGroups.set(team,list);}
@@ -133,14 +127,14 @@ export function createPitStateMachine(W,R){
       }else if(c.pitState==='ENTRY'){
         if(c._runtimePitQueued)holdQueue(c,eventStart);else posePit(c,'ENTRY');
       }else if(b.state==='EXIT'&&c.pitState==='NONE'&&!c.retired){
-        const uf=W.pitUnwrappedFraction?.(c.s),exit=SUZUKA_PIT.exitEndUF;
+        const uf=W.pitUnwrappedFraction?.(c.s),exit=spec.exitEndUF;
         if(Number.isFinite(uf)&&uf<exit){c.pitState='EXIT';c.v=Math.min(Math.max(b.v||0,8),W.pitSpeedLimit||22.22);c._runtimePitPhase='FAST_LANE_EXIT';c.pitLaneStatus='PIT EXIT';posePit(c,'EXIT');}
-        else{c._runtimePitPhase='MERGE';c.lane=SUZUKA_PIT.mergeTrackOffset;c.laneTarget=4.0;c.pitLaneStatus='MERGE';poseTrack(c);}
+        else{c._runtimePitPhase='MERGE';c.lane=spec.mergeTrackOffset;c.laneTarget=spec.mergeLaneTarget;c.pitLaneStatus='MERGE';poseTrack(c);}
       }else if(c.pitState==='NONE'&&c._runtimePitPhase==='MERGE'){c._runtimePitPhase='TRACK';c._runtimePitArrival=null;c._runtimePitQueued=false;c._runtimeQueueS=null;c._runtimeReleaseWait=false;c.pitLaneStatus='TRACK';}
       repairInvariant(c);
     }
   }
 
-  function diagnostics(){return{owner:'runtime',metrics:{...metrics},cars:R.cars.filter(c=>c.pitState!=='NONE'||c._runtimePitPhase==='MERGE').map(c=>({id:c.id,team:c.teamId,state:c.pitState,phase:c._runtimePitPhase||'TRACK',queued:!!c._runtimePitQueued,releaseWait:!!c._runtimeReleaseWait,s:c.s,v:c.v,status:c.pitLaneStatus,pitTimer:c.pitTimer}))};}
+  function diagnostics(){return{owner:'runtime',spec:{...spec,serviceTime:{...spec.serviceTime}},metrics:{...metrics},cars:R.cars.filter(c=>c.pitState!=='NONE'||c._runtimePitPhase==='MERGE').map(c=>({id:c.id,team:c.teamId,state:c.pitState,phase:c._runtimePitPhase||'TRACK',queued:!!c._runtimePitQueued,releaseWait:!!c._runtimeReleaseWait,s:c.s,v:c.v,status:c.pitLaneStatus,pitTimer:c.pitTimer}))};}
   return{beforeUpdate,afterUpdate,diagnostics,get metrics(){return{...metrics}}};
 }
