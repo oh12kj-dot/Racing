@@ -9,9 +9,12 @@ async function boot(page){
 
 test('director retains simultaneous events instead of dropping lower-priority stories',async({page})=>{
   await boot(page);
-  const x=await page.evaluate(()=>{
-    const R=window.__RACING_RACE__,D=window.__RACING_DIRECTOR__,c=R.cars.find(v=>!v.retired)||R.cars[0],tag=`audit-${Date.now()}`,t=R.race.t,ours=()=>D.pendingEvents.filter(e=>String(e.id||'').startsWith(tag));
-    R.events.push({id:`${tag}-fast`,type:'FASTEST_LAP',carId:c.id,t},{id:`${tag}-pass`,type:'OVERTAKE',carId:c.id,t},{id:`${tag}-contact`,type:'CONTACT',carId:c.id,t});
+  const x=await page.evaluate(async()=>{
+    const {createDirector}=await import('/iphone-demo/runtime/director.js');
+    const car={id:0,name:'AUDIT',retired:false,pitState:'NONE',lap:1,s:100,v:50,lane:0,position:1};
+    const R={race:{t:10},events:[],sessionPhase:'RACE',cars:[car],getStandings(){return this.cars;}};
+    const D=createDirector(R),tag=`audit-${Date.now()}`,t=R.race.t,ours=()=>D.pendingEvents.filter(e=>String(e.id||'').startsWith(tag));
+    R.events.push({id:`${tag}-fast`,type:'FASTEST_LAP',carId:0,t},{id:`${tag}-pass`,type:'OVERTAKE',carId:0,t},{id:`${tag}-contact`,type:'CONTACT',carId:0,t});
     D.update();const afterFirst={banner:D.banner,pending:ours()};
     D.update();const afterSecond={banner:D.banner,pending:ours()};
     D.update();const afterThird={banner:D.banner,pending:ours()};
