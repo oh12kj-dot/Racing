@@ -27,7 +27,7 @@ test('all vehicle classes receive multi-tone liveries and decal graphics',async(
     });
   });
   for(const car of result){
-    expect(car.livery,JSON.stringify(car)).toBeTruthy();expect(car.version,JSON.stringify(car)).toBe(2);expect(car.parts,JSON.stringify(car)).toBeGreaterThanOrEqual(8);expect(car.children,JSON.stringify(car)).toBeGreaterThanOrEqual(8);
+    expect(car.livery,JSON.stringify(car)).toBeTruthy();expect(car.version,JSON.stringify(car)).toBe(3);expect(car.parts,JSON.stringify(car)).toBeGreaterThanOrEqual(8);expect(car.children,JSON.stringify(car)).toBeGreaterThanOrEqual(8);
     expect(car.parentIsRoot,JSON.stringify(car)).toBeTruthy();expect(car.secondary,JSON.stringify(car)).not.toBe(car.primary);expect(car.sponsor,JSON.stringify(car)).toBeTruthy();expect(car.number,JSON.stringify(car)).toBeGreaterThan(0);expect(car.decals,JSON.stringify(car)).toBe(2);expect(car.sweeps,JSON.stringify(car)).toBe(2);
   }
   expect(new Set(result.map(x=>x.secondary)).size).toBeGreaterThanOrEqual(3);
