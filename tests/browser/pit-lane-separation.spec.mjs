@@ -70,8 +70,8 @@ test('pit garages have real open fronts and stay clear of every working box',asy
       if(Math.abs((p.width||0)-10.6)<.08&&Math.abs((p.height||0)-.22)<.04&&(p.depth||0)>5&&(p.depth||0)<12)visibleLegacyCanopies++;
     });
     const rows=garages.children.map((garage,team)=>{
-      const u=garage.userData||{},work=W.pitPose(W.pitBoxS(team),team,'STOP');
-      const frontWorld=garage.localToWorld(new THREE.Vector3(Number(u.frontLocal)||0,0,0));
+      const u=garage.userData||{},work=W.pitPose(W.pitBoxS(team),team,'STOP'),theta=garage.rotation.y;
+      const frontWorld={x:garage.position.x+Math.cos(theta)*(Number(u.frontLocal)||0),z:garage.position.z-Math.sin(theta)*(Number(u.frontLocal)||0)};
       const centerClearance=Math.hypot(frontWorld.x-work.p.x,frontWorld.z-work.p.z);
       let solidCount=0,frontBlockers=0;
       garage.traverse(o=>{
