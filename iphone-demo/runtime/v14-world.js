@@ -1,1 +1,1 @@
-export {buildWorld} from './world-touring-model.js';
+export {buildWorld} from './world-livery.js';
