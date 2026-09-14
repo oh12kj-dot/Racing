@@ -1,1 +1,1 @@
-export {buildWorld} from './runtime/world-vehicle-detail.js';
+export {buildWorld} from './runtime/world-class-visuals.js';
