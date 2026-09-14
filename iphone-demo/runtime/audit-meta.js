@@ -1,7 +1,7 @@
 export function attachRuntimeAudit(W,{race=null,performance=null,regression=null,quality=null,reflections=null}={}){
   const prior=W.auditCircuit?.bind(W);
   W.auditCircuit=()=>{
-    const a=prior?prior():(W.circuitAudit||{});
+    const a=prior?prior():(W.circuitAudit||{}),glow=W.runtimeSelectiveGlow||null;
     return{
       ...a,
       runtimeRendering:{
@@ -10,6 +10,10 @@ export function attachRuntimeAudit(W,{race=null,performance=null,regression=null
         legacyCleanup:W.legacyWorldCleanup||null,
         quality:quality?.state||W.runtimeSceneQuality||null,
         reflectionKey:reflections?.key||W.runtimeReflections?.key||null,
+        reflectionPMREM:!!(reflections?.pmrem||W.runtimeReflections?.pmrem),
+        reflectionProfiles:reflections?.profiles||W.runtimeReflections?.profiles||null,
+        selectiveGlow:glow?{enabled:!!glow.enabled,count:glow.count||0,state:glow.state||null,reason:glow.reason||null}:null,
+        renderAssets:W.renderAssets||null,
         shadowProjection:W.sun?.shadow?.camera?{left:W.sun.shadow.camera.left,right:W.sun.shadow.camera.right,top:W.sun.shadow.camera.top,bottom:W.sun.shadow.camera.bottom,mapSize:[W.sun.shadow.mapSize.x,W.sun.shadow.mapSize.y]}:null,
         renderer:{dpr:W.renderer?.getPixelRatio?.()??null,toneMapping:W.renderer?.toneMapping??null}
       },
