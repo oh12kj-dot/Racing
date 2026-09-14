@@ -26,11 +26,7 @@ test('guardrail re-entry during impact cooldown is separated and spin recovers',
       c.retired=false;c.pitState='NONE';c.s=bar.s;c.lane=bar.sideSign*W.trackBarriers.offset;c.laneTarget=c.lane;c.v=18;
       const q=W.sample(c.s,c.lane);c.mesh.position.copy(q.p);c.mesh.position.y+=.12;c.mesh.rotation.y=Math.atan2(q.t.x,q.t.z);
     };
-    // First contact arms the legacy barrier damage cooldown and may be resolved by
-    // the legacy solver itself.
     c.spinState='NONE';place();R.update(.016);
-    // Reinsert immediately while the legacy 0.42 s impact cooldown is still active.
-    // This is the regression that previously allowed a car to run inside the rail.
     c.spinState='SLIDE';c.spinTimer=1;c.spinSeverity=.75;place();
     const before=!!W.barrierContact(c),correctionsBefore=R.barrierSafetyDiagnostics.corrections;
     R.update(.016);
@@ -55,4 +51,30 @@ test('different teams can service concurrently while same-team double stack queu
     return{supported:true,parallel,doubleStack:{stopCount,queueCount}};
   });
   expect(r.supported).toBeTruthy();expect(r.parallel).toBeTruthy();if(r.doubleStack){expect(r.doubleStack.stopCount).toBe(1);expect(r.doubleStack.queueCount).toBe(1);}
+});
+
+test('pit release waits for fast-lane traffic and releases when clear',async({page})=>{
+  await boot(page);
+  const r=await page.evaluate(()=>{
+    const R=window.__RACING_RACE__,W=window.__RACING_WORLD__,cars=R.cars.filter(c=>!c.retired);if(cars.length<2)return{supported:false};
+    const service=cars[0],traffic=cars.find(c=>c!==service&&c.teamId!==service.teamId)||cars[1],box=W.pitBoxS(service.teamId);
+    service.retired=false;service.s=box;service.v=0;service.pitState='STOP';service.pitTimer=.001;service._pitStopInitial=.001;service._runtimePitArrival=1;service._runtimePitPhase='SERVICE';
+    traffic.retired=false;traffic.s=((box-5)%(W.total||1)+(W.total||1))%(W.total||1);traffic.v=12;traffic.pitState='ENTRY';traffic._runtimePitPhase='FAST_LANE';traffic._runtimePitQueued=false;
+    R.update(.016);const waited=service._runtimeReleaseWait===true&&service.pitState==='EXIT'&&service.v===0;
+    traffic.s=((box-80)%(W.total||1)+(W.total||1))%(W.total||1);traffic._runtimePitPhase='FAST_LANE';traffic.v=12;
+    R.update(.016);const released=!service._runtimeReleaseWait&&service.pitState==='EXIT'&&service.v>0;
+    return{supported:true,waited,released,status:service.pitLaneStatus,diag:R.pitStateDiagnostics};
+  });
+  expect(r.supported).toBeTruthy();expect(r.waited).toBeTruthy();expect(r.released).toBeTruthy();
+});
+
+test('weather reflection profiles switch to wet and night PMREM',async({page})=>{
+  await boot(page);
+  const r=await page.evaluate(()=>{
+    const W=window.__RACING_WORLD__,F=window.__RACING_REFLECTIONS__;if(!W||!F)return{supported:false};
+    W.env.rain=.90;W.env.cloud=1;W.env.wetness=.85;W.env.skyState={...(W.env.skyState||{}),day:.75,twilight:0,hour:14};F.paint?.();const wet=F.key;
+    W.env.rain=0;W.env.cloud=.08;W.env.wetness=0;W.env.skyState={...(W.env.skyState||{}),day:.05,twilight:0,hour:1};F.paint?.();const night=F.key;
+    const audit=W.auditCircuit?.();return{supported:true,wet,night,pmrem:!!audit?.runtimeRendering?.reflectionPMREM,profiles:audit?.runtimeRendering?.reflectionProfiles||[]};
+  });
+  expect(r.supported).toBeTruthy();expect(r.wet).toBe('WET');expect(r.night).toBe('NIGHT');expect(r.pmrem).toBeTruthy();expect(r.profiles).toContain('DAY');expect(r.profiles).toContain('WET');
 });
