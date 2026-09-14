@@ -19,5 +19,5 @@ export {loadSettings,saveSettings,resolveCircuit} from './settings.js';
 export {CIRCUITS,getCircuitTrack} from './circuits.js';
 export {createSafetyCar} from './safety-car.js';
 export {createBroadcast} from './broadcast.js';
-export {createDirector} from '../v41-director.js';
-export {createEnvironment} from '../v38-environment.js';
+export {createDirector} from './director.js';
+export {createEnvironment} from './environment.js';
