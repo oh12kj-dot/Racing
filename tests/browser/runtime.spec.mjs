@@ -15,10 +15,11 @@ async function boot(page){
 
 test('boots independently of optional render assets, renders non-empty frame, and invariants stay clean',async({page})=>{
   const bootState=await boot(page);await page.waitForTimeout(100);
-  const result=await page.evaluate(()=>({status:document.querySelector('#status')?.textContent,reg:window.__RACING_REGRESSION_MONITOR__.run(),audit:window.__RACING_WORLD__.auditCircuit?.(),assets:window.__RACING_WORLD__.renderAssets}));
+  const result=await page.evaluate(()=>{const W=window.__RACING_WORLD__;return{status:document.querySelector('#status')?.textContent,reg:window.__RACING_REGRESSION_MONITOR__.run(),audit:W.auditCircuit?.(),assets:W.renderAssets,compat:W.compatibilitySkipped||{},barrierRoot:W.trackBarriers?.root?.name||null};});
   expect(result.status).not.toContain('ERROR');expect(bootState.three?.kind).toBe('local-npm');
   expect(result.reg.failures.filter(x=>!['BARRIER_RESIDUAL_OVERLAP'].includes(x.code))).toEqual([]);
   expect(result.assets?.state).toBe('skipped-test');
+  expect(result.compat?.v38Barriers).toBeTruthy();expect(result.barrierRoot).toBe('PHYSICAL_BARRIERS_V42');
   const shot=await page.screenshot({fullPage:false});expect(shot.byteLength).toBeGreaterThan(25000);
   expect(result.audit?.runtimePit?.mainTrackEdgeOverlapAtMerge??0).toBe(0);
 });
@@ -76,7 +77,9 @@ test('stable UI keeps telemetry/control/radar tabs and runtime audio mixer contr
     const ids=['v19TelemetryTab','v24CtrlTab','v26RadarTab','v26DeltaTab'];
     const before=window.__RACING_AUDIO__?.volumes?.engine??null,input=document.querySelector('#audioEngine');
     if(input){input.value='37';input.dispatchEvent(new Event('input',{bubbles:true}));}
-    return{tabs:Object.fromEntries(ids.map(id=>[id,!!document.getElementById(id)])),sound:!!document.getElementById('setSound'),mixer:!!document.getElementById('runtimeAudioMixer'),slider:!!input,before,after:window.__RACING_AUDIO__?.volumes?.engine??null};
+    const resources=performance.getEntriesByType('resource').map(e=>{try{return new URL(e.name).pathname;}catch{return String(e.name);}});
+    const historicalUi=resources.filter(x=>/\/v(?:16|17|19|24|26|34)-ui\.js$/.test(x));
+    return{tabs:Object.fromEntries(ids.map(id=>[id,!!document.getElementById(id)])),sound:!!document.getElementById('setSound'),mixer:!!document.getElementById('runtimeAudioMixer'),slider:!!input,before,after:window.__RACING_AUDIO__?.volumes?.engine??null,historicalUi};
   });
-  expect(Object.values(result.tabs).every(Boolean)).toBeTruthy();expect(result.sound).toBeTruthy();expect(result.mixer).toBeTruthy();expect(result.slider).toBeTruthy();expect(result.after).toBeCloseTo(.37,2);
+  expect(Object.values(result.tabs).every(Boolean)).toBeTruthy();expect(result.sound).toBeTruthy();expect(result.mixer).toBeTruthy();expect(result.slider).toBeTruthy();expect(result.after).toBeCloseTo(.37,2);expect(result.historicalUi).toEqual([]);
 });
