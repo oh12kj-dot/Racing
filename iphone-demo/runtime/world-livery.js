@@ -15,6 +15,10 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
     if(!materialCache.has(key))materialCache.set(key,new THREE.MeshPhysicalMaterial({color:color>>>0,metalness:metal,roughness:rough,clearcoat:.92,clearcoatRoughness:.10,envMapIntensity:1.18,polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-1}));
     return materialCache.get(key);
   }
+  function rgbDistance(a,b){
+    const dr=a.r-b.r,dg=a.g-b.g,db=a.b-b.b;
+    return Math.sqrt(dr*dr+dg*dg+db*db);
+  }
   function decalTexture(bg,fg,sponsor,number,variant){
     const key=`${bg}:${fg}:${sponsor}:${number}:${variant}`;if(decalCache.has(key))return decalCache.get(key);
     const c=document.createElement('canvas');c.width=512;c.height=192;const g=c.getContext('2d');
@@ -30,10 +34,17 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
     const m=new THREE.Mesh(geo,mat);m.name=name;m.position.set(x,y,z);m.rotation.set(rx,ry,rz);m.castShadow=false;m.receiveShadow=false;m.renderOrder=4;group.add(m);return m;
   }
   function attachLivery(root,color,type){
-    const visual=root.userData?.visual||root,d=root.userData?.dims||{length:7,width:3},h=hash(color,type),secondary=accentPalette[(h>>>3)%accentPalette.length],tertiary=tertiaryPalette[(h>>>9)%tertiaryPalette.length],sponsor=sponsors[(h>>>15)%sponsors.length],number=1+((h>>>20)%99),variant=(h>>>28)%4;
+    const d=root.userData?.dims||{length:7,width:3},h=hash(color,type);
+    let secondary=accentPalette[(h>>>3)%accentPalette.length];
+    const tertiary=tertiaryPalette[(h>>>9)%tertiaryPalette.length],sponsor=sponsors[(h>>>15)%sponsors.length],number=1+((h>>>20)%99),variant=(h>>>28)%4;
     // Keep a visible contrast even when the generated accent lands too close to the base colour.
-    const baseColor=new THREE.Color(color>>>0),secColor=new THREE.Color(secondary);if(baseColor.distanceTo(secColor)<.28)secondary=secondary===0xf4f4f0?0x111317:0xf4f4f0;
-    const group=new THREE.Group();group.name='RACING_LIVERY_V1';visual.add(group);
+    const baseColor=new THREE.Color(color>>>0),secColor=new THREE.Color(secondary);
+    if(rgbDistance(baseColor,secColor)<.28)secondary=secondary===0xf4f4f0?0x111317:0xf4f4f0;
+    const group=new THREE.Group();group.name='RACING_LIVERY_V1';
+    // Attach to the simulation root, not the procedural visual. Imported GLB cars
+    // detach the old visual hierarchy after loading; the livery must survive that
+    // replacement so GT/touring/supercar assets keep their team graphics too.
+    root.add(group);
     const sec=paint(secondary,.10,.22),third=paint(tertiary,.08,.27),L=d.length,Wd=d.width;
     const sideX=Wd*.405,sideY=type==='formula'?.64:.67,sideZ=type==='formula'?.20:-.08;
     // Two paint graphics per side: a broad sweep plus a narrow tertiary pin-stripe.
@@ -46,9 +57,14 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
     const topY=type==='formula'?.79:type==='touring'?1.23:type==='gt'?1.02:.88,topZ=type==='formula'?L*.22:L*.18;
     add(group,new THREE.BoxGeometry(Wd*(variant%2?.16:.24),.022,L*.30),sec,0,topY,topZ,0,0,variant===3?.035:0,'LIVERY_TOP_STRIPE');
     add(group,new THREE.BoxGeometry(Wd*.045,.025,L*.34),third,(variant%2?1:-1)*Wd*.16,topY+.004,topZ,0,0,variant===2?-.025:0,'LIVERY_TOP_PIN');
-    root.userData.livery={version:1,scheme:variant,primary:color>>>0,secondary:secondary>>>0,tertiary:tertiary>>>0,sponsor,number,parts:8,group};
+    root.userData.livery={version:2,scheme:variant,primary:color>>>0,secondary:secondary>>>0,tertiary:tertiary>>>0,sponsor,number,parts:8,group};
     return root;
   }
   W.makeCar=(color,type)=>attachLivery(baseMake(color,type),color,type);
+  const baseLOD=W.updateVehicleLOD?.bind(W);
+  W.updateVehicleLOD=(cars=[])=>{
+    baseLOD?.(cars);const cp=W.camera?.position;if(!cp)return;
+    for(const c of cars){const g=c?.mesh?.userData?.livery?.group;if(g)g.visible=c.mesh.visible!==false&&cp.distanceTo(c.mesh.position)<180;}
+  };
   return W;
 }
