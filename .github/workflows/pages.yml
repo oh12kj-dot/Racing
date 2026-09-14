@@ -89,11 +89,15 @@ jobs:
           node --input-type=module <<'NODE'
           import { chromium } from '@playwright/test';
           const sha=process.env.SITE_SHA;
-          const url=`https://rawcdn.githack.com/oh12kj-dot/Racing/${sha}/iphone-demo/index.html?runtimeTest=1`;
+          const url=`https://cdn.jsdelivr.net/gh/oh12kj-dot/Racing@${sha}/iphone-demo/index.html?runtimeTest=1`;
           const browser=await chromium.launch({headless:true});
           const context=await browser.newContext();
           const page=await context.newPage();
-          await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000});
+          page.on('console',m=>console.log(`[browser:${m.type()}] ${m.text()}`));
+          page.on('pageerror',e=>console.log(`[pageerror] ${e.message}`));
+          page.on('requestfailed',r=>console.log(`[requestfailed] ${r.url()} :: ${r.failure()?.errorText||''}`));
+          const response=await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000});
+          console.log(`[navigate] status=${response?.status()} url=${page.url()}`);
           await page.waitForFunction(()=>{
             const ready=!!(window.__RACING_RACE__&&window.__RACING_WORLD__&&window.__RACING_REGRESSION_MONITOR__);
             return ready||document.querySelector('#status')?.textContent==='ERROR';
