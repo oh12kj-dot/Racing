@@ -1,17 +1,48 @@
 export function createEnvironmentReflections(W,{mobile=false}={}){
-  const T=W.THREE,size=mobile?256:512,canvas=document.createElement('canvas');canvas.width=size;canvas.height=size>>1;const g=canvas.getContext('2d');
-  const tex=new T.CanvasTexture(canvas);tex.mapping=T.EquirectangularReflectionMapping;tex.colorSpace=T.SRGBColorSpace;tex.generateMipmaps=true;
-  let lastKey='';
-  function paint(){
-    const sky=W.env?.skyState||{},day=Math.max(0,Math.min(1,Number(sky.day??1))),tw=Math.max(0,Math.min(1,Number(sky.twilight??0))),rain=Math.max(0,Math.min(1,Number(W.env?.rain)||0)),cloud=Math.max(0,Math.min(1,Number(W.env?.cloud)||0)),hour=Number(sky.hour??W.env?.timeOfDay??14.2);
-    const key=[Math.round(day*12),Math.round(tw*12),Math.round(rain*10),Math.round(cloud*10),Math.round(hour*2)].join(':');if(key===lastKey)return false;lastKey=key;
-    const w=canvas.width,h=canvas.height,top=new T.Color(0x0a1730).lerp(new T.Color(0x4b93d4),day).lerp(new T.Color(0x44526e),cloud*.45),hz=new T.Color(0x20283a).lerp(new T.Color(0xc8ddec),day).lerp(new T.Color(0xff9468),tw*.72).lerp(new T.Color(0x69747b),rain*.52),ground=new T.Color(0x121619).lerp(new T.Color(0x4a5148),day*.62).lerp(new T.Color(0x262a2c),rain*.65);
-    const toCss=c=>`#${c.getHexString()}`,gr=g.createLinearGradient(0,0,0,h);gr.addColorStop(0,toCss(top));gr.addColorStop(.48,toCss(hz));gr.addColorStop(.57,toCss(hz.clone().multiplyScalar(.74)));gr.addColorStop(1,toCss(ground));g.fillStyle=gr;g.fillRect(0,0,w,h);
-    const sunY=h*(.45-(Math.sin((hour-6)/12*Math.PI))*.30),sunX=((hour/24+.20)%1)*w,r=8+day*15;g.globalAlpha=(1-cloud*.72)*(1-rain*.72)*day;const glow=g.createRadialGradient(sunX,sunY,0,sunX,sunY,r*5);glow.addColorStop(0,'rgba(255,244,210,.95)');glow.addColorStop(.18,'rgba(255,210,145,.55)');glow.addColorStop(1,'rgba(255,180,100,0)');g.fillStyle=glow;g.fillRect(sunX-r*5,sunY-r*5,r*10,r*10);g.globalAlpha=1;
-    if(cloud>.12){g.globalAlpha=.08+.18*cloud;g.fillStyle='#e8ecee';for(let i=0;i<18;i++){const x=(i*97%w),y=h*(.15+((i*37)%26)/100),rw=32+((i*53)%90),rh=6+((i*29)%16);g.beginPath();g.ellipse(x,y,rw,rh,0,0,Math.PI*2);g.fill();}g.globalAlpha=1;}
-    tex.needsUpdate=true;W.scene.environment=tex;if('environmentIntensity' in W.scene)W.scene.environmentIntensity=.82+day*.20+rain*.16;return true;
+  const T=W.THREE,renderer=W.renderer,size=mobile?128:256;
+  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+  const profiles={
+    DAY:{top:0x4b93d4,horizon:0xc8ddec,ground:0x4a5148,sun:'#fff0cc',cloud:.10,intensity:.98},
+    CLOUD:{top:0x63798d,horizon:0xaebbc3,ground:0x414744,sun:'#e8edf0',cloud:.64,intensity:.88},
+    SUNSET:{top:0x43506d,horizon:0xff9165,ground:0x34312d,sun:'#ffd098',cloud:.26,intensity:1.00},
+    NIGHT:{top:0x081227,horizon:0x1d2940,ground:0x11161a,sun:'#91a8d4',cloud:.20,intensity:.62},
+    WET:{top:0x485662,horizon:0x737e84,ground:0x24282a,sun:'#ccd4d8',cloud:.86,intensity:1.08}
+  };
+  const targets=new Map(),sourceTextures=[];
+  let key='DAY',pmrem=null;
+
+  function makeEquirect(p){
+    const c=document.createElement('canvas');c.width=size;c.height=size>>1;const g=c.getContext('2d'),w=c.width,h=c.height;
+    const top=new T.Color(p.top),hz=new T.Color(p.horizon),ground=new T.Color(p.ground),css=x=>`#${x.getHexString()}`;
+    const gr=g.createLinearGradient(0,0,0,h);gr.addColorStop(0,css(top));gr.addColorStop(.47,css(hz));gr.addColorStop(.58,css(hz.clone().multiplyScalar(.72)));gr.addColorStop(1,css(ground));g.fillStyle=gr;g.fillRect(0,0,w,h);
+    const sunX=w*.70,sunY=h*.32,r=Math.max(4,w*.025),glow=g.createRadialGradient(sunX,sunY,0,sunX,sunY,r*5);glow.addColorStop(0,p.sun);glow.addColorStop(.20,p.sun+'aa');glow.addColorStop(1,'rgba(255,210,150,0)');g.globalAlpha=.82*(1-p.cloud*.72);g.fillStyle=glow;g.fillRect(sunX-r*5,sunY-r*5,r*10,r*10);g.globalAlpha=1;
+    if(p.cloud>.08){g.fillStyle='#e5eaed';g.globalAlpha=.05+.18*p.cloud;for(let i=0;i<16;i++){const x=(i*79)%w,y=h*(.17+((i*31)%24)/100),rw=14+((i*47)%40),rh=3+((i*19)%9);g.beginPath();g.ellipse(x,y,rw,rh,0,0,Math.PI*2);g.fill();}g.globalAlpha=1;}
+    const tex=new T.CanvasTexture(c);tex.mapping=T.EquirectangularReflectionMapping;tex.colorSpace=T.SRGBColorSpace;tex.needsUpdate=true;sourceTextures.push(tex);return tex;
   }
-  paint();
-  W.runtimeReflections={texture:tex,paint,get key(){return lastKey}};
+
+  function build(){
+    try{
+      pmrem=new T.PMREMGenerator(renderer);pmrem.compileEquirectangularShader?.();
+      for(const [name,p] of Object.entries(profiles)){
+        const src=makeEquirect(p),rt=pmrem.fromEquirectangular(src);targets.set(name,{texture:rt.texture,target:rt,intensity:p.intensity});
+      }
+    }finally{pmrem?.dispose?.();pmrem=null;for(const t of sourceTextures)t.dispose?.();sourceTextures.length=0;}
+    applyKey('DAY');
+  }
+  function choose(){
+    const s=W.env?.skyState||{},day=clamp(Number(s.day??1),0,1),tw=clamp(Number(s.twilight??0),0,1),rain=clamp(Number(W.env?.rain)||0,0,1),cloud=clamp(Number(W.env?.cloud)||0,0,1);
+    if(rain>.34)return'WET';
+    if(day<.22)return'NIGHT';
+    if(tw>.28)return'SUNSET';
+    if(cloud>.48)return'CLOUD';
+    return'DAY';
+  }
+  function applyKey(next){
+    const rec=targets.get(next);if(!rec)return false;key=next;W.scene.environment=rec.texture;if('environmentIntensity'in W.scene)W.scene.environmentIntensity=rec.intensity;return true;
+  }
+  function paint(){const next=choose();if(next===key)return false;return applyKey(next);}
+  function dispose(){for(const x of targets.values())x.target?.dispose?.();targets.clear();}
+  build();
+  W.runtimeReflections={paint,dispose,get key(){return key},profiles:[...targets.keys()],pmrem:true};
   return W.runtimeReflections;
 }
