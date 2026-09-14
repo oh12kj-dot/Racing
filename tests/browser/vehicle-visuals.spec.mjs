@@ -10,7 +10,13 @@ async function boot(page){
 test('high-aero procedural fallbacks carry class-specific visual detail',async({page})=>{
   await boot(page);
   const result=await page.evaluate(()=>{const W=window.__RACING_WORLD__;return ['formula','proto','hyper','lmh'].map(type=>{const car=W.makeCar(0x376fa8,type),x=car.userData?.classVisualUpgrade||null;return{type,version:x?.version??0,parts:x?.parts??0,dims:car.userData?.dims||null};});});
-  for(const item of result){expect(item.version,`${item.type} visual upgrade version`).toBe(1);expect(item.parts,`${item.type} added visual parts`).toBeGreaterThanOrEqual(item.type==='formula'?18:12);expect(item.dims,`${item.type} simulation dimensions must remain defined`).toBeTruthy();}
+  for(const item of result){expect(item.version,`${item.type} visual upgrade version`).toBe(2);expect(item.parts,`${item.type} added visual parts`).toBeGreaterThanOrEqual(item.type==='formula'?18:12);expect(item.dims,`${item.type} simulation dimensions must remain defined`).toBeTruthy();}
+});
+
+test('closed prototype classes do not retain the generic tall cage or pilot rig',async({page})=>{
+  await boot(page);
+  const result=await page.evaluate(()=>{const W=window.__RACING_WORLD__;return ['proto','hyper','lmh'].map(type=>{const car=W.makeCar(0x376fa8,type);return{type,suppressed:!!car.userData?.closedCockpitInteriorSuppressed,fineAttached:!!car.getObjectByName?.('V13_FINE_INTERIOR'),upgradeAttached:!!car.getObjectByName?.('CLASS_VISUAL_UPGRADE_V1'),version:car.userData?.classVisualUpgrade?.version??0};});});
+  for(const c of result){expect(c.suppressed,JSON.stringify(c)).toBeTruthy();expect(c.fineAttached,JSON.stringify(c)).toBeFalsy();expect(c.upgradeAttached,JSON.stringify(c)).toBeTruthy();expect(c.version).toBe(2);}
 });
 
 test('GLB replacement path detaches legacy driver cage and procedural body permanently',async({page})=>{
