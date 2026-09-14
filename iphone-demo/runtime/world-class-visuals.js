@@ -38,7 +38,10 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
   function upgradePrototype(g,body,kind='proto'){
     let n=0;const A=(...args)=>{add(g,...args);n++;};const wide=kind==='lmh'?1.02:.96;
     for(const s of[-1,1]){arch(g,body,1.02*s,1.82,.62,.32,wide);n++;arch(g,body,1.02*s,-1.72,.64,.34,.94);n++;A(new THREE.BoxGeometry(.10,.25,2.85),carbon,1.13*s,.31,-.02);}
-    A(new THREE.BoxGeometry(.065,.74,1.82),carbon,0,1.12,-.72);A(new THREE.BoxGeometry(2.12,.055,.28),carbon,0,1.11,-2.84,.06);endplates(g,-2.80,1.13,1.08,false);n+=2;
+    // The base prototype/LMH shell already owns its class-correct dorsal fin.
+    // Do not add a second overlapping fin here; from broadcast cameras the pair
+    // looked like an exposed roll cage protruding through the canopy.
+    A(new THREE.BoxGeometry(2.12,.055,.28),carbon,0,1.11,-2.84,.06);endplates(g,-2.80,1.13,1.08,false);n+=2;
     for(const s of[-1,1])A(new THREE.BoxGeometry(.52,.045,.24),carbon,.93*s,.42,2.58,0,0,.12*s);diffuser(g,-2.86,1.72);n+=6;
     if(kind==='lmh'){for(const s of[-1,1])A(new THREE.BoxGeometry(.07,.28,1.55),dark,1.08*s,.54,.40,0,0,.04*s);A(new THREE.BoxGeometry(1.30,.055,.35),carbon,0,.27,2.82);}
     return n;
@@ -48,7 +51,21 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
     for(const s of[-1,1]){arch(g,body,1.08*s,1.67,.56,.28,.82);n++;arch(g,body,1.08*s,-1.62,.58,.30,.80);n++;A(new THREE.BoxGeometry(.08,.20,2.55),carbon,1.17*s,.31,-.02);A(new THREE.BoxGeometry(.12,.36,1.12),dark,.97*s,.55,.24,0,0,.09*s);}
     A(new THREE.BoxGeometry(.055,.46,1.12),carbon,0,1.02,-.70);A(new THREE.BoxGeometry(1.92,.05,.28),carbon,0,1.02,-2.63,.06);endplates(g,-2.60,1.03,.98,false);n+=2;diffuser(g,-2.76,1.66);n+=6;for(const s of[-1,1])A(new THREE.BoxGeometry(.42,.04,.20),carbon,.83*s,.39,2.42,0,0,.12*s);return n;
   }
-  W.makeCar=(color,type)=>{const root=baseMake(color,type);if(!['formula','proto','hyper','lmh'].includes(type))return root;const visual=root.userData?.visual||root,group=new THREE.Group();group.name='CLASS_VISUAL_UPGRADE_V1';visual.add(group);const body=tint(color);let parts=0;if(type==='formula')parts=upgradeFormula(group,body);else if(type==='hyper')parts=upgradeHyper(group,body);else parts=upgradePrototype(group,body,type);root.userData.classVisualUpgrade={version:1,type,parts,group};return root;};
+  W.makeCar=(color,type)=>{
+    const root=baseMake(color,type);
+    if(!['formula','proto','hyper','lmh'].includes(type))return root;
+
+    // V13's generic closed-car interior was designed around taller GT/touring
+    // cabins. In the very low prototype/hypercar canopy it can place the cage
+    // and driver's helmet through the roof. These classes use their opaque/
+    // tinted procedural cockpit shell instead, so detach that incompatible rig.
+    if(['proto','hyper','lmh'].includes(type)){
+      const fine=root.userData?.v13Fine;
+      if(fine){fine.visible=false;fine.parent?.remove(fine);root.userData.v13Fine=null;root.userData.closedCockpitInteriorSuppressed=true;}
+    }
+
+    const visual=root.userData?.visual||root,group=new THREE.Group();group.name='CLASS_VISUAL_UPGRADE_V1';visual.add(group);const body=tint(color);let parts=0;if(type==='formula')parts=upgradeFormula(group,body);else if(type==='hyper')parts=upgradeHyper(group,body);else parts=upgradePrototype(group,body,type);root.userData.classVisualUpgrade={version:2,type,parts,group};return root;
+  };
   const baseLOD=W.updateVehicleLOD?.bind(W);W.updateVehicleLOD=(cars=[])=>{baseLOD?.(cars);const cp=W.camera?.position;if(!cp)return;for(const c of cars){const x=c?.mesh?.userData?.classVisualUpgrade;if(!x?.group)continue;const d=cp.distanceTo(c.mesh.position);x.group.visible=d<145&&c.mesh.visible!==false;}};
   return W;
 }
