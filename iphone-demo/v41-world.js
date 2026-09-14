@@ -1,7 +1,7 @@
 import {buildWorld as buildV39World} from './v39-world.js';
 
 export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
-  const W=buildV39World(THREE,TRACK,settings,circuitName),total=W.total;
+  const W=buildV39World(THREE,TRACK,settings,circuitName),total=W.total,cleanRuntime=!!settings.runtimeCleanWorld;
   const clamp=(v,a,b)=>Math.max(a,Math.min(b,v)),smooth=t=>{t=clamp(t,0,1);return t*t*(3-2*t);},wrapF=f=>((f%1)+1)%1;
 
   // --- Multiple race lines -------------------------------------------------
@@ -35,13 +35,12 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
   W.racingCurvatureFor=(s,mode='OPTIMAL')=>field(lineCurv[mode]||lineCurv.OPTIMAL,s);
   W.racingLineModes=Object.keys(lineModes);
 
-  // --- Real pit lane geometry ---------------------------------------------
-  // The old pit was only the main track shifted 13.6 m sideways. At Suzuka's
-  // start/finish complex that visually overlapped the race surface, and the
-  // garage local +X direction pointed inward. Replace it with a separate,
-  // wider-offset continuous lane and position garages on the actual outside.
+  // --- Real pit lane geometry / kinematics --------------------------------
+  // Stable runtime still consumes these mature path calculations. In clean
+  // runtime mode, however, the superseded v41 visual lane/wall/garages are not
+  // constructed at all; runtime/v42 owns the final visible pit complex.
   const oldPit=W.scene.getObjectByName?.('PIT_COMPLEX_V11');if(oldPit)oldPit.visible=false;
-  const pitRoot=new THREE.Group();pitRoot.name='PIT_COMPLEX_V41';W.scene.add(pitRoot);
+  const pitRoot=new THREE.Group();pitRoot.name='PIT_COMPLEX_V41';if(!cleanRuntime)W.scene.add(pitRoot);
   const ENTRY=.942,FULL=.978,BOX0=.994,BOX_GAP=.00545,EXIT_BEGIN=1.062,EXIT_END=1.095,PIT_CENTER=21.5,PIT_LIMIT=22.22;
   const span=EXIT_END-ENTRY,pitN=300,pitP=new Array(pitN),pitT=new Array(pitN),pitSide=new Array(pitN),pitF=new Float32Array(pitN);
   function unwrapFracFromS(s){let f=wrapF(s/total);if(f<ENTRY)f+=1;return f;}
@@ -70,37 +69,34 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
   W.pitDistanceToBox=(s,teamId=0)=>{const f=unwrapFracFromS(s),b=boxUF(teamId);return(b-f)*total;};
   W.pitEntryFraction=ENTRY;W.pitExitFraction=wrapF(EXIT_END);
 
-  const asphalt=new THREE.MeshStandardMaterial({color:0x303438,roughness:.90,metalness:.018,side:THREE.DoubleSide}),apron=new THREE.MeshStandardMaterial({color:0x65696b,roughness:.94,side:THREE.DoubleSide}),white=new THREE.MeshStandardMaterial({color:0xf3f1e8,roughness:.76,side:THREE.DoubleSide}),yellow=new THREE.MeshStandardMaterial({color:0xf0c72d,roughness:.72,side:THREE.DoubleSide}),concrete=new THREE.MeshStandardMaterial({color:0xb7bab8,roughness:.88}),dark=new THREE.MeshStandardMaterial({color:0x1c2125,roughness:.73,metalness:.12}),roof=new THREE.MeshStandardMaterial({color:0x51595e,roughness:.74,metalness:.2}),glass=new THREE.MeshPhysicalMaterial({color:0x213843,roughness:.12,transparent:true,opacity:.60,clearcoat:.6});
-  function ribbon(halfWidth,mat,y=.07,lateral=0){const pos=[],ind=[];for(let i=0;i<pitN;i++){const c=pitP[i].clone().addScaledVector(pitSide[i],lateral),l=c.clone().addScaledVector(pitSide[i],-halfWidth),r=c.clone().addScaledVector(pitSide[i],halfWidth);l.y+=y;r.y+=y;pos.push(l.x,l.y,l.z,r.x,r.y,r.z);}for(let i=0;i<pitN-1;i++){const a=i*2,b=a+1,c=(i+1)*2,d=c+1;ind.push(a,b,c,b,d,c);}const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));g.setIndex(ind);g.computeVertexNormals();const m=new THREE.Mesh(g,mat);m.receiveShadow=true;pitRoot.add(m);return m;}
-  ribbon(6.0,apron,.045);ribbon(3.35,asphalt,.066);ribbon(.075,white,.108,-3.10);ribbon(.075,white,.108,3.10);ribbon(.065,yellow,.112,0);
-
-  // Pit wall between racing surface and pit lane; leave entry/exit merges open.
-  const wallGeo=new THREE.BoxGeometry(3.4,.82,.36),wallDummy=new THREE.Object3D(),wallSegments=[];
-  for(let uf=.982;uf<=1.058;uf+=.0046){const q=W.sample(wrapF(uf)*total,13.1);wallSegments.push(q);}
-  const walls=new THREE.InstancedMesh(wallGeo,concrete,wallSegments.length);
-  wallSegments.forEach((q,i)=>{wallDummy.position.copy(q.p);wallDummy.position.y+=.45;wallDummy.rotation.set(0,Math.atan2(q.t.x,q.t.z),0);wallDummy.updateMatrix();walls.setMatrixAt(i,wallDummy.matrix);});walls.instanceMatrix.needsUpdate=true;walls.receiveShadow=true;pitRoot.add(walls);
-
-  const teamColors=[0xe3312d,0x287de1,0xf2c52f,0xf3f3f3,0x20bd7b,0x9362df,0xed7b27,0x22aab8,0xe04a90,0xaeb6c1],teamNames=['APEX','VORTEX','ORION','SAKURA','TITAN','NOVA','FALCON','HELIX','VECTOR','PULSE'];
-  function signTexture(name,color){const c=document.createElement('canvas');c.width=384;c.height=96;const g=c.getContext('2d');g.fillStyle=`#${color.toString(16).padStart(6,'0')}`;g.fillRect(0,0,c.width,c.height);g.fillStyle='#fff';g.font='900 40px -apple-system,sans-serif';g.textAlign='center';g.textBaseline='middle';g.fillText(name,c.width/2,c.height/2);const t=new THREE.CanvasTexture(c);t.colorSpace=THREE.SRGBColorSpace;return t;}
   const garageGroups=[];
-  for(let team=0;team<10;team++){
-    const q=pitSampleUF(boxUF(team)),g=new THREE.Group();g.position.copy(q.p);g.rotation.y=q.rotationY;pitRoot.add(g);garageGroups.push(g);
-    const teamMat=new THREE.MeshStandardMaterial({color:teamColors[team],roughness:.56});
-    const box=new THREE.Mesh(new THREE.BoxGeometry(3.0,.025,5.1),white);box.position.y=.10;g.add(box);const inset=new THREE.Mesh(new THREE.BoxGeometry(2.72,.028,4.82),apron);inset.position.y=.118;g.add(inset);
-    // local -X is the positive track-side vector for this yaw, i.e. farther away from the circuit.
-    const garage=new THREE.Group();garage.position.set(-10.2,0,0);g.add(garage);
-    const floor=new THREE.Mesh(new THREE.BoxGeometry(7.2,.16,5.1),dark);floor.position.y=.08;garage.add(floor);const back=new THREE.Mesh(new THREE.BoxGeometry(.22,3.9,5.1),concrete);back.position.set(-3.5,1.95,0);garage.add(back);const sideA=new THREE.Mesh(new THREE.BoxGeometry(7.2,3.9,.20),concrete);sideA.position.set(0,1.95,-2.45);garage.add(sideA);const sideB=sideA.clone();sideB.position.z=2.45;garage.add(sideB);const top=new THREE.Mesh(new THREE.BoxGeometry(7.5,.24,5.35),roof);top.position.set(0,4.0,0);garage.add(top);const fascia=new THREE.Mesh(new THREE.BoxGeometry(.34,.70,5.0),teamMat);fascia.position.set(3.45,3.45,0);garage.add(fascia);const sign=new THREE.Mesh(new THREE.PlaneGeometry(3.8,.78),new THREE.MeshBasicMaterial({map:signTexture(teamNames[team],teamColors[team]),side:THREE.DoubleSide}));sign.rotation.y=-Math.PI/2;sign.position.set(3.64,3.43,0);garage.add(sign);const window=new THREE.Mesh(new THREE.PlaneGeometry(3.0,1.05),glass);window.rotation.y=Math.PI/2;window.position.set(-3.37,2.25,0);garage.add(window);
+  if(!cleanRuntime){
+    const asphalt=new THREE.MeshStandardMaterial({color:0x303438,roughness:.90,metalness:.018,side:THREE.DoubleSide}),apron=new THREE.MeshStandardMaterial({color:0x65696b,roughness:.94,side:THREE.DoubleSide}),white=new THREE.MeshStandardMaterial({color:0xf3f1e8,roughness:.76,side:THREE.DoubleSide}),yellow=new THREE.MeshStandardMaterial({color:0xf0c72d,roughness:.72,side:THREE.DoubleSide}),concrete=new THREE.MeshStandardMaterial({color:0xb7bab8,roughness:.88}),dark=new THREE.MeshStandardMaterial({color:0x1c2125,roughness:.73,metalness:.12}),roof=new THREE.MeshStandardMaterial({color:0x51595e,roughness:.74,metalness:.2}),glass=new THREE.MeshPhysicalMaterial({color:0x213843,roughness:.12,transparent:true,opacity:.60,clearcoat:.6});
+    function ribbon(halfWidth,mat,y=.07,lateral=0){const pos=[],ind=[];for(let i=0;i<pitN;i++){const c=pitP[i].clone().addScaledVector(pitSide[i],lateral),l=c.clone().addScaledVector(pitSide[i],-halfWidth),r=c.clone().addScaledVector(pitSide[i],halfWidth);l.y+=y;r.y+=y;pos.push(l.x,l.y,l.z,r.x,r.y,r.z);}for(let i=0;i<pitN-1;i++){const a=i*2,b=a+1,c=(i+1)*2,d=c+1;ind.push(a,b,c,b,d,c);}const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));g.setIndex(ind);g.computeVertexNormals();const m=new THREE.Mesh(g,mat);m.receiveShadow=true;pitRoot.add(m);return m;}
+    ribbon(6.0,apron,.045);ribbon(3.35,asphalt,.066);ribbon(.075,white,.108,-3.10);ribbon(.075,white,.108,3.10);ribbon(.065,yellow,.112,0);
+
+    const wallGeo=new THREE.BoxGeometry(3.4,.82,.36),wallDummy=new THREE.Object3D(),wallSegments=[];
+    for(let uf=.982;uf<=1.058;uf+=.0046){const q=W.sample(wrapF(uf)*total,13.1);wallSegments.push(q);}
+    const walls=new THREE.InstancedMesh(wallGeo,concrete,wallSegments.length);
+    wallSegments.forEach((q,i)=>{wallDummy.position.copy(q.p);wallDummy.position.y+=.45;wallDummy.rotation.set(0,Math.atan2(q.t.x,q.t.z),0);wallDummy.updateMatrix();walls.setMatrixAt(i,wallDummy.matrix);});walls.instanceMatrix.needsUpdate=true;walls.receiveShadow=true;pitRoot.add(walls);
+
+    const teamColors=[0xe3312d,0x287de1,0xf2c52f,0xf3f3f3,0x20bd7b,0x9362df,0xed7b27,0x22aab8,0xe04a90,0xaeb6c1],teamNames=['APEX','VORTEX','ORION','SAKURA','TITAN','NOVA','FALCON','HELIX','VECTOR','PULSE'];
+    function signTexture(name,color){const c=document.createElement('canvas');c.width=384;c.height=96;const g=c.getContext('2d');g.fillStyle=`#${color.toString(16).padStart(6,'0')}`;g.fillRect(0,0,c.width,c.height);g.fillStyle='#fff';g.font='900 40px -apple-system,sans-serif';g.textAlign='center';g.textBaseline='middle';g.fillText(name,c.width/2,c.height/2);const t=new THREE.CanvasTexture(c);t.colorSpace=THREE.SRGBColorSpace;return t;}
+    for(let team=0;team<10;team++){
+      const q=pitSampleUF(boxUF(team)),g=new THREE.Group();g.position.copy(q.p);g.rotation.y=q.rotationY;pitRoot.add(g);garageGroups.push(g);
+      const teamMat=new THREE.MeshStandardMaterial({color:teamColors[team],roughness:.56});
+      const box=new THREE.Mesh(new THREE.BoxGeometry(3.0,.025,5.1),white);box.position.y=.10;g.add(box);const inset=new THREE.Mesh(new THREE.BoxGeometry(2.72,.028,4.82),apron);inset.position.y=.118;g.add(inset);
+      const garage=new THREE.Group();garage.position.set(-10.2,0,0);g.add(garage);
+      const floor=new THREE.Mesh(new THREE.BoxGeometry(7.2,.16,5.1),dark);floor.position.y=.08;garage.add(floor);const back=new THREE.Mesh(new THREE.BoxGeometry(.22,3.9,5.1),concrete);back.position.set(-3.5,1.95,0);garage.add(back);const sideA=new THREE.Mesh(new THREE.BoxGeometry(7.2,3.9,.20),concrete);sideA.position.set(0,1.95,-2.45);garage.add(sideA);const sideB=sideA.clone();sideB.position.z=2.45;garage.add(sideB);const top=new THREE.Mesh(new THREE.BoxGeometry(7.5,.24,5.35),roof);top.position.set(0,4.0,0);garage.add(top);const fascia=new THREE.Mesh(new THREE.BoxGeometry(.34,.70,5.0),teamMat);fascia.position.set(3.45,3.45,0);garage.add(fascia);const sign=new THREE.Mesh(new THREE.PlaneGeometry(3.8,.78),new THREE.MeshBasicMaterial({map:signTexture(teamNames[team],teamColors[team]),side:THREE.DoubleSide}));sign.rotation.y=-Math.PI/2;sign.position.set(3.64,3.43,0);garage.add(sign);const window=new THREE.Mesh(new THREE.PlaneGeometry(3.0,1.05),glass);window.rotation.y=Math.PI/2;window.position.set(-3.37,2.25,0);garage.add(window);
+    }
   }
 
   // The v12 detailed crew groups are useful, but they were created at the old
   // pit coordinates. Re-seat each team on the new physical pit boxes.
   const oldAnim=W.scene.getObjectByName?.('PIT_ANIMATION_V12');
   if(oldAnim){oldAnim.visible=true;for(let team=0;team<Math.min(10,oldAnim.children.length);team++){const q=pitSampleUF(boxUF(team)),g=oldAnim.children[team];g.position.copy(q.p);g.rotation.y=q.rotationY;}}
-  // v13's separate service rigs have no stable public handles and were anchored
-  // to the obsolete lane. Disable only that decorative layer to avoid ghost rigs;
-  // the detailed wheel/jack/release crew remains active through v12.
   if(W.updatePitService)W.updatePitService=()=>{};
 
-  W.pitComplexV41={root:pitRoot,entry:ENTRY,full:FULL,exitBegin:EXIT_BEGIN,exitEnd:EXIT_END,centerOffset:PIT_CENTER,garageGroups};
+  W.pitComplexV41={root:pitRoot,entry:ENTRY,full:FULL,exitBegin:EXIT_BEGIN,exitEnd:EXIT_END,centerOffset:PIT_CENTER,garageGroups,visualsConstructed:!cleanRuntime};
   return W;
 }
