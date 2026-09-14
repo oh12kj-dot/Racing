@@ -47,7 +47,8 @@ test('radio repeats are rewritten into varied context-aware dialogue without los
     for(let i=0;i<5;i++)R.radio.push({id:`${tag}-d${i}`,t:R.race.t,carId:c.id,name:c.name,text:'Copy. Understood.',kind:'DRIVER'});
     R.radio.push({id:`${tag}-p`,t:R.race.t,carId:c.id,name:'ENGINEER',text:'5 second penalty. unsafe release.',kind:'PENALTY'});
     R.update(.016);
-    const strategy=R.radio.filter(x=>x.id?.startsWith(`${tag}-s`)).map(x=>x.text),driver=R.radio.filter(x=>x.id?.startsWith(`${tag}-d`)).map(x=>x.text),penalty=R.radio.find(x=>x.id===`${tag}-p`)?.text||'',diag=R.radioVarietyDiagnostics;
+    const idOf=x=>String(x?.id??'');
+    const strategy=R.radio.filter(x=>idOf(x).startsWith(`${tag}-s`)).map(x=>x.text),driver=R.radio.filter(x=>idOf(x).startsWith(`${tag}-d`)).map(x=>x.text),penalty=R.radio.find(x=>idOf(x)===`${tag}-p`)?.text||'',diag=R.radioVarietyDiagnostics;
     return{strategy,driver,penalty,diag};
   });
   expect(result.strategy).toHaveLength(5);expect(new Set(result.strategy).size).toBeGreaterThanOrEqual(4);expect(result.strategy.every(x=>x!=='Box this lap. tyre life.')).toBeTruthy();
