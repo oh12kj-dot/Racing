@@ -2,6 +2,7 @@ import {createRace as createLegacyRace} from '../v41-race.js';
 import {LOG_POLICY} from './config.js';
 import {createPitStateMachine} from './pit-state.js';
 import {createBarrierSafety} from './barrier-safety.js';
+import {createRadioVariety} from './radio-variety.js';
 
 export function createRace(W,statusEl,settings={}){
   // Stable runtime owns pit movement/service state, barrier material post-processing
@@ -9,7 +10,7 @@ export function createRace(W,statusEl,settings={}){
   W.runtimePitStateMachineOwner='runtime-v1';
   const R=createLegacyRace(W,statusEl,settings),baseUpdate=R.update;
   const generation={id:`run-${Date.now().toString(36)}`,startedAt:Date.now(),persistent:true,maxGenerations:LOG_POLICY.persistedGenerations};
-  const pit=createPitStateMachine(W,R),barrierSafety=createBarrierSafety(W,R),prevDamage=[],seenBarrier=new Set();
+  const pit=createPitStateMachine(W,R),barrierSafety=createBarrierSafety(W,R),radioVariety=createRadioVariety(R),prevDamage=[],seenBarrier=new Set();
   const trim=(arr,max)=>{if(Array.isArray(arr)&&arr.length>max)arr.splice(0,arr.length-max);};
   const bandDamage=kmh=>kmh<15?.018:kmh<38?.055:kmh<72?.15:kmh<115?.32:kmh<160?.55:.88;
   const barrierKey=x=>`${x.t}:${x.carId}:${Math.round(x.impactKmh||0)}:${x.zone||''}`;
@@ -33,11 +34,11 @@ export function createRace(W,statusEl,settings={}){
   }
 
   // The mature race core still models every car in the circuit's narrow logical
-  // lane coordinates.  Pit cars are visually placed on separate fast/working
+  // lane coordinates. Pit cars are visually placed on separate fast/working
   // lanes later by runtime/pit-state, so without this compatibility isolation a
   // stopped working-lane car is treated as being directly in front of a passing
-  // fast-lane car.  Give pit traffic temporary logical lanes only while the old
-  // AI/physics update runs.  Real lane values are restored before final posing.
+  // fast-lane car. Give pit traffic temporary logical lanes only while the old
+  // AI/physics update runs. Real lane values are restored before final posing.
   function isolatePitTraffic(){
     const saved=[];let fast=0,working=0;
     for(const c of R.cars){
@@ -54,7 +55,7 @@ export function createRace(W,statusEl,settings={}){
   }
   function restorePitTraffic(saved){for(const x of saved){x.c.lane=x.lane;x.c.laneTarget=x.laneTarget;}}
 
-  // A pit call can be made well before the physical pit entry.  pit-state must not
+  // A pit call can be made well before the physical pit entry. pit-state must not
   // visually snap that car to the pit offset until it actually reaches the entry
   // window; on-track laneTarget changes are allowed to move it over progressively.
   function restorePreEntryTrackVisual(){
@@ -73,7 +74,7 @@ export function createRace(W,statusEl,settings={}){
     const pitDistanceToBox=W.pitDistanceToBox;W.pitDistanceToBox=null;
     try{baseUpdate(dt);}finally{W.pitDistanceToBox=pitDistanceToBox;restorePitTraffic(isolated);}
     applyBarrierMaterials();
-    pit.afterUpdate(dt,snapshot,eventStart);restorePreEntryTrackVisual();barrierSafety.update();enforceRetention();
+    pit.afterUpdate(dt,snapshot,eventStart);restorePreEntryTrackVisual();barrierSafety.update();radioVariety.update();enforceRetention();
   }
 
   return new Proxy(R,{get(target,prop){
@@ -85,6 +86,7 @@ export function createRace(W,statusEl,settings={}){
     if(prop==='pitTrafficIsolation')return{...trafficIsolation};
     if(prop==='barrierSafetyDiagnostics')return barrierSafety.diagnostics();
     if(prop==='barrierSafetyController')return barrierSafety;
+    if(prop==='radioVarietyDiagnostics')return radioVariety.diagnostics();
     if(prop==='runtimeSafety')return{pit:pit.diagnostics(),barrier:barrierSafety.diagnostics(),pitTraffic:{...trafficIsolation}};
     return Reflect.get(target,prop,target);
   }});
