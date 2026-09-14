@@ -34,6 +34,15 @@ test('pit state machine resolves circuit-owned layout into a generic runtime spe
   expect(x.serviceTime.gt).toBeGreaterThan(x.serviceTime.formula);
 });
 
+test('pit runtime spec preserves safe defaults without optional exit metadata',async({page})=>{
+  await boot(page);
+  const x=await page.evaluate(async()=>{
+    const {resolvePitRuntimeSpec}=await import('/iphone-demo/runtime/pit-config.js');
+    return resolvePitRuntimeSpec({total:5000,circuitName:'GENERIC'});
+  });
+  expect(x.exitEndUF).toBeCloseTo(1.05,6);expect(x.mergeTrackOffset).toBeCloseTo(4,6);expect(x.mergeLaneTarget).toBeGreaterThan(2.5);
+});
+
 test('formula prototype and hyper classes receive lightweight silhouette polish',async({page})=>{
   await boot(page);
   const result=await page.evaluate(()=>{
