@@ -19,6 +19,37 @@ test('closed prototype classes do not retain the generic tall cage or pilot rig'
   for(const c of result){expect(c.suppressed,JSON.stringify(c)).toBeTruthy();expect(c.fineAttached,JSON.stringify(c)).toBeFalsy();expect(c.upgradeAttached,JSON.stringify(c)).toBeTruthy();expect(c.version).toBe(2);}
 });
 
+test('planar sponsor decals use safe class fits and suppressed body graphics stay hidden',async({page})=>{
+  await boot(page);
+  const result=await page.evaluate(()=>{
+    const W=window.__RACING_WORLD__,types=['formula','proto','hyper','lmh','gt','supercar','touring'];
+    return types.map(type=>{
+      const car=W.makeCar(0x376fa8,type),l=car.userData?.livery,g=l?.group;
+      if(W.camera&&car?.position)car.position.copy(W.camera.position);
+      const before=g?.visible??null;
+      W.updateVehicleLOD?.([car]);
+      const decals=(g?.children||[]).filter(x=>x.name==='LIVERY_DECAL').map(x=>({w:x.geometry?.parameters?.width??null,h:x.geometry?.parameters?.height??null,x:Math.abs(x.position?.x||0),y:x.position?.y??0}));
+      return{type,version:l?.version??0,profile:l?.sideFit?.profile||null,fit:l?.sideFit||null,before,after:g?.visible??null,freeFloating:l?.freeFloatingGraphics??null,mode:l?.mode||null,decals};
+    });
+  });
+  const limits={formula:{w:.80,h:.20},proto:{w:1.00,h:.25},hyper:{w:1.00,h:.25},lmh:{w:1.00,h:.25},supercar:{w:1.00,h:.25}};
+  for(const c of result){
+    expect(c.version,JSON.stringify(c)).toBe(3);
+    expect(c.profile,JSON.stringify(c)).toBeTruthy();
+    expect(c.decals.length,JSON.stringify(c)).toBe(2);
+    if(c.type==='gt'||c.type==='touring'){
+      expect(c.freeFloating,JSON.stringify(c)).toBe(false);
+      expect(c.mode,JSON.stringify(c)).toBe('native-body-panels');
+      expect(c.before,JSON.stringify(c)).toBe(false);
+      expect(c.after,JSON.stringify(c)).toBe(false);
+      continue;
+    }
+    const limit=limits[c.type];
+    expect(limit,`missing decal limit for ${c.type}`).toBeTruthy();
+    for(const d of c.decals){expect(d.w,JSON.stringify(c)).toBeLessThanOrEqual(limit.w);expect(d.h,JSON.stringify(c)).toBeLessThanOrEqual(limit.h);}
+  }
+});
+
 test('GLB replacement path detaches legacy driver cage and procedural body permanently',async({page})=>{
   await boot(page);
   const result=await page.evaluate(()=>{
