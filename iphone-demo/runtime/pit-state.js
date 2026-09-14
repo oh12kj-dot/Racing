@@ -1,12 +1,13 @@
 import {SUZUKA_PIT} from './config.js';
 
 export function createPitStateMachine(W,R){
-  const QUEUE_GAP_METERS=8.5,QUEUE_TRIGGER_METERS=11.0,RELEASE_BEHIND_METERS=18,RELEASE_AHEAD_METERS=8;
+  const QUEUE_GAP_METERS=8.5,QUEUE_TRIGGER_METERS=11.0,RELEASE_BEHIND_METERS=18,RELEASE_AHEAD_METERS=8,WORKING_EXIT_BLEND_METERS=18;
   const serviceTime={formula:2.6,proto:3.1,hyper:3.3,lmh:3.2,gt:4.1,supercar:4.3,touring:4.7};
   let arrivalSerial=0;
-  const metrics={queued:0,released:0,services:0,legacyStopsRejected:0,doubleStacks:0,invariantRepairs:0,releaseWaits:0,safeReleases:0,serviceCompletions:0};
+  const metrics={queued:0,released:0,services:0,legacyStopsRejected:0,doubleStacks:0,invariantRepairs:0,releaseWaits:0,safeReleases:0,serviceCompletions:0,stallRecoveries:0};
   const wrapS=s=>{const total=W.total||1;return((s%total)+total)%total;};
   const pitMeters=s=>(W.pitUnwrappedFraction?.(s)??(wrapS(s)/(W.total||1)))*(W.total||1);
+  const forwardDelta=(a,b)=>{const total=W.total||1;return((wrapS(b)-wrapS(a))%total+total)%total;};
 
   function poseTrack(c){if(!c?.mesh)return;const q=W.sample(c.s,c.lane);c.mesh.position.copy(q.p);c.mesh.position.y+=.12;c.mesh.rotation.y=Math.atan2(q.t.x,q.t.z);}
   function posePit(c,state=c.pitState){if(!c?.mesh)return;const q=W.pitPose?.(c.s,c.teamId,state);if(!q)return;c.mesh.position.copy(q.p);c.mesh.position.y+=.12;c.mesh.rotation.y=q.rotationY;}
@@ -25,7 +26,11 @@ export function createPitStateMachine(W,R){
     const u=pitMeters(c.s),near=[];
     for(const o of R.cars){
       if(o===c||o.retired||o._runtimePitQueued||o.pitState==='STOP'||o.pitState==='NONE')continue;
-      const phase=o._runtimePitPhase||'',fast=phase==='FAST_LANE'||phase==='FAST_LANE_EXIT'||phase==='PIT_ENTRY'||o.pitState==='EXIT';
+      const phase=o._runtimePitPhase||'';
+      // A car waiting for release or still crossing the working lane is not fast-lane
+      // traffic. Treating every EXIT car as fast-lane traffic made adjacent pit boxes
+      // wait on each other forever when two teams completed service together.
+      const fast=phase==='FAST_LANE'||phase==='FAST_LANE_EXIT'||phase==='PIT_ENTRY'||(o.pitState==='EXIT'&&!['WORKING_EXIT','RELEASE_WAIT'].includes(phase));
       if(!fast||Math.max(0,o.v||0)<1)continue;
       const delta=pitMeters(o.s)-u;if(delta>-RELEASE_BEHIND_METERS&&delta<RELEASE_AHEAD_METERS)near.push({car:o,delta});
     }
@@ -47,7 +52,7 @@ export function createPitStateMachine(W,R){
     const boxS=W.pitBoxS?.(c.teamId);if(!Number.isFinite(boxS))return;
     if(count&&!c._runtimeReleaseWait)metrics.releaseWaits++;c._runtimeReleaseWait=true;c._runtimePitPhase='RELEASE_WAIT';c.s=boxS;c.v=0;c.pitState='EXIT';c.pitTimer=0;c.pitLaneStatus='RELEASE WAIT';poseWorking(c);
   }
-  function releaseToFastLane(c){c._runtimeReleaseWait=false;c._runtimePitPhase='WORKING_EXIT';c.pitState='EXIT';c.v=Math.max(c.v||0,7);c.pitLaneStatus='RELEASE';poseWorking(c);metrics.safeReleases++;}
+  function releaseToFastLane(c){c._runtimeReleaseWait=false;c._runtimePitPhase='WORKING_EXIT';c.pitState='EXIT';c.v=Math.max(c.v||0,7);c.pitLaneStatus='RELEASE';posePit(c,'EXIT');metrics.safeReleases++;}
   function advanceService(c,b,dt,eventStart){
     if(c.retired||b?.state!=='STOP')return false;
     const start=Number.isFinite(Number(b.pitTimer))?Number(b.pitTimer):Math.max(0,Number(c.pitTimer)||0),remaining=Math.max(0,start-Math.max(0,dt||0));
@@ -68,6 +73,14 @@ export function createPitStateMachine(W,R){
     if(beforeState!=='ENTRY'||c.pitState!=='STOP')return false;const dist=W.pitDistanceToBox?.(c.s,c.teamId);if(!Number.isFinite(dist))return false;
     if(dist<=Math.max(1.2,Math.max(beforeV,7)*dt*1.55))return false;
     c.pitState='ENTRY';c.pitTimer=0;c._pitStopInitial=0;c.v=Math.min(Math.max(beforeV,7),W.pitSpeedLimit||22.22);c.pitLaneStatus='FAST LANE';c._runtimePitPhase='FAST_LANE';removeFreshPitStopEvent(c.id,eventStart);posePit(c,'ENTRY');metrics.legacyStopsRejected++;return true;
+  }
+  function ensurePitMotion(c,b,dt){
+    if(c.retired||c._runtimePitQueued||c._runtimeReleaseWait||!b||!['ENTRY','EXIT'].includes(c.pitState))return false;
+    const step=Math.max(0,Number(dt)||0);if(step<=0)return false;
+    const beforeS=Number.isFinite(Number(b.s))?Number(b.s):c.s,progress=forwardDelta(beforeS,c.s),expected=Math.max(0,Number(b.v)||0,Number(c.v)||0)*step;
+    if(progress>=Math.max(.015,expected*.08))return false;
+    const floor=c.pitState==='ENTRY'?7:(c._runtimePitPhase==='WORKING_EXIT'?8:10),limit=W.pitSpeedLimit||22.22;
+    c.v=Math.min(limit,Math.max(Number(c.v)||0,Number(b.v)||0,floor));c.s=wrapS(beforeS+c.v*step);metrics.stallRecoveries++;return true;
   }
   function repairInvariant(c){
     if(c.retired)return;let repaired=false;
@@ -107,12 +120,18 @@ export function createPitStateMachine(W,R){
     occupied=serviceOccupants();for(const c of R.cars){if(maybeStartService(c,dt,occupied))occupied.set(c.teamId??0,c);}
 
     for(const c of R.cars){
-      const b=snapshot[c.id]||{state:'NONE',v:0};
+      const b=snapshot[c.id]||{state:'NONE',v:0,s:c.s};
+      ensurePitMotion(c,b,dt);
       if(c.pitState==='STOP'){c._runtimePitPhase='SERVICE';c.s=W.pitBoxS?.(c.teamId)??c.s;c.v=0;c.pitLaneStatus='JACKS';posePit(c,'STOP');}
       else if(c.pitState==='EXIT'){
         if(c._runtimeReleaseWait)holdRelease(c,false);
-        else if(c._runtimePitPhase==='WORKING_EXIT'){c.pitLaneStatus='RELEASE';poseWorking(c);}
-        else{c._runtimePitPhase='FAST_LANE_EXIT';c.pitLaneStatus='PIT EXIT';posePit(c,'EXIT');}
+        else if(c._runtimePitPhase==='WORKING_EXIT'){
+          const boxS=W.pitBoxS?.(c.teamId),past=Number.isFinite(boxS)?pitMeters(c.s)-pitMeters(boxS):0;
+          if(past>=WORKING_EXIT_BLEND_METERS)c._runtimePitPhase='FAST_LANE_EXIT';
+          c.pitLaneStatus=c._runtimePitPhase==='FAST_LANE_EXIT'?'PIT EXIT':'RELEASE';posePit(c,'EXIT');
+        }else{c._runtimePitPhase='FAST_LANE_EXIT';c.pitLaneStatus='PIT EXIT';posePit(c,'EXIT');}
+      }else if(c.pitState==='ENTRY'){
+        if(c._runtimePitQueued)holdQueue(c,eventStart);else posePit(c,'ENTRY');
       }else if(b.state==='EXIT'&&c.pitState==='NONE'&&!c.retired){
         const uf=W.pitUnwrappedFraction?.(c.s),exit=SUZUKA_PIT.exitEndUF;
         if(Number.isFinite(uf)&&uf<exit){c.pitState='EXIT';c.v=Math.min(Math.max(b.v||0,8),W.pitSpeedLimit||22.22);c._runtimePitPhase='FAST_LANE_EXIT';c.pitLaneStatus='PIT EXIT';posePit(c,'EXIT');}
