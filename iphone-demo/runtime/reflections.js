@@ -1,5 +1,5 @@
 export function createEnvironmentReflections(W,{mobile=false}={}){
-  const T=W.THREE,renderer=W.renderer,size=mobile?96:160;
+  const T=W.THREE,renderer=W.renderer,testMode=typeof location!=='undefined'&&new URLSearchParams(location.search).has('runtimeTest'),size=testMode?64:(mobile?96:160);
   const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
   const profiles={
     DAY:{top:0x4b93d4,horizon:0xc8ddec,ground:0x4a5148,sun:'#fff0cc',cloud:.10,intensity:.98},
@@ -9,7 +9,7 @@ export function createEnvironmentReflections(W,{mobile=false}={}){
     WET:{top:0x485662,horizon:0x737e84,ground:0x24282a,sun:'#ccd4d8',cloud:.86,intensity:1.08}
   };
   const targets=new Map();
-  let key='DAY',disposed=false,building=false;
+  let key='DAY',disposed=false;
 
   function makeEquirect(p){
     const c=document.createElement('canvas');c.width=size;c.height=size>>1;const g=c.getContext('2d'),w=c.width,h=c.height;
@@ -36,17 +36,12 @@ export function createEnvironmentReflections(W,{mobile=false}={}){
     const rec=ensure(next);if(!rec)return false;key=next;W.scene.environment=rec.texture;if('environmentIntensity'in W.scene)W.scene.environmentIntensity=rec.intensity;return true;
   }
   function paint(){const next=choose();if(next===key&&targets.has(next))return false;return applyKey(next);}
-  function warmNext(){
-    if(disposed||building)return;const names=Object.keys(profiles),next=names.find(n=>!targets.has(n));if(!next)return;building=true;
-    const run=()=>{try{ensure(next);}catch(e){console.warn('PMREM profile warmup failed',next,e);}finally{building=false;if(!disposed&&targets.size<names.length)setTimeout(warmNext,900);}};
-    if(typeof requestIdleCallback==='function')requestIdleCallback(run,{timeout:1400});else setTimeout(run,250);
-  }
   function dispose(){disposed=true;for(const x of targets.values())x.target?.dispose?.();targets.clear();}
 
-  // Do not block boot on five PMREM conversions. Create only the currently needed
-  // profile after the app is interactive, then warm the remaining profiles one at a time.
-  const initial=()=>{try{applyKey(choose());}catch(e){console.warn('Initial PMREM reflection failed; continuing without it.',e);}finally{setTimeout(warmNext,700);}};
+  // Only the current environment is generated after the app is interactive.
+  // Other profiles are generated once, on demand, when weather/time actually selects them.
+  const initial=()=>{try{applyKey(choose());}catch(e){console.warn('Initial PMREM reflection failed; continuing without it.',e);}};
   if(typeof requestIdleCallback==='function')requestIdleCallback(initial,{timeout:900});else setTimeout(initial,80);
-  W.runtimeReflections={paint,dispose,ensure,get key(){return key},get profiles(){return Object.keys(profiles)},get readyProfiles(){return [...targets.keys()]},pmrem:true};
+  W.runtimeReflections={paint,dispose,ensure,get key(){return key},get profiles(){return Object.keys(profiles)},get readyProfiles(){return [...targets.keys()]},pmrem:true,resolution:size};
   return W.runtimeReflections;
 }
