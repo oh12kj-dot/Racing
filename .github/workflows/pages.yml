@@ -92,7 +92,6 @@ jobs:
           const url=`https://rawcdn.githack.com/oh12kj-dot/Racing/${sha}/iphone-demo/index.html?runtimeTest=1`;
           const browser=await chromium.launch({headless:true});
           const context=await browser.newContext();
-          await context.addCookies([{name:'__Http-phish',value:'1',url:'https://rawcdn.githack.com/'}]);
           const page=await context.newPage();
           await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000});
           await page.waitForFunction(()=>{
