@@ -1,5 +1,5 @@
 export {buildWorld} from './world-pit-final.js';
-export {createRace} from './race-realism.js';
+export {createRace} from './race-runtime-fixes.js';
 export {createAudio} from './audio-silent-policy.js';
 export {createUI} from './ui.js';
 export {createProfiler} from './profiler.js';
