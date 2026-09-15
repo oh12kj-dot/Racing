@@ -13,7 +13,8 @@ export function resolveLaunchAudioPolicy({speedKmh=0,movementAllowed=true,launch
   // than road speed so the car sounds loaded rather than muted off the line.
   const thresholdFloor=kmh<3.05?3.15:kmh;
   const launchFloor=launchWindow?8+9*pulse:0;
-  return{moving:true,launchWindow,sourceKmh:kmh,audibleKmh:Math.max(kmh,thresholdFloor,launchFloor),throttleFloor:launchWindow?.74+.22*pulse:.32,boost:pulse};
+  const throttleFloor=launchWindow ? .74+.22*pulse : .32;
+  return{moving:true,launchWindow,sourceKmh:kmh,audibleKmh:Math.max(kmh,thresholdFloor,launchFloor),throttleFloor,boost:pulse};
 }
 
 export function applyNaturalRadioRate(utterance){
