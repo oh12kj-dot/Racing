@@ -1,0 +1,194 @@
+import {LOG_POLICY,readAudioSettings} from './config.js';
+
+const clampValue=(v,a,b)=>Math.max(a,Math.min(b,v));
+
+// Keep the grid/start state on a restrained idle bed.  The old envelope always
+// started around 2,600 rpm with ~30% synthetic load even at 0 km/h, which made a
+// stationary car sound as though it was already accelerating.  Dynamic rev/load
+// now unlock only once the car has physically started moving.
+export function resolveEngineEnvelope(car={},sessionPhase=''){
+  const kmh=Math.max(0,(Number(car.v)||0)*3.6),speedNorm=clampValue(kmh/330,0,1);
+  const throttle=clampValue(Number(car.racingThrottle)||0,0,1),brake=clampValue(Number(car.brakeVisual)||0,0,1),lift=clampValue(Number(car.liftCoast)||0,0,1);
+  const driveActive=kmh>=3.0,gear=Math.max(1,Math.min(8,Math.floor(kmh/38)+1));
+  const rpm=driveActive?1150+speedNorm*7800+throttle*1650+gear*120:950;
+  const load=driveActive?clampValue(.08+speedNorm*.48+throttle*.56-brake*.42-lift*.42,0,1):.025;
+  return{phase:String(sessionPhase||''),kmh,speedNorm,throttle,driveActive,gear,rpm,load};
+}
+
+export function createAudio(R,settings={}){
+  let ctx=null,master=null,gameBus=null,engineMix=null,effectsBus=null,pttBus=null;
+  let engineBus=null,engineFilter=null,engineA=null,engineB=null,engineC=null,hybrid=null;
+  let windGain=null,tyreGain=null,brakeGain=null,noiseBuffer=null;
+  let enabled=false,focus=0,pendingFocus=0,pendingSince=0,lastGear=0,lastRadioId=null;
+  let speaking=false,resumeArmed=false,primeArmed=false,primed=false,turnToken=0,sessionRestore=null,activeMessage=null;
+  let engineState={phase:'',kmh:0,speedNorm:0,throttle:0,driveActive:false,gear:1,rpm:950,load:.025};
+  const queue=[],trace=[],synth=()=>window.speechSynthesis,session=typeof navigator!=='undefined'?navigator.audioSession:null;
+  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v)),volumes=readAudioSettings(settings);
+  const profiles={
+    formula:{idle:70,rev:.96,a:'sawtooth',b:'triangle',c:'sine',harm:[1,1.92,.51],filter:3300,hybrid:.017},
+    hyper:{idle:59,rev:.83,a:'sawtooth',b:'triangle',c:'sine',harm:[1,1.48,.50],filter:3000,hybrid:.023},
+    lmh:{idle:58,rev:.82,a:'sawtooth',b:'triangle',c:'sine',harm:[1,1.47,.50],filter:2950,hybrid:.022},
+    proto:{idle:62,rev:.87,a:'sawtooth',b:'triangle',c:'sine',harm:[1,1.88,.50],filter:3150,hybrid:.018},
+    gt:{idle:47,rev:.69,a:'sawtooth',b:'sine',c:'triangle',harm:[1,1.92,.50],filter:2450,hybrid:0},
+    supercar:{idle:50,rev:.72,a:'sawtooth',b:'sine',c:'triangle',harm:[1,1.94,.50],filter:2550,hybrid:0},
+    touring:{idle:54,rev:.75,a:'sawtooth',b:'triangle',c:'sine',harm:[1,1.90,.50],filter:2650,hybrid:0}
+  };
+
+  function log(type,msg=activeMessage,extra={}){
+    trace.push({t:R.race?.t||0,wall:Math.round(performance.now()),type,msgId:msg?.id||null,parentId:msg?.parentId||null,turnIndex:msg?.turnIndex??null,kind:msg?.kind||null,carId:msg?.carId??null,...extra});
+    while(trace.length>(LOG_POLICY.audioTrace||120))trace.shift();
+  }
+  function makeNoise(seconds=.65){
+    const len=Math.max(1,Math.floor(ctx.sampleRate*seconds)),b=ctx.createBuffer(1,len,ctx.sampleRate),d=b.getChannelData(0);let prev=0;
+    for(let i=0;i<len;i++){const w=Math.random()*2-1;prev=prev*.18+w*.82;d[i]=prev;}return b;
+  }
+  function loopNoise(type,freq,q,gain){
+    const src=ctx.createBufferSource(),f=ctx.createBiquadFilter(),g=ctx.createGain();src.buffer=noiseBuffer;src.loop=true;f.type=type;f.frequency.value=freq;f.Q.value=q;g.gain.value=gain;src.connect(f).connect(g).connect(effectsBus);src.start();return{src,f,g};
+  }
+  function applyVolumes(){
+    if(!ctx)return;const t=ctx.currentTime;
+    master.gain.setTargetAtTime(enabled?.29*volumes.master:0,t,.04);
+    engineMix.gain.setTargetAtTime(volumes.engine,t,.04);
+    effectsBus.gain.setTargetAtTime(volumes.effects,t,.04);
+    pttBus.gain.setTargetAtTime(1.42*volumes.radioPtt,t,.04);
+  }
+  function init(){
+    if(ctx)return;
+    ctx=new (window.AudioContext||window.webkitAudioContext)();
+    master=ctx.createGain();const comp=ctx.createDynamicsCompressor();comp.threshold.value=-15;comp.knee.value=18;comp.ratio.value=3;comp.attack.value=.004;comp.release.value=.18;master.connect(comp).connect(ctx.destination);
+    gameBus=ctx.createGain();gameBus.gain.value=1;gameBus.connect(master);
+    engineMix=ctx.createGain();engineMix.connect(gameBus);
+    effectsBus=ctx.createGain();effectsBus.connect(gameBus);
+    pttBus=ctx.createGain();pttBus.connect(master);
+    engineBus=ctx.createGain();engineBus.gain.value=.055;engineFilter=ctx.createBiquadFilter();engineFilter.type='lowpass';engineFilter.frequency.value=1200;engineFilter.Q.value=.5;engineBus.connect(engineFilter).connect(engineMix);
+    const mk=(type,gain,bus=engineBus)=>{const o=ctx.createOscillator(),g=ctx.createGain();o.type=type;g.gain.value=gain;o.connect(g).connect(bus);o.start();return{o,g};};
+    engineA=mk('sawtooth',.50);engineB=mk('triangle',.21);engineC=mk('sine',.18);hybrid=mk('sine',0,engineMix);
+    noiseBuffer=makeNoise();
+    const wind=loopNoise('bandpass',650,.55,0);windGain=wind.g;windGain._filter=wind.f;
+    const tyre=loopNoise('bandpass',1750,1,0);tyreGain=tyre.g;tyreGain._filter=tyre.f;
+    const brake=loopNoise('bandpass',3300,2.5,0);brakeGain=brake.g;brakeGain._filter=brake.f;
+    applyVolumes();
+  }
+  function setVolumes(next={}){
+    for(const k of Object.keys(volumes))if(next[k]!=null)volumes[k]=clamp(Number(next[k]),0,1);
+    applyVolumes();return{...volumes};
+  }
+  function armResume(){
+    if(resumeArmed||!enabled)return;init();if(ctx.state==='running')return;resumeArmed=true;
+    const go=()=>{resumeArmed=false;if(enabled)ctx?.resume?.().catch?.(()=>{});};
+    addEventListener('pointerdown',go,{once:true,capture:true});addEventListener('touchend',go,{once:true,capture:true});addEventListener('keydown',go,{once:true,capture:true});
+  }
+  function primeSpeech(){
+    if(primed||!enabled||!synth())return;
+    try{const u=new SpeechSynthesisUtterance('.');u.volume=0;u.rate=2;u.lang='en-GB';const done=()=>{primed=true;};u.onstart=done;u.onend=done;u.onerror=done;synth().speak(u);}catch{}
+  }
+  function armPrime(){
+    if(primeArmed||primed||!enabled)return;primeArmed=true;
+    const go=()=>{primeArmed=false;primeSpeech();};
+    addEventListener('pointerdown',go,{once:true,capture:true});addEventListener('touchend',go,{once:true,capture:true});addEventListener('keydown',go,{once:true,capture:true});
+  }
+  function enterSpeechSession(){if(!session)return;try{if(sessionRestore==null)sessionRestore=session.type||'auto';session.type='transient';}catch{}}
+  function leaveSpeechSession(){if(!session||sessionRestore==null)return;try{session.type=sessionRestore;}catch{}sessionRestore=null;}
+
+  function rfBurst(t,dur,vol,lo=500,hi=3200){
+    if(!ctx||!noiseBuffer)return;const src=ctx.createBufferSource(),hp=ctx.createBiquadFilter(),lp=ctx.createBiquadFilter(),g=ctx.createGain();src.buffer=noiseBuffer;hp.type='highpass';hp.frequency.value=lo;lp.type='lowpass';lp.frequency.value=hi;g.gain.setValueAtTime(.0001,t);g.gain.linearRampToValueAtTime(vol,t+.007);g.gain.setValueAtTime(vol*.70,t+dur*.48);g.gain.exponentialRampToValueAtTime(.0001,t+dur);src.connect(hp).connect(lp).connect(g).connect(pttBus);src.start(t);src.stop(t+dur+.03);
+  }
+  function contactClick(t,release=false){
+    if(!ctx||!noiseBuffer)return;
+    const o=ctx.createOscillator(),g=ctx.createGain();o.type='triangle';o.frequency.setValueAtTime(release?145:182,t);o.frequency.exponentialRampToValueAtTime(release?62:88,t+.040);g.gain.setValueAtTime(release?.29:.23,t);g.gain.exponentialRampToValueAtTime(.0001,t+.060);o.connect(g).connect(pttBus);o.start(t);o.stop(t+.066);
+    const src=ctx.createBufferSource(),bp=ctx.createBiquadFilter(),ng=ctx.createGain();src.buffer=noiseBuffer;bp.type='bandpass';bp.frequency.value=release?1080:1520;bp.Q.value=1.15;ng.gain.setValueAtTime(release?.21:.17,t);ng.gain.exponentialRampToValueAtTime(.0001,t+.028);src.connect(bp).connect(ng).connect(pttBus);src.start(t);src.stop(t+.036);
+  }
+  function pttOn(msg){if(!ctx||!enabled)return;const t=ctx.currentTime+.010;log('PTT_ON',msg);contactClick(t,false);rfBurst(t+.018,.125,.160,610,3550);}
+  function pttOff(msg){if(!ctx||!enabled)return;const t=ctx.currentTime+.012;log('PTT_OFF',msg);rfBurst(t,.215,.235,390,2850);contactClick(t+.125,true);contactClick(t+.165,true);}
+  function shiftThump(up=true){if(!ctx||!enabled)return;const o=ctx.createOscillator(),g=ctx.createGain(),t=ctx.currentTime;o.type='sine';o.frequency.setValueAtTime(up?78:102,t);o.frequency.exponentialRampToValueAtTime(45,t+.065);g.gain.setValueAtTime(.058,t);g.gain.exponentialRampToValueAtTime(.001,t+.080);o.connect(g).connect(effectsBus);o.start(t);o.stop(t+.095);}
+
+  function markNow(){const r=R.radio||[];lastRadioId=r.length?r[r.length-1].id:null;queue.length=0;}
+  function setEnabled(on){
+    enabled=!!on;
+    if(enabled){init();ctx.resume?.().catch?.(()=>{});applyVolumes();markNow();armResume();armPrime();}
+    else{turnToken++;synth()?.cancel?.();speaking=false;activeMessage=null;queue.length=0;leaveSpeechSession();applyVolumes();setTimeout(()=>{if(!enabled)ctx?.suspend?.();},90);}
+    return enabled;
+  }
+  function setFocus(id){
+    const n=Number(id)||0,t=R.race?.t||0;if(n===focus){pendingFocus=n;pendingSince=t;return;}if(n!==pendingFocus){pendingFocus=n;pendingSince=t;return;}if(!speaking&&t-pendingSince>=4.5){focus=n;lastGear=0;pendingSince=t;}
+  }
+  function radioText(msg){
+    let t=String(msg.text||'').replaceAll('·',', ').replace(/\bDRS\b/g,'D R S').replace(/\bVSC\b/g,'virtual safety car').replace(/\bSC\b/g,'safety car').replace(/\bP(\d+)\b/g,'position $1').replace(/\bBOX\b/g,'box');
+    return t.replace(/\.\s+/g,'.  ').replace(/,\s*/g,', ');
+  }
+  function voices(){return synth()?.getVoices?.()||[];}
+  function scoreVoice(v,driver=false){
+    const n=String(v.name||'').toLowerCase(),l=String(v.lang||'');let s=0;
+    if(/^en-GB/i.test(l))s+=driver?7:10;else if(/^en-(US|AU|IE)/i.test(l))s+=7;else if(/^en/i.test(l))s+=4;
+    if(/premium|enhanced|natural|neural|siri/.test(n))s+=16;if(/daniel|oliver|arthur|jamie|tom/.test(n))s+=driver?4:8;if(/alex|samantha|ava|serena|moira/.test(n))s+=driver?6:2;if(v.default)s+=1;return s;
+  }
+  function engineerVoice(){return[...voices()].sort((a,b)=>scoreVoice(b,false)-scoreVoice(a,false))[0]||null;}
+  function driverVoice(){const eng=engineerVoice();return[...voices()].filter(v=>v!==eng).sort((a,b)=>scoreVoice(b,true)-scoreVoice(a,true))[0]||eng||null;}
+  function makeUtterance(msg){
+    const driver=msg.kind==='DRIVER',v=driver?driverVoice():engineerVoice(),u=new SpeechSynthesisUtterance(radioText(msg));if(v)u.voice=v;u.lang=v?.lang||'en-GB';u.rate=driver?.98:1;u.pitch=driver?.97:.91;u.volume=clamp(volumes.master*volumes.radioVoice,0,1);return u;
+  }
+
+  function speakerKind(label,fallback){
+    const s=String(label||'').toLowerCase();if(/driver|drv/.test(s))return'DRIVER';if(/engineer|eng/.test(s))return'ENGINEER_AI';return fallback||'ENGINEER_AI';
+  }
+  function splitTurns(msg){
+    const raw=String(msg?.text||'').trim();if(!raw)return[];
+    const re=/\b(Race\s+Engineer|Engineer|Driver|ENG|DRV)\s*[:\-]\s*/gi,matches=[];let m;
+    while((m=re.exec(raw)))matches.push({index:m.index,end:re.lastIndex,label:m[1]});
+    if(!matches.length)return[{...msg,parentId:msg.id,turnIndex:0,text:raw}];
+    const out=[];let turn=0;
+    const prefix=raw.slice(0,matches[0].index).trim();if(prefix)out.push({...msg,id:`${msg.id}:t${turn}`,parentId:msg.id,turnIndex:turn++,text:prefix});
+    for(let i=0;i<matches.length;i++){
+      const a=matches[i],b=matches[i+1],text=raw.slice(a.end,b?.index??raw.length).trim();if(!text)continue;
+      out.push({...msg,id:`${msg.id}:t${turn}`,parentId:msg.id,turnIndex:turn++,kind:speakerKind(a.label,msg.kind),text});
+    }
+    return out.length?out:[{...msg,parentId:msg.id,turnIndex:0,text:raw}];
+  }
+
+  function transmit(msg,{cancel=false}={}){
+    const s=synth();if(!s||!enabled||speaking||!msg)return false;init();if(cancel)s.cancel();ctx?.resume?.();enterSpeechSession();
+    const token=++turnToken,u=makeUtterance(msg);speaking=true;activeMessage=msg;log('TX_BEGIN',msg);gameBus.gain.setTargetAtTime(.31,ctx.currentTime,.040);pttOn(msg);let done=false;
+    const finish=(reason='end')=>{
+      if(done||token!==turnToken)return;done=true;log('VOICE_END',msg,{reason});
+      setTimeout(()=>{if(token!==turnToken)return;pttOff(msg);setTimeout(()=>{if(token!==turnToken)return;gameBus?.gain.setTargetAtTime(1,ctx.currentTime,.13);leaveSpeechSession();speaking=false;activeMessage=null;log('TX_END',msg);setTimeout(speakNext,260);},430);},80);
+    };
+    u.onstart=()=>log('VOICE_START',msg);u.onend=()=>finish('end');u.onerror=()=>finish('error');
+    setTimeout(()=>{if(token!==turnToken||!enabled)return;log('SPEAK_CALL',msg);s.speak(u);},245);return true;
+  }
+  function speakNext(){if(!enabled||speaking||!queue.length||!synth())return;transmit(queue.shift());}
+  function testRadio(){if(!enabled)setEnabled(true);primeSpeech();return transmit({id:`test-${Date.now()}:t0`,parentId:`test-${Date.now()}`,turnIndex:0,carId:focus,text:'Radio check. Engineer to driver. Comms are good.',kind:'ENGINEER_AI'},{cancel:true});}
+  const allowedKinds=new Set(['ENGINEER_AI','ENGINEER','PIT','STRATEGY','TYRE','URGENT','FAULT','DRIVER','ENGINEER_REPLY']);
+  function ingestRadio(){
+    const r=R.radio||[];if(!r.length)return;let start=0;if(lastRadioId!=null){const ix=r.findIndex(m=>m.id===lastRadioId);start=ix>=0?ix+1:Math.max(0,r.length-4);}
+    for(let i=start;i<r.length;i++){
+      const m=r[i];lastRadioId=m.id;if(!m||m.carId==null||m.kind==='CONTROL'||Number(m.carId)!==focus||!allowedKinds.has(m.kind))continue;
+      for(const turn of splitTurns(m))queue.push(turn);
+    }
+    while(queue.length>12)queue.shift();speakNext();
+  }
+
+  function update(){
+    if(!enabled)return;init();armResume();armPrime();const c=R.cars[focus]||R.getStandings()[0];
+    if(c){
+      const p=profiles[c.type]||profiles.gt,e=resolveEngineEnvelope(c,R.sessionPhase),kmh=e.kmh,norm=e.speedNorm,gear=e.gear,rpm=e.rpm,base=p.idle+rpm*.0175*p.rev;engineState=e;
+      if(engineA.o.type!==p.a){engineA.o.type=p.a;engineB.o.type=p.b;engineC.o.type=p.c;}
+      engineA.o.frequency.setTargetAtTime(base*p.harm[0],ctx.currentTime,.030);engineB.o.frequency.setTargetAtTime(base*p.harm[1],ctx.currentTime,.035);engineC.o.frequency.setTargetAtTime(base*p.harm[2],ctx.currentTime,.040);
+      const filterScale=e.driveActive?.46+.54*norm:.32;engineFilter.frequency.setTargetAtTime(p.filter*filterScale,ctx.currentTime,.07);engineFilter.Q.setTargetAtTime(e.driveActive?.45+norm*.38:.38,ctx.currentTime,.10);
+      engineBus.gain.setTargetAtTime((speaking?.038:.052)+e.load*.095,ctx.currentTime,.040);
+      const hybridNorm=e.driveActive?norm:0;hybrid.o.frequency.setTargetAtTime(650+hybridNorm*1200+(c.ers||0)*110,ctx.currentTime,.055);hybrid.g.gain.setTargetAtTime(p.hybrid*hybridNorm*(c.energyMode==='PUSH'?1.12:.76),ctx.currentTime,.08);
+      windGain.gain.setTargetAtTime(norm*.043,ctx.currentTime,.10);windGain._filter.frequency.setTargetAtTime(480+norm*1120,ctx.currentTime,.11);
+      const spin=c.spinState==='SLIDE'?1:0,lock=c.spinState==='LOCKUP'?1:0,slip=clamp((c.brakeVisual||0)*.40+(c.flatSpot?.18:0)+(c.hydroplaning?.28:0)+spin*.75+lock*.56,0,1);
+      tyreGain.gain.setTargetAtTime(slip*.052,ctx.currentTime,.025);tyreGain._filter.frequency.setTargetAtTime(1150+kmh*4.7,ctx.currentTime,.05);
+      const brakeHot=clamp(((c.brakeTemp||300)-520)/420,0,1)*(c.brakeVisual||0);brakeGain.gain.setTargetAtTime(brakeHot*.013,ctx.currentTime,.055);brakeGain._filter.frequency.setTargetAtTime(3000+brakeHot*1500,ctx.currentTime,.09);
+      if(e.driveActive&&gear!==lastGear&&lastGear>0)shiftThump(gear>lastGear);lastGear=gear;
+    }
+    ingestRadio();
+  }
+  addEventListener('pagehide',()=>{turnToken++;leaveSpeechSession();ctx?.suspend?.();},{passive:true});
+  return{
+    toggle:()=>setEnabled(!enabled),testRadio,setEnabled,update,setFocus,setVolumes,
+    get enabled(){return enabled},get speaking(){return speaking},get speechSupported(){return!!synth()},get voice(){return engineerVoice()?.name||'system'},
+    get volumes(){return{...volumes}},get audioState(){return ctx?.state||'not-created'},get queueLength(){return queue.length},get radioFocus(){return focus},
+    get engineState(){return{...engineState}},get silentModeRespectSupported(){return!!session},get audioTrace(){return trace.slice()},get activeTransmission(){return activeMessage?{...activeMessage}:null}
+  };
+}
