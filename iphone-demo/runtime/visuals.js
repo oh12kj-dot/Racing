@@ -72,16 +72,22 @@ export function enhanceVisuals(W,settings={},mobile=false){
     inst.instanceMatrix.needsUpdate=true;inst.receiveShadow=true;inst.renderOrder=1;root.add(inst);
   }
 
-  // --- Cheap per-car contact shadow ---------------------------------------
+  // --- Frame-locked per-car contact shadow --------------------------------
+  // The mobile shadow map is intentionally refreshed only a few times per second.
+  // Letting fast cars cast into that map therefore leaves a visibly stale shadow
+  // behind them. Static scenery keeps real sun shadows, while moving vehicles use
+  // this child mesh which follows the car transform every rendered frame.
   const shadowCanvas=document.createElement('canvas');shadowCanvas.width=shadowCanvas.height=128;
   const sg=shadowCanvas.getContext('2d'),grad=sg.createRadialGradient(64,64,5,64,64,62);grad.addColorStop(0,'rgba(0,0,0,.82)');grad.addColorStop(.48,'rgba(0,0,0,.48)');grad.addColorStop(1,'rgba(0,0,0,0)');sg.fillStyle=grad;sg.fillRect(0,0,128,128);
   const shadowTex=new T.CanvasTexture(shadowCanvas);shadowTex.colorSpace=T.NoColorSpace;
   const contactMat=new T.MeshBasicMaterial({map:shadowTex,transparent:true,opacity:.25,depthWrite:false,toneMapped:false,side:T.DoubleSide});
-  const contactGeo=new T.PlaneGeometry(1,1),baseMakeCar=W.makeCar?.bind(W);
+  const contactGeo=new T.PlaneGeometry(1,1),baseMakeCar=W.makeCar?.bind(W);let vehicleShadowCastersDisabled=0;
+  function disableDynamicVehicleShadows(object){let n=0;object?.traverse?.(o=>{if(!o?.isMesh||o.name==='CAR_CONTACT_SHADOW')return;if(o.castShadow){o.castShadow=false;n++;}});vehicleShadowCastersDisabled+=n;if(object?.userData)object.userData.vehicleShadowPolicy='contact-only';return n;}
+  W.disableDynamicVehicleShadows=disableDynamicVehicleShadows;
   if(baseMakeCar){
     W.makeCar=(color,type)=>{
       const car=baseMakeCar(color,type),d=car.userData?.dims||{width:3,length:6.8},s=new T.Mesh(contactGeo,contactMat);
-      s.name='CAR_CONTACT_SHADOW';s.rotation.x=-Math.PI/2;s.position.y=-.035;s.scale.set(d.width*1.16,d.length*.80,1);s.castShadow=false;s.receiveShadow=false;s.renderOrder=0;car.add(s);car.userData.contactShadow=s;return car;
+      s.name='CAR_CONTACT_SHADOW';s.rotation.x=-Math.PI/2;s.position.y=-.035;s.scale.set(d.width*1.16,d.length*.80,1);s.castShadow=false;s.receiveShadow=false;s.renderOrder=0;car.add(s);car.userData.contactShadow=s;disableDynamicVehicleShadows(car);return car;
     };
   }
   const baseLOD=W.updateVehicleLOD?.bind(W);
@@ -113,6 +119,6 @@ export function enhanceVisuals(W,settings={},mobile=false){
     if(scene.fog){scene.fog.near=lerp(900,520,rain);scene.fog.far=lerp(3300,1850,rain*.86+cloud*.10);}
   }
   W.updateVisualWeather=updateVisualWeather;updateVisualWeather();
-  W.visualEnhancements={root,roadMaterialCount:roadRecords.length,anisotropy:desiredAniso,rubberStrips:2,brakeMarks:markData.length,contactShadows:true,garageLights:aligned?.children?.length||0};
+  W.visualEnhancements={root,roadMaterialCount:roadRecords.length,anisotropy:desiredAniso,rubberStrips:2,brakeMarks:markData.length,contactShadows:true,vehicleShadowPolicy:'contact-only',get dynamicVehicleCastersDisabled(){return vehicleShadowCastersDisabled;},garageLights:aligned?.children?.length||0};
   return W.visualEnhancements;
 }
