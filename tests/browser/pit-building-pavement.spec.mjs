@@ -11,67 +11,56 @@ async function boot(page){
   expect(state.ready,state.error||'runtime globals were not created').toBeTruthy();
 }
 
-test('pit lane has no legacy ground building intrusion and the garage apron is continuously paved',async({page},testInfo)=>{
+test('pit lane is clear of legacy buildings and the service apron is the visible top surface',async({page},testInfo)=>{
   await boot(page);
   const r=await page.evaluate(()=>{
-    const W=window.__RACING_WORLD__,pit=W.runtimePit,clear=pit?.buildingClearanceAudit,paving=pit?.servicePaving,audit=pit?.servicePavingAudit;
-    if(!pit||!clear||!paving||!audit)return{supported:false};
-    const u=paving.userData||{};
-    const boxFractions=[];
-    for(let team=0;team<10;team++)boxFractions.push(W.pitUnwrappedFraction(W.pitBoxS(team)));
+    const W=window.__RACING_WORLD__,pit=W.runtimePit,clear=pit?.buildingClearanceAudit,paving=pit?.servicePaving,audit=pit?.servicePavingAudit,floors=pit?.serviceFloors||[];
+    if(!pit||!clear||!paving||!audit||!floors.length)return{supported:false};
     return{
       supported:true,
       clearanceOwner:clear.owner,
       suppressed:clear.suppressed,
       remaining:clear.remaining,
-      clearInnerOffset:clear.clearInnerOffset,
-      clearOuterOffset:clear.clearOuterOffset,
-      serviceStartUF:clear.serviceStartUF,
-      serviceEndUF:clear.serviceEndUF,
+      clearanceBoxes:clear.clearanceBoxes,
       pavingName:paving.name,
       pavingVisible:paving.visible,
-      pavingOwner:u.owner,
-      pavingInnerOffset:u.innerOffset,
-      pavingOuterOffset:u.outerOffset,
-      pavingWidth:u.width,
-      garageFrontOutward:u.garageFrontOutward,
-      overlapIntoGarage:u.overlapIntoGarage,
-      pavingVertexCount:paving.geometry?.getAttribute?.('position')?.count||0,
+      floorCount:floors.length,
+      floorOwners:floors.map(x=>x.userData?.owner||null),
+      floorLengths:floors.map(x=>x.userData?.length||0),
+      floorWidths:floors.map(x=>x.userData?.width||0),
       rayOwner:audit.owner,
       rayHits:audit.hitCount,
       rayTotal:audit.total,
-      rayRows:audit.rows,
-      boxFractions,
+      failedTopHits:audit.rows.filter(x=>!x.hit),
       circuitAudit:W.circuitAudit?.runtimePit||null
     };
   });
   expect(r.supported,JSON.stringify(r)).toBeTruthy();
-  expect(r.clearanceOwner).toBe('runtime-pit-building-clearance-v2');
+  expect(r.clearanceOwner).toBe('runtime-pit-building-clearance-v3');
   expect(r.suppressed,JSON.stringify(r)).toBeGreaterThanOrEqual(1);
   expect(r.remaining,JSON.stringify(r)).toBe(0);
-  expect(r.clearOuterOffset,JSON.stringify(r)).toBeGreaterThan(8.5);
+  expect(r.clearanceBoxes,JSON.stringify(r)).toBeGreaterThan(20);
   expect(r.pavingName).toBe('PIT_SERVICE_APRON_PAVING_RUNTIME');
   expect(r.pavingVisible).toBeTruthy();
-  expect(r.pavingOwner).toBe('runtime-pit-service-paving-v1');
-  expect(r.pavingInnerOffset,JSON.stringify(r)).toBeLessThanOrEqual(5.05);
-  expect(r.pavingOuterOffset,JSON.stringify(r)).toBeGreaterThanOrEqual(r.garageFrontOutward);
-  expect(r.overlapIntoGarage,JSON.stringify(r)).toBeGreaterThan(.05);
-  expect(r.pavingWidth,JSON.stringify(r)).toBeGreaterThan(5.0);
-  expect(r.pavingVertexCount,JSON.stringify(r)).toBeGreaterThan(140);
-  expect(r.rayOwner).toBe('runtime-pit-service-paving-audit-v1');
-  expect(r.rayHits,JSON.stringify(r)).toBe(r.rayTotal);
-  expect(r.rayTotal).toBe(10);
-  expect(r.rayRows.every(x=>x.hit),JSON.stringify(r.rayRows)).toBeTruthy();
-  expect(Math.min(...r.boxFractions),JSON.stringify(r)).toBeGreaterThan(r.serviceStartUF);
-  expect(Math.max(...r.boxFractions),JSON.stringify(r)).toBeLessThan(r.serviceEndUF);
+  expect(r.floorCount).toBe(10);
+  expect(r.floorOwners.every(x=>x==='runtime-pit-service-paving-v2'),JSON.stringify(r)).toBeTruthy();
+  expect(Math.min(...r.floorLengths),JSON.stringify(r)).toBeGreaterThan(4.0);
+  expect(Math.min(...r.floorWidths),JSON.stringify(r)).toBeGreaterThan(18.0);
+  expect(r.rayOwner).toBe('runtime-pit-service-paving-audit-v2');
+  expect(r.rayHits,JSON.stringify(r.failedTopHits)).toBe(r.rayTotal);
+  expect(r.rayTotal).toBe(30);
+  expect(r.failedTopHits,JSON.stringify(r.failedTopHits)).toEqual([]);
   expect(r.circuitAudit?.legacyBuildingIntrusionsAfter,JSON.stringify(r)).toBe(0);
-  expect(r.circuitAudit?.servicePavingRayHits,JSON.stringify(r)).toBe(10);
+  expect(r.circuitAudit?.servicePavingFloors,JSON.stringify(r)).toBe(10);
+  expect(r.circuitAudit?.servicePavingTopHits,JSON.stringify(r)).toBe(30);
 
   await page.evaluate(()=>{
-    const W=window.__RACING_WORLD__,pit=W.runtimePit,team=4,work=W.pitPose(W.pitBoxS(team),team,'STOP'),cam=W.camera;
-    W.renderer.setAnimationLoop?.(null);
-    const view=work.p.clone().addScaledVector(work.side,-11).addScaledVector(work.t,-7);view.y+=5.2;
-    const target=work.p.clone().addScaledVector(work.side,5.8);target.y+=.8;
+    const W=window.__RACING_WORLD__,pit=W.runtimePit,team=4,work=W.pitPose(W.pitBoxS(team),team,'STOP'),garage=pit.garageOpenings.children[team],cam=W.camera;
+    W.renderer.setAnimationLoop?.(null);garage.updateWorldMatrix?.(true,false);
+    const local=work.p.clone();local.set(Number(garage.userData?.frontLocal)||0,0,0);const front=garage.localToWorld(local);
+    const dir=front.clone().sub(work.p).setY(0).normalize();
+    const view=work.p.clone().addScaledVector(dir,-8).addScaledVector(work.t,-9);view.y+=4.8;
+    const target=work.p.clone().lerp(front,.68);target.y+=.6;
     cam.position.copy(view);cam.lookAt(target);cam.updateMatrixWorld();W.renderer.render(W.scene,cam);
   });
   await page.screenshot({path:testInfo.outputPath('pit-service-apron-proof.png'),fullPage:false});
