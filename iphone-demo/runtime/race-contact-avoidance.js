@@ -5,12 +5,14 @@ export function createRace(W,statusEl,settings={}){
   let raceStartAt=null,interventions=0,lateralVetoes=0;
   function forwardGap(a,b){return wrap((b?.s||0)-(a?.s||0));}
   function signedGap(a,b){let d=(b?.s||0)-(a?.s||0);if(d>total*.5)d-=total;if(d<-total*.5)d+=total;return d;}
-  function nearestAhead(c){let car=null,dist=Infinity;for(const o of R.cars){if(o===c||o.retired||o.pitState!=='NONE')continue;const d=forwardGap(c,o);if(d>0&&d<dist){dist=d;car=o;}}return{car,dist};}
+  function spatialFor(c){return(R.spatialNeighbours||W.runtimeSpatialNeighbours)?.get?.(c.id);}
+  function nearestAhead(c){const n=spatialFor(c),candidate=n?.aheadView||n?.ahead;if(candidate?.car&&candidate.car!==c&&!candidate.car.retired&&candidate.car.pitState==='NONE')return{car:candidate.car,dist:Number(candidate.dist)||Infinity};let car=null,dist=Infinity;for(const o of R.cars){if(o===c||o.retired||o.pitState!=='NONE')continue;const d=forwardGap(c,o);if(d>0&&d<dist){dist=d;car=o;}}return{car,dist};}
   function lateralSafety(c){
     if(c.retired||c.pitState!=='NONE')return;
     const current=Number(c.lane)||0;let desired=Number.isFinite(Number(c.laneTarget))?Number(c.laneTarget):current;
     if(Math.abs(desired-current)<.08)return;
-    for(const o of R.cars){
+    const nearby=spatialFor(c)?.near||R.cars;
+    for(const o of nearby){
       if(o===c||o.retired||o.pitState!=='NONE')continue;
       const d=signedGap(c,o),body=((c.length||5)+(o.length||5))*.5;if(Math.abs(d)>body+6.5)continue;
       const other=Number(o.lane)||0,safeLat=((c.width||2)+(o.width||2))*.5+.52,currentDelta=current-other,desiredDelta=desired-other;
@@ -32,5 +34,5 @@ export function createRace(W,statusEl,settings={}){
     for(const c of R.cars)lateralSafety(c);
   }
   function update(dt){predictiveAvoidance(dt);baseUpdate(dt);}
-  return new Proxy(R,{get(target,prop){if(prop==='update')return update;if(prop==='collisionAvoidance')return{raceStartAt,interventions,lateralVetoes,mode:'predictive-only-physical-obb-authoritative'};return Reflect.get(target,prop,target);}});
+  return new Proxy(R,{get(target,prop){if(prop==='update')return update;if(prop==='collisionAvoidance')return{raceStartAt,interventions,lateralVetoes,mode:'predictive-only-physical-obb-authoritative',spatialGrid:!!(R.spatialNeighbours||W.runtimeSpatialNeighbours)};return Reflect.get(target,prop,target);}});
 }
