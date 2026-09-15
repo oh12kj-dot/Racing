@@ -4,11 +4,12 @@ export function createRace(W,statusEl,settings={}){
   const R=createV26Race(W,statusEl,settings),baseUpdate=R.update,total=W.total;
   const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
   const wrap=v=>((v%total)+total)%total;
-  let raceStartAt=null;
+  let raceStartAt=null,lateralVetoes=0;
   const suppressed=[];
 
   function progress(c){return c?._v8Progress??((c?.lap||0)*total+(c?.s||0));}
   function forwardGap(a,b){return wrap((b?.s||0)-(a?.s||0));}
+  function signedGap(a,b){let d=(b?.s||0)-(a?.s||0);if(d>total*.5)d-=total;if(d<-total*.5)d+=total;return d;}
   function actualOverlap(a,b){
     if(!a||!b||a.retired||b.retired)return false;
     const longitudinal=Math.abs(progress(a)-progress(b));
@@ -26,6 +27,22 @@ export function createRace(W,statusEl,settings={}){
       if(d>0&&d<dist){dist=d;car=o;}
     }
     return{car,dist};
+  }
+
+  function lateralSafety(c){
+    if(c.retired||c.pitState!=='NONE')return;
+    const current=Number(c.lane)||0;let desired=Number.isFinite(Number(c.laneTarget))?Number(c.laneTarget):current;
+    if(Math.abs(desired-current)<.08)return;
+    for(const o of R.cars){
+      if(o===c||o.retired||o.pitState!=='NONE')continue;
+      const d=signedGap(c,o),body=((c.length||5)+(o.length||5))*.5;if(Math.abs(d)>body+6.5)continue;
+      const other=Number(o.lane)||0,safeLat=((c.width||2)+(o.width||2))*.5+.52,currentDelta=current-other,desiredDelta=desired-other;
+      const crosses=currentDelta===0||desiredDelta===0||Math.sign(currentDelta)!==Math.sign(desiredDelta),narrows=Math.abs(desiredDelta)<Math.abs(currentDelta);
+      if(!(crosses||narrows)||Math.abs(desiredDelta)>=safeLat)continue;
+      const dir=currentDelta===0?(c.id<o.id?-1:1):Math.sign(currentDelta),safeTarget=clamp(other+dir*safeLat,-3.55,3.55);
+      if(Math.abs(safeTarget-desired)>.02){desired=safeTarget;c.avoid=Math.max(c.avoid||0,.82);c.racecraftBlocked=true;lateralVetoes++;}
+    }
+    c.laneTarget=desired;
   }
 
   function predictiveAvoidance(dt){
@@ -78,6 +95,9 @@ export function createRace(W,statusEl,settings={}){
         }
       }
     }
+    // Universal safety net for every overtaking layer: a requested lateral move may
+    // not cut through a car that is already alongside or in the immediate rear quarter.
+    for(const c of R.cars)lateralSafety(c);
   }
 
   function filteredUpdate(dt){
@@ -121,7 +141,7 @@ export function createRace(W,statusEl,settings={}){
 
   return new Proxy(R,{get(target,prop){
     if(prop==='update')return filteredUpdate;
-    if(prop==='collisionAvoidance')return{raceStartAt,suppressedFalseContacts:suppressed.length};
+    if(prop==='collisionAvoidance')return{raceStartAt,suppressedFalseContacts:suppressed.length,lateralVetoes};
     return Reflect.get(target,prop,target);
   }});
 }
