@@ -8,8 +8,12 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
   if(String(circuitName||'').toUpperCase()!=='SUZUKA')return W;
 
   const total=W.total,wrap=f=>((f%1)+1)%1,root=new THREE.Group();
-  root.name='SUZUKA_FULL_SCENE_RUNTIME';root.userData={owner:'runtime-suzuka-full-scene-v1',visualOnly:true};W.scene.add(root);
-  const records=[];
+  root.name='SUZUKA_FULL_SCENE_RUNTIME';root.userData={owner:'runtime-suzuka-full-scene-v2',visualOnly:true};W.scene.add(root);
+  const records=[],GROUND_Y=-.22,TRACK_LANDSCAPE_HALF=31.2;
+  const trackPts=[];for(let i=0;i<1200;i++){const p=W.sample(total*i/1200).p;trackPts.push({x:p.x,z:p.z});}
+  const minTrackDistSq=(x,z)=>{let best=Infinity;for(const p of trackPts){const dx=x-p.x,dz=z-p.z,d=dx*dx+dz*dz;if(d<best)best=d;}return best;};
+  const safeLinear=(uf,offset,length,clearance=12)=>{const q=W.sample(wrap(uf)*total,offset),half=Math.max(1,length*.5);for(const k of[-1,-.5,0,.5,1]){const x=q.p.x+q.t.x*half*k,z=q.p.z+q.t.z*half*k;if(minTrackDistSq(x,z)<clearance*clearance)return false;}return true;};
+  let groundedFarObjects=0,skippedUnsafeObjects=0,rejectedTrees=0;
   const concrete=new THREE.MeshStandardMaterial({color:0xc8ccca,roughness:.88});
   const concreteDark=new THREE.MeshStandardMaterial({color:0x6f7779,roughness:.88});
   const asphalt=new THREE.MeshStandardMaterial({color:0x45494a,roughness:.97});
@@ -23,20 +27,21 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
   const water=new THREE.MeshPhysicalMaterial({color:0x315e6c,roughness:.25,transparent:true,opacity:.78,metalness:.02});
   const yellow=new THREE.MeshStandardMaterial({color:0xd8b83b,roughness:.65});
 
-  function anchor(uf,offset,name){const q=W.sample(wrap(uf)*total,offset),g=new THREE.Group();g.name=name;g.position.copy(q.p);g.rotation.y=Math.atan2(q.t.x,q.t.z);root.add(g);return g;}
+  function anchor(uf,offset,name){const q=W.sample(wrap(uf)*total,offset),g=new THREE.Group();g.name=name;g.position.copy(q.p);const far=Math.abs(offset)>TRACK_LANDSCAPE_HALF;if(far){g.position.y=GROUND_Y;groundedFarObjects++;}g.rotation.y=Math.atan2(q.t.x,q.t.z);g.userData={sourceUF:wrap(uf),sourceOffset:offset,groundedToFlatTerrain:far};root.add(g);return g;}
   function mesh(parent,geo,mat,x=0,y=0,z=0,rx=0,ry=0,rz=0,name=''){const m=new THREE.Mesh(geo,mat);m.position.set(x,y,z);m.rotation.set(rx,ry,rz);m.receiveShadow=true;if(name)m.name=name;parent.add(m);return m;}
   function record(name,type,uf,offset,extra={}){records.push({name,type,uf,offset,...extra});}
   function simpleBuilding(name,uf,offset,width,height,length,mat=concrete){const g=anchor(uf,offset,`SUZUKA_${name}`);mesh(g,new THREE.BoxGeometry(width,height,length),mat,0,height*.5,0);mesh(g,new THREE.BoxGeometry(width+.5,.25,length+.5),white,0,height+.12,0);mesh(g,new THREE.BoxGeometry(.14,Math.min(1.7,height*.28),length*.72),glass,-width*.505,height*.63,0);record(name,'building',uf,offset);return g;}
-  function grandstand(name,uf,offset,length=38,rows=5,side=1){const g=anchor(uf,offset,`SUZUKA_${name}`);for(let r=0;r<rows;r++){const x=-side*r*1.75,y=.52+r*.74;mesh(g,new THREE.BoxGeometry(3.8,.42,length),r%2?concrete:concreteDark,x,y,0);for(let z=-length*.42;z<=length*.42;z+=5.4)mesh(g,new THREE.BoxGeometry(.10,.62,.10),metal,x-side*1.5,y+.48,z);}mesh(g,new THREE.BoxGeometry(7.0,.30,length+1.0),white,-side*(rows-1)*.95,rows*.76+1.2,0,0,0,-side*.10);record(name,'grandstand',uf,offset,{rows});return g;}
+  function grandstand(name,uf,offset,length=38,rows=5,side=1){if(!safeLinear(uf,offset,length,12)){skippedUnsafeObjects++;record(name,'grandstand-skipped',uf,offset,{reason:'track-clearance'});return null;}const g=anchor(uf,offset,`SUZUKA_${name}`);for(let r=0;r<rows;r++){const x=-side*r*1.75,y=.52+r*.74;mesh(g,new THREE.BoxGeometry(3.8,.42,length),r%2?concrete:concreteDark,x,y,0);for(let z=-length*.42;z<=length*.42;z+=5.4)mesh(g,new THREE.BoxGeometry(.10,.62,.10),metal,x-side*1.5,y+.48,z);}mesh(g,new THREE.BoxGeometry(7.0,.30,length+1.0),white,-side*(rows-1)*.95,rows*.76+1.2,0,0,0,-side*.10);record(name,'grandstand',uf,offset,{rows});return g;}
   function gate(name,uf,offset){const g=anchor(uf,offset,`SUZUKA_${name}`);mesh(g,new THREE.BoxGeometry(.7,5.5,.7),concreteDark,0,2.75,-5.5);mesh(g,new THREE.BoxGeometry(.7,5.5,.7),concreteDark,0,2.75,5.5);mesh(g,new THREE.BoxGeometry(.75,.8,12),dark,0,5.15,0);record(name,'gate',uf,offset);return g;}
-  function cameraTower(name,uf,offset){const g=anchor(uf,offset,`SUZUKA_${name}`);mesh(g,new THREE.BoxGeometry(1.7,.22,1.7),metal,0,7,0);for(const [x,z] of[[-.65,-.65],[.65,-.65],[-.65,.65],[.65,.65]])mesh(g,new THREE.CylinderGeometry(.055,.07,7,6),metal,x,3.5,z);mesh(g,new THREE.BoxGeometry(.8,.45,.65),dark,0,7.42,0);record(name,'camera',uf,offset);}
-  function marshalPost(name,uf,offset){const g=anchor(uf,offset,`SUZUKA_${name}`);mesh(g,new THREE.BoxGeometry(2.8,1.1,3.8),concreteDark,0,.55,0);mesh(g,new THREE.BoxGeometry(3.2,.18,4.2),white,0,1.18,0);mesh(g,new THREE.BoxGeometry(.12,.9,2.2),yellow,-1.46,1.65,0);record(name,'marshal',uf,offset);}
+  function cameraTower(name,uf,offset){if(!safeLinear(uf,offset,2,10.5)){skippedUnsafeObjects++;record(name,'camera-skipped',uf,offset,{reason:'track-clearance'});return;}const g=anchor(uf,offset,`SUZUKA_${name}`);mesh(g,new THREE.BoxGeometry(1.7,.22,1.7),metal,0,7,0);for(const [x,z] of[[-.65,-.65],[.65,-.65],[-.65,.65],[.65,.65]])mesh(g,new THREE.CylinderGeometry(.055,.07,7,6),metal,x,3.5,z);mesh(g,new THREE.BoxGeometry(.8,.45,.65),dark,0,7.42,0);record(name,'camera',uf,offset);}
+  function marshalPost(name,uf,offset){if(!safeLinear(uf,offset,4.2,10.5)){skippedUnsafeObjects++;record(name,'marshal-skipped',uf,offset,{reason:'track-clearance'});return;}const g=anchor(uf,offset,`SUZUKA_${name}`);mesh(g,new THREE.BoxGeometry(2.8,1.1,3.8),concreteDark,0,.55,0);mesh(g,new THREE.BoxGeometry(3.2,.18,4.2),white,0,1.18,0);mesh(g,new THREE.BoxGeometry(.12,.9,2.2),yellow,-1.46,1.65,0);record(name,'marshal',uf,offset);}
   function bridge(name,uf){const g=anchor(uf,0,`SUZUKA_${name}`),half=(W.roadWidth||14.4)*.5+3.3;mesh(g,new THREE.BoxGeometry(.55,6.4,.55),metal,-half,3.2,0);mesh(g,new THREE.BoxGeometry(.55,6.4,.55),metal,half,3.2,0);mesh(g,new THREE.BoxGeometry(half*2+1,.65,1.0),dark,0,6.0,0);record(name,'bridge',uf,0);return g;}
   function pad(name,uf,offset,width,length){const g=anchor(uf,offset,`SUZUKA_${name}`);mesh(g,new THREE.BoxGeometry(width,.07,length),asphalt,0,.035,0);record(name,'area',uf,offset);return g;}
 
   // Spectator landmarks around the complete lap. Fractions follow the circuit
   // order: T1/T2 -> S curves -> Dunlop -> Degner -> Hairpin -> Spoon -> West
-  // Straight -> 130R -> Chicane -> final corner.
+  // Straight -> 130R -> Chicane -> final corner. A whole-circuit clearance test
+  // prevents a figure-eight neighbour from running through a grandstand.
   grandstand('FIRST_CORNER_GRANDSTAND',.035,-34,64,6,-1);
   grandstand('S_CURVE_GRANDSTAND',.105,34,46,5,1);
   grandstand('GYAKU_BANK_GRANDSTAND',.165,-31,38,5,-1);
@@ -78,7 +83,9 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
   // Continuous service-road hints on both sides make the remote parts of the lap
   // feel like an operated circuit rather than an isolated ribbon of asphalt.
   for(let i=0;i<32;i++){
-    const uf=(i+.5)/32,side=i%2?1:-1,off=side*(26+(i%5)*2.3),g=anchor(uf,off,`SUZUKA_SERVICE_ROAD_${i+1}`);mesh(g,new THREE.BoxGeometry(4.2,.045,34),asphalt,0,.023,0);record(`SERVICE_ROAD_${i+1}`,'service-road',uf,off);
+    const uf=(i+.5)/32,side=i%2?1:-1,off=side*(26+(i%5)*2.3);
+    if(!safeLinear(uf,off,34,11.5)){skippedUnsafeObjects++;record(`SERVICE_ROAD_${i+1}`,'service-road-skipped',uf,off,{reason:'track-clearance'});continue;}
+    const g=anchor(uf,off,`SUZUKA_SERVICE_ROAD_${i+1}`);mesh(g,new THREE.BoxGeometry(4.2,.045,34),asphalt,0,.023,0);record(`SERVICE_ROAD_${i+1}`,'service-road',uf,off);
   }
 
   // Marshal and broadcast infrastructure distributed around every sector.
@@ -88,22 +95,29 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
   cameraFractions.forEach((uf,i)=>cameraTower(`TV_CAMERA_TOWER_${String(i+1).padStart(2,'0')}`,uf,(i%2?1:-1)*(24+(i%4)*2)));
 
   // Lightweight instancing provides the wooded Suzuka perimeter without hundreds
-  // of individual draw calls. Gaps around the main straight preserve paddock views.
-  const treeCount=180,trunkGeo=new THREE.CylinderGeometry(.16,.24,2.4,5),crownGeo=new THREE.ConeGeometry(1.75,4.7,6);
+  // of individual draw calls. Candidates are checked against every centre-line
+  // sample, not just the segment that spawned them, because Suzuka is a figure 8.
+  const treeTarget=180,treeData=[];
+  for(let i=0;i<treeTarget*4&&treeData.length<treeTarget;i++){
+    let uf=(i+.31)/(treeTarget*1.35);uf=wrap(uf);if(uf>.965||uf<.055)uf=.055+(uf%.91);const side=i%2?1:-1,offset=side*(42+(i*17%29)),q=W.sample(wrap(uf)*total,offset),scale=.78+((i*37)%31)/100;
+    if(minTrackDistSq(q.p.x,q.p.z)<19*19){rejectedTrees++;continue;}
+    treeData.push({q,offset,scale,seed:i});
+  }
+  const treeCount=treeData.length,trunkGeo=new THREE.CylinderGeometry(.16,.24,2.4,5),crownGeo=new THREE.ConeGeometry(1.75,4.7,6);
   const trunks=new THREE.InstancedMesh(trunkGeo,dark,treeCount),crowns=new THREE.InstancedMesh(crownGeo,green,treeCount),dummy=new THREE.Object3D();
   trunks.name='SUZUKA_PERIMETER_TREE_TRUNKS';crowns.name='SUZUKA_PERIMETER_TREE_CROWNS';
-  for(let i=0;i<treeCount;i++){
-    let uf=(i+.31)/treeCount;if(uf>.965||uf<.055)uf=.055+(uf%.91);const side=i%2?1:-1,offset=side*(42+(i*17%29));const q=W.sample(wrap(uf)*total,offset),scale=.78+((i*37)%31)/100;
-    dummy.position.copy(q.p);dummy.position.y+=1.2*scale;dummy.rotation.set(0,(i*2.399)%6.28,0);dummy.scale.set(scale,scale,scale);dummy.updateMatrix();trunks.setMatrixAt(i,dummy.matrix);
-    dummy.position.copy(q.p);dummy.position.y+=4.05*scale;dummy.rotation.set(0,(i*1.731)%6.28,0);dummy.scale.set(scale,scale,scale);dummy.updateMatrix();crowns.setMatrixAt(i,dummy.matrix);
-  }
-  trunks.instanceMatrix.needsUpdate=true;crowns.instanceMatrix.needsUpdate=true;root.add(trunks,crowns);record('PERIMETER_TREE_BELT','landscape',.5,0,{instances:treeCount});
+  treeData.forEach(({q,offset,scale,seed},i)=>{
+    const baseY=Math.abs(offset)>TRACK_LANDSCAPE_HALF?GROUND_Y:q.p.y;
+    dummy.position.set(q.p.x,baseY+1.2*scale,q.p.z);dummy.rotation.set(0,(seed*2.399)%6.28,0);dummy.scale.set(scale,scale,scale);dummy.updateMatrix();trunks.setMatrixAt(i,dummy.matrix);
+    dummy.position.set(q.p.x,baseY+4.05*scale,q.p.z);dummy.rotation.set(0,(seed*1.731)%6.28,0);dummy.scale.set(scale,scale,scale);dummy.updateMatrix();crowns.setMatrixAt(i,dummy.matrix);
+  });
+  trunks.instanceMatrix.needsUpdate=true;crowns.instanceMatrix.needsUpdate=true;root.add(trunks,crowns);record('PERIMETER_TREE_BELT','landscape',.5,0,{instances:treeCount,rejected:rejectedTrees,minTrackClearance:19});
 
   W.scene.updateMatrixWorld(true);
   const byType=records.reduce((a,x)=>(a[x.type]=(a[x.type]||0)+1,a),{}),names=records.map(x=>x.name);
-  W.suzukaFullScene={root,owner:'runtime-suzuka-full-scene-v1',visualOnly:true,count:records.length,byType,landmarks:records.map(x=>({...x})),treeInstances:treeCount,courseCoverage:{start:0,end:1,sectors:18}};
+  W.suzukaFullScene={root,owner:'runtime-suzuka-full-scene-v2',visualOnly:true,count:records.length,byType,landmarks:records.map(x=>({...x})),treeInstances:treeCount,treeRejected:rejectedTrees,groundedFarObjects,skippedUnsafeObjects,minTreeTrackClearance:19,courseCoverage:{start:0,end:1,sectors:18}};
   const priorAudit=W.auditCircuit?.bind(W);
-  W.auditCircuit=()=>{const a=priorAudit?priorAudit():{};return{...a,version:'runtime-2026.09.15-r13',suzukaFullScene:{owner:W.suzukaFullScene.owner,count:records.length,byType:{...byType},treeInstances:treeCount,names},notes:[...(a.notes||[]),'Circuit-wide Suzuka layer covers T1/T2, S Curves, Gyaku Bank, Dunlop, Degner, Hairpin, Spoon, West Straight, 130R and Chicane, plus the Ferris wheel, park/hotel campus, west facilities, gates, grandstands, marshal posts, TV towers, service roads and wooded perimeter.']};};
+  W.auditCircuit=()=>{const a=priorAudit?priorAudit():{};return{...a,version:'runtime-2026.09.15-r14',suzukaFullScene:{owner:W.suzukaFullScene.owner,count:records.length,byType:{...byType},treeInstances:treeCount,treeRejected:rejectedTrees,groundedFarObjects,skippedUnsafeObjects,minTreeTrackClearance:19,names},notes:[...(a.notes||[]),'Circuit-wide Suzuka scenery now uses whole-track clearance checks for trees and repeated trackside objects, and far facilities are grounded to the flat terrain instead of inheriting bridge elevation.']};};
   W.circuitAudit=W.auditCircuit();
   return W;
 }
