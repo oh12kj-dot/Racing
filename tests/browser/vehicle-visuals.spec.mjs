@@ -32,12 +32,12 @@ test('planar sponsor decals use safe class fits and suppressed body graphics sta
       return{type,version:l?.version??0,profile:l?.sideFit?.profile||null,fit:l?.sideFit||null,before,after:g?.visible??null,freeFloating:l?.freeFloatingGraphics??null,mode:l?.mode||null,decals};
     });
   });
-  const limits={formula:{w:.80,h:.20},proto:{w:1.00,h:.25},hyper:{w:1.00,h:.25},lmh:{w:1.00,h:.25},supercar:{w:1.00,h:.25}};
+  const limits={formula:{w:.80,h:.20},proto:{w:1.00,h:.25},hyper:{w:1.00,h:.25},lmh:{w:1.00,h:.25}};
   for(const c of result){
     expect(c.version,JSON.stringify(c)).toBe(3);
     expect(c.profile,JSON.stringify(c)).toBeTruthy();
     expect(c.decals.length,JSON.stringify(c)).toBe(2);
-    if(c.type==='gt'||c.type==='touring'){
+    if(c.type==='gt'||c.type==='touring'||c.type==='supercar'){
       expect(c.freeFloating,JSON.stringify(c)).toBe(false);
       expect(c.mode,JSON.stringify(c)).toBe('native-body-panels');
       expect(c.before,JSON.stringify(c)).toBe(false);
