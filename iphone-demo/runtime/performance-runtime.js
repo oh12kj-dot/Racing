@@ -59,23 +59,32 @@ function instanceSpectators(W){
 }
 
 function createSpatialGrid(W,R,{cellSize=64}={}){
-  const total=Math.max(1,Number(W.total)||1),count=Math.max(16,Math.ceil(total/cellSize)),width=total/count,buckets=Array.from({length:count},()=>[]),neighbours=new Map();let rebuilds=0;const wrap=s=>((Number(s)||0)%total+total)%total;
-  for(const c of R.cars||[])neighbours.set(c.id,{ahead:{car:null,dist:Infinity},aheadView:null,behind:{car:null,dist:Infinity}});
+  const total=Math.max(1,Number(W.total)||1),count=Math.max(16,Math.ceil(total/cellSize)),width=total/count,buckets=Array.from({length:count},()=>[]),neighbours=new Map();let rebuilds=0;const wrap=s=>((Number(s)||0)%total+total)%total,makeState=()=>({ahead:{car:null,dist:Infinity},aheadView:null,behind:{car:null,dist:Infinity},near:[]});
+  for(const c of R.cars||[])neighbours.set(c.id,makeState());
   function rebuild(){
-    for(const b of buckets)b.length=0;for(const c of R.cars||[]){if(c.retired||c.pitState!=='NONE')continue;buckets[Math.min(count-1,Math.floor(wrap(c.s)/width))].push(c);if(!neighbours.has(c.id))neighbours.set(c.id,{ahead:{car:null,dist:Infinity},aheadView:null,behind:{car:null,dist:Infinity}});}
-    for(const c of R.cars||[]){const n=neighbours.get(c.id);if(!n)continue;n.ahead.car=null;n.ahead.dist=Infinity;n.behind.car=null;n.behind.dist=Infinity;if(c.retired||c.pitState!=='NONE'){n.aheadView=null;continue;}const s=wrap(c.s),ci=Math.min(count-1,Math.floor(s/width));
+    for(const b of buckets)b.length=0;
+    for(const c of R.cars||[]){if(c.retired||c.pitState!=='NONE')continue;buckets[Math.min(count-1,Math.floor(wrap(c.s)/width))].push(c);if(!neighbours.has(c.id))neighbours.set(c.id,makeState());}
+    for(const c of R.cars||[]){
+      const n=neighbours.get(c.id);if(!n)continue;n.ahead.car=null;n.ahead.dist=Infinity;n.behind.car=null;n.behind.dist=Infinity;n.near.length=0;
+      if(c.retired||c.pitState!=='NONE'){n.aheadView=null;continue;}
+      const s=wrap(c.s),ci=Math.min(count-1,Math.floor(s/width));
+      for(let d=-1;d<=1;d++){const bucket=buckets[(ci+d+count)%count];for(const o of bucket){if(o===c)continue;const f=wrap((o.s||0)-s),b=wrap(s-(o.s||0));if(Math.min(f,b)<=width*1.55)n.near.push(o);}}
       for(let step=0;step<count;step++){const bucket=buckets[(ci+step)%count];for(const o of bucket){if(o===c)continue;const d=wrap((o.s||0)-s);if(d>0&&d<n.ahead.dist){n.ahead.car=o;n.ahead.dist=d;}}if(n.ahead.car&&n.ahead.dist<(step+2)*width)break;}
-      for(let step=0;step<count;step++){const bucket=buckets[(ci-step+count)%count];for(const o of bucket){if(o===c)continue;const d=wrap(s-(o.s||0));if(d>0&&d<n.behind.dist){n.behind.car=o;n.behind.dist=d;}}if(n.behind.car&&n.behind.dist<(step+2)*width)break;}n.aheadView=n.ahead.car?n.ahead:null;
-    }rebuilds++;
+      for(let step=0;step<count;step++){const bucket=buckets[(ci-step+count)%count];for(const o of bucket){if(o===c)continue;const d=wrap(s-(o.s||0));if(d>0&&d<n.behind.dist){n.behind.car=o;n.behind.dist=d;}}if(n.behind.car&&n.behind.dist<(step+2)*width)break;}
+      n.aheadView=n.ahead.car?n.ahead:null;
+    }
+    rebuilds++;
   }
-  try{R.spatialNeighbours=neighbours;}catch{}return{rebuild,neighbours,get diagnostics(){return{owner:'runtime-spatial-grid-v1',cellSize:width,cells:count,rebuilds,entries:neighbours.size};}};
+  W.runtimeSpatialNeighbours=neighbours;try{R.spatialNeighbours=neighbours;}catch{}
+  return{rebuild,neighbours,get diagnostics(){let nearLinks=0;for(const n of neighbours.values())nearLinks+=n.near.length;return{owner:'runtime-spatial-grid-v2-shared',cellSize:width,cells:count,rebuilds,entries:neighbours.size,nearLinks};}};
 }
 
 function freezeKnownStaticRoots(W){let frozen=0;for(const name of['PHYSICAL_BARRIERS_V42']){const root=W.scene?.getObjectByName?.(name);root?.updateMatrixWorld?.(true);root?.traverse?.(o=>{if(o===root)return;o.updateMatrix?.();if(o.matrixAutoUpdate!==false){o.matrixAutoUpdate=false;frozen++;}});}return frozen;}
 
 export function installRuntimeOptimizations(W,R,{mobile=false}={}){
-  if(W.runtimeOptimizationController)return W.runtimeOptimizationController;const staticRoot=W.scene?.getObjectByName?.('SUZUKA_HOME_COMPLEX_V42'),staticBatch=batchStaticRoot(W,staticRoot),spectators=instanceSpectators(W),vehicleResources=dedupeVehicleResources(R.cars||[]),staticFrozen=freezeKnownStaticRoots(W),spatial=createSpatialGrid(W,R,{cellSize:mobile?58:64});
-  const trackLookup={owner:'existing-runtime-racing-lut',centrelineSamples:Number(W.racingLineProfile?.count)||0,modes:W.racingLineModes?.length||0},diagnostics={owner:'runtime-quality-preserving-optimizations-v1',renderPath:'direct-webgl-no-composer',staticBatch,spectators,vehicleResources,staticFrozen,trackLookup,spatial:null,qualityLoss:false};
+  if(W.runtimeOptimizationController)return W.runtimeOptimizationController;
+  const staticRoot=W.scene?.getObjectByName?.('SUZUKA_HOME_COMPLEX_V42'),staticBatch=batchStaticRoot(W,staticRoot),spectators=instanceSpectators(W),vehicleResources=dedupeVehicleResources(R.cars||[]),staticFrozen=freezeKnownStaticRoots(W),spatial=createSpatialGrid(W,R,{cellSize:mobile?58:64});
+  const trackLookup={owner:'existing-runtime-racing-lut',centrelineSamples:Number(W.racingLineProfile?.count)||0,modes:W.racingLineModes?.length||0},diagnostics={owner:'runtime-quality-preserving-optimizations-v2',renderPath:'direct-webgl-no-composer',staticBatch,spectators,vehicleResources,staticFrozen,trackLookup,spatial:null,qualityLoss:false};
   const controller={beforeRace(){spatial.rebuild();diagnostics.spatial=spatial.diagnostics;},diagnostics(){diagnostics.spatial=spatial.diagnostics;return{...diagnostics,staticBatch:{...staticBatch},spectators:{...spectators},vehicleResources:{...vehicleResources},trackLookup:{...trackLookup},spatial:{...diagnostics.spatial}};}};
   W.runtimeRenderPath='direct-webgl-no-composer';W.runtimeOptimizationController=controller;W.runtimeOptimizationDiagnostics=controller.diagnostics();return controller;
 }
