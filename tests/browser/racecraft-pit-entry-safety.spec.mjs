@@ -18,14 +18,14 @@ test('strategy pit request stays on the racing surface until the physical pit-en
     const total=W.total||1,entry=W.pitEntryFraction*total;
     c.s=((entry-250)%total+total)%total;c.lane=1.25;c.laneTarget=1.25;c.v=42;c._spectatorPitRequest={lap:2,reason:'TEST',mode:'BOX'};
     R.update(.016);
-    const early={state:c.pitState,pending:!!c._spectatorPitRequest,runtimePending:!!c._runtimePitPending,phase:c._runtimePitPhase,offset:W.pitOffsetAtS?.(c.s)??null};
+    const earlyTrack=W.sample(c.s,c.lane),early={state:c.pitState,pending:!!c._spectatorPitRequest,runtimePending:!!c._runtimePitPending,phase:c._runtimePitPhase,offset:W.pitOffsetAtS?.(c.s)??null,trackDistance:Math.hypot(c.mesh.position.x-earlyTrack.p.x,c.mesh.position.z-earlyTrack.p.z)};
     c.s=((entry+1)%total+total)%total;c.lane=.15;c.laneTarget=.15;c.v=30;
     R.update(.016);
     const gate={state:c.pitState,pending:!!c._spectatorPitRequest,runtimePending:!!c._runtimePitPending,phase:c._runtimePitPhase,offset:W.pitOffsetAtS?.(c.s)??null};
     return{supported:true,early,gate};
   });
   expect(r.supported).toBeTruthy();
-  expect(r.early.state,JSON.stringify(r)).toBe('NONE');expect(r.early.pending).toBeTruthy();expect(Math.abs(r.early.offset||0)).toBeLessThan(.05);
+  expect(r.early.state,JSON.stringify(r)).toBe('NONE');expect(r.early.pending).toBeTruthy();expect(r.early.trackDistance,JSON.stringify(r)).toBeLessThan(.35);
   expect(r.gate.pending,JSON.stringify(r)).toBeFalsy();expect(r.gate.runtimePending).toBeFalsy();expect(['ENTRY','STOP']).toContain(r.gate.state);expect(Math.abs(r.gate.offset||0)).toBeLessThan(4.5);
 });
 

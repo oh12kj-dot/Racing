@@ -40,6 +40,7 @@ test('spectator intelligence layers are active while existing runtime owners sta
 
 test('race broadcast tab renders racecraft, strategy, tyre and body context',async({page})=>{
   await boot(page);
+  await page.locator('#v16Menu').click();
   const tab=page.locator('#spectatorInsightsTab');await expect(tab).toBeVisible();await tab.click();
   const panel=page.locator('#spectatorInsights');await expect(panel).toHaveClass(/open/);await expect(panel).toContainText('RACE STORY');await expect(panel).toContainText('STRATEGY');await expect(panel).toContainText('TYRE / FUEL');await expect(panel).toContainText('BODY DYNAMICS');
 });
