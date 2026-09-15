@@ -25,7 +25,9 @@ export function resolveDraft({gapM=999,lateralM=99,cornerLoad=0}={}){
 }
 
 export function choosePassLane({carLane=0,aheadLane=0,curvature=0,seed=0}={}){
-  const inside=Math.sign(Number(curvature)||0)*2.55,away=(Number(aheadLane)||0)>=Number(carLane)||0?-2.65:2.65;
+  const inside=Math.sign(Number(curvature)||0)*2.55;
+  const currentLane=Number(carLane)||0,ahead=Number(aheadLane)||0;
+  const away=ahead>=currentLane?-2.65:2.65;
   const preferInside=((Number(seed)||0)%4)===0&&Math.abs(curvature)>.0015;
   return clamp(preferInside?inside:away,-3.05,3.05);
 }
