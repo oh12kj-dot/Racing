@@ -30,6 +30,6 @@ test('strategy helpers model tyre condition draft dirty air and pass lane',async
 
 test('live race exposes evolving tyre fuel and traffic strategy telemetry',async({page})=>{
   await boot(page);
-  const x=await page.evaluate(()=>{const R=window.__RACING_RACE__,tick=window.__RACING_TEST_TICK__,c=R.cars[0];for(let i=0;i<80;i++)tick(.05,false);return{owner:R.strategyDynamics?.owner,telemetry:c.strategyTelemetry,state:R.strategyFor?.(c.id),replay:window.__RACING_REPLAY__?.diagnostics,motion:window.__RACING_VEHICLE_MOTION__?.diagnostics};});
-  expect(x.owner).toBe('runtime-strategy-dynamics-v1');expect(x.telemetry.compound).toBeTruthy();expect(x.telemetry.fuelKg).toBeGreaterThan(0);expect(x.telemetry.tyreTempC).toBeGreaterThan(30);expect(x.state.fuelKg).toBeLessThan(x.state.fuelCapacity);expect(x.replay.owner).toBe('runtime-replay-v1');expect(x.motion.owner).toBe('runtime-vehicle-motion-v1');
+  const x=await page.evaluate(()=>{const R=window.__RACING_RACE__,tick=window.__RACING_TEST_TICK__,c=R.cars[0];for(let i=0;i<80;i++)tick(.05,false);return{owner:R.strategyDynamics?.owner,telemetry:c.strategyTelemetry,state:R.strategyFor?.(c.id),replayPresent:Object.prototype.hasOwnProperty.call(window,'__RACING_REPLAY__'),motion:window.__RACING_VEHICLE_MOTION__?.diagnostics};});
+  expect(x.owner).toBe('runtime-strategy-dynamics-v1');expect(x.telemetry.compound).toBeTruthy();expect(x.telemetry.fuelKg).toBeGreaterThan(0);expect(x.telemetry.tyreTempC).toBeGreaterThan(30);expect(x.state.fuelKg).toBeLessThan(x.state.fuelCapacity);expect(x.replayPresent).toBeFalsy();expect(x.motion.owner).toBe('runtime-vehicle-motion-v1');
 });

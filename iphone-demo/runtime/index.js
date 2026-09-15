@@ -17,7 +17,6 @@ export {createCamera} from './camera-suzuka-tv.js';
 export {createRuntimeRegression} from './regression.js';
 export {createPerformanceManager} from './performance-hybrid-shadow.js';
 export {createLifecycleController} from './lifecycle.js';
-export {createReplay} from './replay.js';
 export {createVehicleMotion} from './vehicle-motion.js';
 export {loadSettings,saveSettings,resolveCircuit} from './settings.js';
 export {CIRCUITS,getCircuitTrack} from './circuits.js';
