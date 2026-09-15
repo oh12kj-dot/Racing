@@ -71,9 +71,9 @@ export function createRenderAssetManager(W,{mobile=false}={}){
   }
   async function upgradeCar(car,entry){
     try{
-      const gltf=await loadModel(entry.url),scene=gltf.scene.clone(true),tint=fallbackPaintColor(car);prepareScene(scene,tint,Number(entry.teamTint??.32));fitScene(scene,car,entry);
+      const gltf=await loadModel(entry.url),scene=gltf.scene.clone(true),tint=fallbackPaintColor(car);prepareScene(scene,tint,Number(entry.teamTint??.32));fitScene(scene,car,entry);W.disableDynamicVehicleShadows?.(scene);
       detachLegacyCarLayers(car);
-      scene.name=`GLB_${car.type||'CAR'}`;car.mesh.add(scene);car.mesh.userData.renderAsset=scene;car.mesh.userData.renderAssetSource=entry.source||entry.url;return true;
+      scene.name=`GLB_${car.type||'CAR'}`;car.mesh.add(scene);car.mesh.userData.renderAsset=scene;car.mesh.userData.renderAssetSource=entry.source||entry.url;car.mesh.userData.vehicleShadowPolicy='contact-only';return true;
     }catch(e){failures.push({type:car.type,url:entry.url,error:String(e?.message||e)});return false;}
   }
   async function cloneStatic(entry){const gltf=await loadModel(entry.url),scene=gltf.scene.clone(true);prepareScene(scene);scene.scale.setScalar(Number(entry.scale)||1);return scene;}
