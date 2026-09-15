@@ -1,4 +1,4 @@
-export {buildWorld} from './world-suzuka-full.js';
+export {buildWorld} from './world-suzuka-clearance.js';
 export {createRace} from './race-grid-lock.js';
 export {createAudio} from './audio-silent-policy.js';
 export {createUI} from './ui.js';
