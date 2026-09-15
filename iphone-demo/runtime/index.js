@@ -1,4 +1,4 @@
-export {buildWorld} from './world-realism.js';
+export {buildWorld} from './world-pit-apron.js';
 export {createRace} from './race-realism.js';
 export {createAudio} from './audio-silent-policy.js';
 export {createUI} from './ui.js';
