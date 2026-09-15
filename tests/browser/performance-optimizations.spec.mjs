@@ -9,8 +9,16 @@ async function boot(page){
   await page.waitForTimeout(600);
 }
 
+async function waitForAssetDiagnostics(page){
+  await page.waitForFunction(()=>{
+    const a=window.__RACING_WORLD__?.renderAssets;
+    return !!a?.decoderSupport||a?.state==='ready'||a?.state==='fallback';
+  },null,{timeout:15000});
+}
+
 test('quality-preserving performance runtime is active',async({page})=>{
   await boot(page);
+  await waitForAssetDiagnostics(page);
   const r=await page.evaluate(()=>{
     const W=window.__RACING_WORLD__,R=window.__RACING_RACE__,o=R.runtimeOptimizations,s=R.strategyDynamics,c=R.collisionAvoidance,p=R.pitExitLimiterDiagnostics;
     return{
