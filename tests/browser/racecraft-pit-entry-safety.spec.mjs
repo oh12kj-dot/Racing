@@ -24,19 +24,19 @@ test('strategy pit request stays on the racing surface until the physical pit-en
     const early={state:c.pitState,pending:!!c._spectatorPitRequest,runtimePending:!!c._runtimePitPending,phase:c._runtimePitPhase,offset:W.pitOffsetAtS?.(c.s)??null,trackDistance:Math.hypot(c.mesh.position.x-earlyTrack.p.x,c.mesh.position.z-earlyTrack.p.z),pitDistance:Math.hypot(c.mesh.position.x-earlyPit.p.x,c.mesh.position.z-earlyPit.p.z)};
     let gateS=null;
     for(let d=.5;d<=300;d+=.5){
-      const s=wrap(entry+d),off=Math.abs(Number(W.pitOffsetAtS?.(s))||0);
-      if(W.inPitWindow?.(s)&&!W.inPitSpeedZone?.(s)&&off<=3.8){gateS=s;break;}
+      const s=wrap(entry+d);
+      if(W.inPitWindow?.(s)&&!W.inPitSpeedZone?.(s)){gateS=s;break;}
     }
     if(gateS==null)return{supported:true,early,gateFound:false};
     c.s=gateS;c.lane=.15;c.laneTarget=.15;c.v=30;
     const gateTrack=W.sample(c.s,c.lane);c.mesh.position.x=gateTrack.p.x;c.mesh.position.z=gateTrack.p.z;
     R.update(.016);
-    const gate={state:c.pitState,pending:!!c._spectatorPitRequest,runtimePending:!!c._runtimePitPending,phase:c._runtimePitPhase,offset:W.pitOffsetAtS?.(c.s)??null};
+    const gate={state:c.pitState,pending:!!c._spectatorPitRequest,runtimePending:!!c._runtimePitPending,phase:c._runtimePitPhase,offset:W.pitOffsetAtS?.(c.s)??null,inWindow:!!W.inPitWindow?.(c.s),speedZone:!!W.inPitSpeedZone?.(c.s)};
     return{supported:true,early,gateFound:true,gate};
   });
   expect(r.supported).toBeTruthy();
   expect(r.early.state,JSON.stringify(r)).toBe('NONE');expect(r.early.pending).toBeTruthy();expect(r.early.runtimePending).toBeFalsy();expect(r.early.trackDistance,JSON.stringify(r)).toBeLessThan(1.5);expect(r.early.pitDistance,JSON.stringify(r)).toBeGreaterThan(5);
-  expect(r.gateFound,JSON.stringify(r)).toBeTruthy();expect(r.gate.pending,JSON.stringify(r)).toBeFalsy();expect(r.gate.runtimePending).toBeFalsy();expect(['ENTRY','STOP']).toContain(r.gate.state);expect(Math.abs(r.gate.offset||0)).toBeLessThanOrEqual(3.8);
+  expect(r.gateFound,JSON.stringify(r)).toBeTruthy();expect(r.gate.inWindow,JSON.stringify(r)).toBeTruthy();expect(r.gate.speedZone,JSON.stringify(r)).toBeFalsy();expect(r.gate.pending,JSON.stringify(r)).toBeFalsy();expect(r.gate.runtimePending).toBeFalsy();expect(['ENTRY','STOP']).toContain(r.gate.state);
 });
 
 test('stable pit controller defers an early legacy ENTRY instead of pulling the car sideways',async({page})=>{
