@@ -1,5 +1,6 @@
 import {createRace as createSpectatorRace} from './race-spectator-intelligence.js';
 import {resolvePitRuntimeSpec} from './pit-config.js';
+import {createTrajectoryController} from './trajectory-controller.js';
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const finite=v=>Number.isFinite(Number(v));
@@ -47,9 +48,12 @@ export function advancePitExitAfterLimiter(W,c,dt=.016,beforeV=null,raceTime=0){
 
 export function createRace(W,statusEl,settings={}){
   const R=createSpectatorRace(W,statusEl,settings),baseUpdate=R.update;
+  const mobile=!!globalThis.matchMedia?.('(pointer:coarse)')?.matches;
+  const trajectory=createTrajectoryController(W,R,{mobile});
   let limiterReleases=0,mergeReleases=0;
 
   function update(dt){
+    trajectory.capture();
     const before=new Map((R.cars||[]).map(c=>[c.id,Number(c.v)||0]));
     baseUpdate(dt);
     for(const c of R.cars||[]){
@@ -57,11 +61,16 @@ export function createRace(W,statusEl,settings={}){
       if(!wasReleased&&c._runtimePitExitLimiterReleased)limiterReleases++;
       if(stage==='MERGE')mergeReleases++;
     }
+    // Final authority for on-track lateral motion. All legacy racecraft layers may
+    // propose a laneTarget, but only this controller turns that request into a
+    // steering-rate/lat-accel-limited trajectory and final vehicle pose.
+    trajectory.update(dt);
   }
 
   return new Proxy(R,{get(target,prop){
     if(prop==='update')return update;
-    if(prop==='pitExitLimiterDiagnostics')return{owner:'runtime-pit-exit-release-v2',limiterReleases,mergeReleases,cars:(R.cars||[]).filter(c=>c._runtimePitExitLimiterReleased).map(c=>({id:c.id,phase:c._runtimePitPhase,pitState:c.pitState,releasedAt:c._runtimePitExitReleasedAt,v:c.v}))};
+    if(prop==='trajectoryDiagnostics')return trajectory.diagnostics();
+    if(prop==='pitExitLimiterDiagnostics')return{owner:'runtime-pit-exit-release-v3',limiterReleases,mergeReleases,cars:(R.cars||[]).filter(c=>c._runtimePitExitLimiterReleased).map(c=>({id:c.id,phase:c._runtimePitPhase,pitState:c.pitState,releasedAt:c._runtimePitExitReleasedAt,v:c.v}))};
     return Reflect.get(target,prop,target);
   }});
 }
