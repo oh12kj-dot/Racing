@@ -11,32 +11,19 @@ export function createRace(W,statusEl,settings={}){
     supercar:{top:80,accel:7.0,brake:19.0,cornerCoeff:.67,minRatio:.30},
     touring:{top:70,accel:6.0,brake:18.0,cornerCoeff:.66,minRatio:.31}
   };
-  const diagnostics={owner:'runtime-kinematic-envelope-v1',corrections:0,lastMaxDelta:0,lastCornerLoad:0};
+  const diagnostics={owner:'runtime-kinematic-envelope-v1',revision:'v2-pooled',corrections:0,lastMaxDelta:0,lastCornerLoad:0,snapshotAllocations:1},before=new Float64Array(Math.max(1,R.cars.length));
 
-  function envelope(c,before,dt){
-    if(!c||c.retired||!Number.isFinite(c.v)||!Number.isFinite(before))return;
-    const p=limits[c.type]||limits.gt,wet=clamp(Number(W.env?.wetness)||0,0,1),load=clamp(Number(W.braking?.(c.s))||0,0,1);
-    const classTop=Number(c.classPerformance?.top),machinePower=clamp(Number(c.machine?.power)||1,.90,1.025);
-    const top=Math.min(p.top,Number.isFinite(classTop)?classTop*1.04:p.top)*machinePower*(1-wet*.07);
-    let desired=top*clamp(1-p.cornerCoeff*Math.pow(load,1.06),p.minRatio,1)*(1-wet*load*.16);
-    if(c.pitState!=='NONE'&&W.inPitSpeedZone?.(c.s))desired=Math.min(desired,(Number(W.pitSpeedLimit)||22.22)*1.015);
-    const accel=p.accel*clamp(Number(c.machine?.power)||1,.88,1.08),brake=p.brake*clamp(Number(c.machine?.brake)||1,.88,1.08);
-    const physicalUpper=before>desired?Math.max(desired,before-brake*dt):Math.min(desired,before+accel*dt);
-    const upper=Math.max(0,Math.min(top,physicalUpper));
-    if(c.v>upper+.001){diagnostics.corrections++;diagnostics.lastMaxDelta=c.v-upper;c.v=upper;}
-    diagnostics.lastCornerLoad=Math.max(diagnostics.lastCornerLoad*.98,load);
+  function envelope(c,previous,dt){
+    if(!c||c.retired||!Number.isFinite(c.v)||!Number.isFinite(previous))return;
+    const p=limits[c.type]||limits.gt,wet=clamp(Number(W.env?.wetness)||0,0,1),load=clamp(Number(W.braking?.(c.s))||0,0,1),classTop=Number(c.classPerformance?.top),machinePower=clamp(Number(c.machine?.power)||1,.90,1.025),top=Math.min(p.top,Number.isFinite(classTop)?classTop*1.04:p.top)*machinePower*(1-wet*.07);
+    let desired=top*clamp(1-p.cornerCoeff*Math.pow(load,1.06),p.minRatio,1)*(1-wet*load*.16);if(c.pitState!=='NONE'&&W.inPitSpeedZone?.(c.s))desired=Math.min(desired,(Number(W.pitSpeedLimit)||22.22)*1.015);
+    const accel=p.accel*clamp(Number(c.machine?.power)||1,.88,1.08),brake=p.brake*clamp(Number(c.machine?.brake)||1,.88,1.08),physicalUpper=previous>desired?Math.max(desired,previous-brake*dt):Math.min(desired,previous+accel*dt),upper=Math.max(0,Math.min(top,physicalUpper));
+    if(c.v>upper+.001){diagnostics.corrections++;diagnostics.lastMaxDelta=c.v-upper;c.v=upper;}diagnostics.lastCornerLoad=Math.max(diagnostics.lastCornerLoad*.98,load);
   }
 
   function update(dt){
-    const step=clamp(Number(dt)||.016,.001,.05),before=R.cars.map(c=>Number(c.v)||0);
-    baseUpdate(dt);
-    if(R.replay)return;
-    for(let i=0;i<R.cars.length;i++)envelope(R.cars[i],before[i],step);
+    const step=clamp(Number(dt)||.016,.001,.05);for(let i=0;i<R.cars.length;i++)before[i]=Number(R.cars[i].v)||0;baseUpdate(dt);if(R.replay)return;for(let i=0;i<R.cars.length;i++)envelope(R.cars[i],before[i],step);
   }
 
-  return new Proxy(R,{get(target,prop){
-    if(prop==='update')return update;
-    if(prop==='kinematicPolicy')return{...diagnostics,limits};
-    return Reflect.get(target,prop,target);
-  }});
+  return new Proxy(R,{get(target,prop){if(prop==='update')return update;if(prop==='kinematicPolicy')return{...diagnostics,limits};return Reflect.get(target,prop,target);}});
 }

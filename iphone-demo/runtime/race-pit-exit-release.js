@@ -46,22 +46,23 @@ export function advancePitExitAfterLimiter(W,c,dt=.016,beforeV=null,raceTime=0){
 }
 
 export function createRace(W,statusEl,settings={}){
-  const R=createSpectatorRace(W,statusEl,settings),baseUpdate=R.update;
-  let limiterReleases=0,mergeReleases=0;
+  const R=createSpectatorRace(W,statusEl,settings),baseUpdate=R.update,beforeSpeed=new Float64Array(Math.max(1,R.cars?.length||20));
+  let limiterReleases=0,mergeReleases=0,updates=0;
 
   function update(dt){
-    const before=new Map((R.cars||[]).map(c=>[c.id,Number(c.v)||0]));
+    const cars=R.cars||[];for(let i=0;i<cars.length;i++)beforeSpeed[i]=Number(cars[i].v)||0;
     baseUpdate(dt);
-    for(const c of R.cars||[]){
-      const wasReleased=!!c._runtimePitExitLimiterReleased,stage=advancePitExitAfterLimiter(W,c,dt,before.get(c.id),R.race?.t||0);
+    for(let i=0;i<cars.length;i++){
+      const c=cars[i],wasReleased=!!c._runtimePitExitLimiterReleased,stage=advancePitExitAfterLimiter(W,c,dt,beforeSpeed[i],R.race?.t||0);
       if(!wasReleased&&c._runtimePitExitLimiterReleased)limiterReleases++;
       if(stage==='MERGE')mergeReleases++;
     }
+    updates++;
   }
 
   return new Proxy(R,{get(target,prop){
     if(prop==='update')return update;
-    if(prop==='pitExitLimiterDiagnostics')return{owner:'runtime-pit-exit-release-v2',limiterReleases,mergeReleases,cars:(R.cars||[]).filter(c=>c._runtimePitExitLimiterReleased).map(c=>({id:c.id,phase:c._runtimePitPhase,pitState:c.pitState,releasedAt:c._runtimePitExitReleasedAt,v:c.v}))};
+    if(prop==='pitExitLimiterDiagnostics')return{owner:'runtime-pit-exit-release-v3-pooled',limiterReleases,mergeReleases,updates,snapshotAllocations:1,cars:(R.cars||[]).filter(c=>c._runtimePitExitLimiterReleased).map(c=>({id:c.id,phase:c._runtimePitPhase,pitState:c.pitState,releasedAt:c._runtimePitExitReleasedAt,v:c.v}))};
     return Reflect.get(target,prop,target);
   }});
 }
