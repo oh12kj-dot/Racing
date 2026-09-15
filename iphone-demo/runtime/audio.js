@@ -1,11 +1,27 @@
 import {LOG_POLICY,readAudioSettings} from './config.js';
 
+const clampValue=(v,a,b)=>Math.max(a,Math.min(b,v));
+
+// Keep the grid/start state on a restrained idle bed.  The old envelope always
+// started around 2,600 rpm with ~30% synthetic load even at 0 km/h, which made a
+// stationary car sound as though it was already accelerating.  Dynamic rev/load
+// now unlock only once the car has physically started moving.
+export function resolveEngineEnvelope(car={},sessionPhase=''){
+  const kmh=Math.max(0,(Number(car.v)||0)*3.6),speedNorm=clampValue(kmh/330,0,1);
+  const throttle=clampValue(Number(car.racingThrottle)||0,0,1),brake=clampValue(Number(car.brakeVisual)||0,0,1),lift=clampValue(Number(car.liftCoast)||0,0,1);
+  const driveActive=kmh>=3.0,gear=Math.max(1,Math.min(8,Math.floor(kmh/38)+1));
+  const rpm=driveActive?1150+speedNorm*7800+throttle*1650+gear*120:950;
+  const load=driveActive?clampValue(.08+speedNorm*.48+throttle*.56-brake*.42-lift*.42,0,1):.025;
+  return{phase:String(sessionPhase||''),kmh,speedNorm,throttle,driveActive,gear,rpm,load};
+}
+
 export function createAudio(R,settings={}){
   let ctx=null,master=null,gameBus=null,engineMix=null,effectsBus=null,pttBus=null;
   let engineBus=null,engineFilter=null,engineA=null,engineB=null,engineC=null,hybrid=null;
   let windGain=null,tyreGain=null,brakeGain=null,noiseBuffer=null;
   let enabled=false,focus=0,pendingFocus=0,pendingSince=0,lastGear=0,lastRadioId=null;
   let speaking=false,resumeArmed=false,primeArmed=false,primed=false,turnToken=0,sessionRestore=null,activeMessage=null;
+  let engineState={phase:'',kmh:0,speedNorm:0,throttle:0,driveActive:false,gear:1,rpm:950,load:.025};
   const queue=[],trace=[],synth=()=>window.speechSynthesis,session=typeof navigator!=='undefined'?navigator.audioSession:null;
   const clamp=(v,a,b)=>Math.max(a,Math.min(b,v)),volumes=readAudioSettings(settings);
   const profiles={
@@ -44,11 +60,11 @@ export function createAudio(R,settings={}){
     engineMix=ctx.createGain();engineMix.connect(gameBus);
     effectsBus=ctx.createGain();effectsBus.connect(gameBus);
     pttBus=ctx.createGain();pttBus.connect(master);
-    engineBus=ctx.createGain();engineBus.gain.value=.14;engineFilter=ctx.createBiquadFilter();engineFilter.type='lowpass';engineFilter.frequency.value=2800;engineFilter.Q.value=.5;engineBus.connect(engineFilter).connect(engineMix);
+    engineBus=ctx.createGain();engineBus.gain.value=.055;engineFilter=ctx.createBiquadFilter();engineFilter.type='lowpass';engineFilter.frequency.value=1200;engineFilter.Q.value=.5;engineBus.connect(engineFilter).connect(engineMix);
     const mk=(type,gain,bus=engineBus)=>{const o=ctx.createOscillator(),g=ctx.createGain();o.type=type;g.gain.value=gain;o.connect(g).connect(bus);o.start();return{o,g};};
     engineA=mk('sawtooth',.50);engineB=mk('triangle',.21);engineC=mk('sine',.18);hybrid=mk('sine',0,engineMix);
     noiseBuffer=makeNoise();
-    const wind=loopNoise('bandpass',650,.55,.010);windGain=wind.g;windGain._filter=wind.f;
+    const wind=loopNoise('bandpass',650,.55,0);windGain=wind.g;windGain._filter=wind.f;
     const tyre=loopNoise('bandpass',1750,1,0);tyreGain=tyre.g;tyreGain._filter=tyre.f;
     const brake=loopNoise('bandpass',3300,2.5,0);brakeGain=brake.g;brakeGain._filter=brake.f;
     applyVolumes();
@@ -154,17 +170,17 @@ export function createAudio(R,settings={}){
   function update(){
     if(!enabled)return;init();armResume();armPrime();const c=R.cars[focus]||R.getStandings()[0];
     if(c){
-      const p=profiles[c.type]||profiles.gt,kmh=Math.max(0,c.v*3.6),gear=Math.max(1,Math.min(8,Math.floor(kmh/38)+1)),norm=clamp(kmh/330,0,1),rpm=2500+norm*8800+gear*165,base=p.idle+rpm*.0175*p.rev;
+      const p=profiles[c.type]||profiles.gt,e=resolveEngineEnvelope(c,R.sessionPhase),kmh=e.kmh,norm=e.speedNorm,gear=e.gear,rpm=e.rpm,base=p.idle+rpm*.0175*p.rev;engineState=e;
       if(engineA.o.type!==p.a){engineA.o.type=p.a;engineB.o.type=p.b;engineC.o.type=p.c;}
       engineA.o.frequency.setTargetAtTime(base*p.harm[0],ctx.currentTime,.030);engineB.o.frequency.setTargetAtTime(base*p.harm[1],ctx.currentTime,.035);engineC.o.frequency.setTargetAtTime(base*p.harm[2],ctx.currentTime,.040);
-      engineFilter.frequency.setTargetAtTime(p.filter*(.58+.42*norm),ctx.currentTime,.07);engineFilter.Q.setTargetAtTime(.45+norm*.38,ctx.currentTime,.10);
-      const load=clamp(.30+norm*.70-(c.brakeVisual||0)*.42-(c.liftCoast||0)*.42,0,1);engineBus.gain.setTargetAtTime((speaking?.062:.105)+load*.068,ctx.currentTime,.040);
-      hybrid.o.frequency.setTargetAtTime(650+norm*1200+(c.ers||0)*110,ctx.currentTime,.055);hybrid.g.gain.setTargetAtTime(p.hybrid*norm*(c.energyMode==='PUSH'?1.12:.76),ctx.currentTime,.08);
-      windGain.gain.setTargetAtTime(.004+norm*.043,ctx.currentTime,.10);windGain._filter.frequency.setTargetAtTime(480+norm*1120,ctx.currentTime,.11);
+      const filterScale=e.driveActive?.46+.54*norm:.32;engineFilter.frequency.setTargetAtTime(p.filter*filterScale,ctx.currentTime,.07);engineFilter.Q.setTargetAtTime(e.driveActive?.45+norm*.38:.38,ctx.currentTime,.10);
+      engineBus.gain.setTargetAtTime((speaking?.038:.052)+e.load*.095,ctx.currentTime,.040);
+      const hybridNorm=e.driveActive?norm:0;hybrid.o.frequency.setTargetAtTime(650+hybridNorm*1200+(c.ers||0)*110,ctx.currentTime,.055);hybrid.g.gain.setTargetAtTime(p.hybrid*hybridNorm*(c.energyMode==='PUSH'?1.12:.76),ctx.currentTime,.08);
+      windGain.gain.setTargetAtTime(norm*.043,ctx.currentTime,.10);windGain._filter.frequency.setTargetAtTime(480+norm*1120,ctx.currentTime,.11);
       const spin=c.spinState==='SLIDE'?1:0,lock=c.spinState==='LOCKUP'?1:0,slip=clamp((c.brakeVisual||0)*.40+(c.flatSpot?.18:0)+(c.hydroplaning?.28:0)+spin*.75+lock*.56,0,1);
       tyreGain.gain.setTargetAtTime(slip*.052,ctx.currentTime,.025);tyreGain._filter.frequency.setTargetAtTime(1150+kmh*4.7,ctx.currentTime,.05);
       const brakeHot=clamp(((c.brakeTemp||300)-520)/420,0,1)*(c.brakeVisual||0);brakeGain.gain.setTargetAtTime(brakeHot*.013,ctx.currentTime,.055);brakeGain._filter.frequency.setTargetAtTime(3000+brakeHot*1500,ctx.currentTime,.09);
-      if(gear!==lastGear&&lastGear>0)shiftThump(gear>lastGear);lastGear=gear;
+      if(e.driveActive&&gear!==lastGear&&lastGear>0)shiftThump(gear>lastGear);lastGear=gear;
     }
     ingestRadio();
   }
@@ -173,6 +189,6 @@ export function createAudio(R,settings={}){
     toggle:()=>setEnabled(!enabled),testRadio,setEnabled,update,setFocus,setVolumes,
     get enabled(){return enabled},get speaking(){return speaking},get speechSupported(){return!!synth()},get voice(){return engineerVoice()?.name||'system'},
     get volumes(){return{...volumes}},get audioState(){return ctx?.state||'not-created'},get queueLength(){return queue.length},get radioFocus(){return focus},
-    get silentModeRespectSupported(){return!!session},get audioTrace(){return trace.slice()},get activeTransmission(){return activeMessage?{...activeMessage}:null}
+    get engineState(){return{...engineState}},get silentModeRespectSupported(){return!!session},get audioTrace(){return trace.slice()},get activeTransmission(){return activeMessage?{...activeMessage}:null}
   };
 }
