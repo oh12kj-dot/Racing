@@ -52,8 +52,21 @@ export function createRace(W,statusEl,settings={}){
   const trajectory=createTrajectoryController(W,R,{mobile});
   let limiterReleases=0,mergeReleases=0;
 
+  function preparePitApproach(dt){
+    const limit=Number(W.pitSpeedLimit)||22.22;
+    for(const c of R.cars||[]){
+      if(c.retired||c.pitState!=='ENTRY'||!W.inPitWindow?.(c.s)||c._runtimePitQueued)continue;
+      const dist=Number(W.pitDistanceToBox?.(c.s,c.teamId));if(!Number.isFinite(dist)||dist<-.5)continue;
+      const decel=clamp((Number(c._v18BaseBrake)||Number(c.brake)||15)*.52,5.5,9.5),target=Math.min(limit,Math.sqrt(Math.max(.35,2*decel*Math.max(.12,dist))));
+      if(dist<34)c.v=Math.min(Number(c.v)||0,target);
+      if(dist<8)c.v=Math.min(c.v,Math.max(1.8,target*.72));
+      if(dist<2.2)c.v=Math.min(c.v,Math.max(.7,dist*1.15));
+      c.pitApproachTargetSpeed=target;c.pitApproachDistance=dist;
+    }
+  }
+
   function update(dt){
-    trajectory.capture();
+    const trajectoryFrame=trajectory.capture();preparePitApproach(dt);
     const before=new Map((R.cars||[]).map(c=>[c.id,Number(c.v)||0]));
     baseUpdate(dt);
     for(const c of R.cars||[]){
@@ -64,7 +77,7 @@ export function createRace(W,statusEl,settings={}){
     // Final authority for on-track lateral motion. All legacy racecraft layers may
     // propose a laneTarget, but only this controller turns that request into a
     // steering-rate/lat-accel-limited trajectory and final vehicle pose.
-    trajectory.update(dt);
+    trajectory.update(dt,trajectoryFrame);
   }
 
   return new Proxy(R,{get(target,prop){
