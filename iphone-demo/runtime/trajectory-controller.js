@@ -27,6 +27,7 @@ export function createTrajectoryController(W,R,{mobile=false}={}){
   function legacyIntent(c){return clamp(Number.isFinite(Number(c.laneTarget))?Number(c.laneTarget):Number(c.lane)||0,-3.65,3.65);}
   function intent(c){
     const legacy=legacyIntent(c),ideal=lineAt(c),phase=String(c._runtimePitPhase||'');
+    if(String(R.flag||'GREEN')!=='GREEN')return{target:legacy,source:'CAUTION'};
     if(c.pitState==='ENTRY'&&!W.inPitWindow?.(c.s)){metrics.pitApproaches++;return{target:legacy,source:'PIT_APPROACH'};}
     if(phase==='MERGE'){metrics.mergeFrames++;return{target:ideal,source:'PIT_MERGE'};}
     if(c.hazardAvoiding)return{target:legacy,source:'HAZARD'};
@@ -49,7 +50,11 @@ export function createTrajectoryController(W,R,{mobile=false}={}){
     return out;
   }
   function updateCar(c,dt,before){
-    const st=stateFor(c),tune=tuneFor(c);
+    const st=stateFor(c),tune=tuneFor(c),session=String(R.sessionPhase||''),preGreen=(Number(R.race?.t)||0)<(Number(R.race?.green)||0);
+    if(preGreen||session==='FORMATION'||session==='QUALIFYING'||String(R.flag||'GREEN')==='RED'){
+      st.lane=Number(c.lane)||st.lane;st.laneV=0;st.laneA=0;st.yawError=0;st.steer=0;st.steerRate=0;st.target=Number(c.laneTarget)||st.lane;st.source='SESSION_CONTROL';
+      c.steeringAngle=0;c.steeringRate=0;c.lateralVelocity=0;c.lateralAcceleration=0;c.yawError=0;c.trajectorySource='SESSION_CONTROL';return;
+    }
     if(before&&before.pitState==='NONE'&&c.pitState==='NONE'&&before.spin==='NONE'&&c.spinState!=='SLIDE'){
       let ds=(Number(c.s)||0)-before.s;if(ds>total*.5)ds-=total;if(ds<-total*.5)ds+=total;
       const expected=Math.max(0,(before.v+Math.max(0,Number(c.v)||0))*.5*dt);
@@ -82,7 +87,8 @@ export function createTrajectoryController(W,R,{mobile=false}={}){
     for(const [x,z] of axes){const al=aL*Math.abs(afx*x+afz*z)+aW*Math.abs(arx*x+arz*z),bl=bL*Math.abs(bfx*x+bfz*z)+bW*Math.abs(brx*x+brz*z);if(al+bl-Math.abs(dx*x+dz*z)<=.02)return false;}return true;
   }
   function auditContacts(){
-    const cars=R.cars||[],now=R.race?.t||0;
+    const session=String(R.sessionPhase||''),now=R.race?.t||0;if(now<(Number(R.race?.green)||0)||session==='FORMATION'||session==='QUALIFYING'||String(R.flag||'GREEN')==='RED')return;
+    const cars=R.cars||[];
     for(let i=0;i<cars.length;i++)for(let j=i+1;j<cars.length;j++){
       const a=cars[i],b=cars[j];if(a.retired||b.retired||a.pitState!=='NONE'||b.pitState!=='NONE'||!a.mesh||!b.mesh)continue;if(!overlapOBB(a,b)||recentPhysical(a,b))continue;
       const recent=(R.events||[]).slice(-12).some(e=>e?.type==='CONTACT'&&now-(e.t||0)<.14&&((e.carId===a.id&&e.data?.otherId===b.id)||(e.carId===b.id&&e.data?.otherId===a.id)));if(recent)continue;
@@ -92,6 +98,6 @@ export function createTrajectoryController(W,R,{mobile=false}={}){
     }
   }
   function update(dt,snapshot){const step=clamp(Number(dt)||.016,.001,.05);for(const c of R.cars||[])updateCar(c,step,snapshot?.get?.(c.id));auditContacts();metrics.updates++;}
-  function diagnostics(){return{owner:'runtime-trajectory-controller-v2',...metrics,cars:[...states.entries()].map(([id,s])=>({id,lane:s.lane,laneV:s.laneV,laneA:s.laneA,yawError:s.yawError,steer:s.steer,target:s.target,source:s.source}))};}
+  function diagnostics(){return{owner:'runtime-trajectory-controller-v3',...metrics,cars:[...states.entries()].map(([id,s])=>({id,lane:s.lane,laneV:s.laneV,laneA:s.laneA,yawError:s.yawError,steer:s.steer,target:s.target,source:s.source}))};}
   return{capture,update,diagnostics};
 }
