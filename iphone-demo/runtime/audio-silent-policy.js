@@ -1,23 +1,24 @@
 import {createAudio as createStableAudio} from './audio.js';
 
-const RADIO_SPEECH_RATE=Object.freeze({driver:1.08,engineer:1.12});
+export const RADIO_SPEECH_RATE=Object.freeze({driver:1.08,engineer:1.12});
+
+export function applyNaturalRadioRate(utterance){
+  if(!utterance)return utterance;
+  const sourceRate=Number(utterance.rate);
+  // audio.js intentionally distinguishes driver (.98) from engineer (1.0).
+  // Preserve that role signal, but submit the final utterance at the brisk,
+  // intelligible cadence heard in real race-team radio. Speech priming uses
+  // rate=2 and is deliberately left untouched.
+  if(Number.isFinite(sourceRate)&&sourceRate>=.90&&sourceRate<=1.05){
+    utterance.rate=sourceRate<.99?RADIO_SPEECH_RATE.driver:RADIO_SPEECH_RATE.engineer;
+  }
+  return utterance;
+}
 
 export function createAudio(R,settings={}){
   const session=typeof navigator!=='undefined'?navigator.audioSession:null,synth=typeof window!=='undefined'?window.speechSynthesis:null;
   let patched=false;
   const forceAmbient=()=>{if(!session)return false;try{session.type='ambient';return session.type==='ambient'||true;}catch{return false;}};
-  const applyNaturalRadioRate=utterance=>{
-    if(!utterance)return utterance;
-    const sourceRate=Number(utterance.rate);
-    // audio.js intentionally distinguishes driver (.98) from engineer (1.0).
-    // Preserve that role signal, but submit the final utterance at the brisk,
-    // intelligible cadence heard in real race-team radio. Speech priming uses
-    // rate=2 and is deliberately left untouched.
-    if(Number.isFinite(sourceRate)&&sourceRate>=.90&&sourceRate<=1.05){
-      utterance.rate=sourceRate<.99?RADIO_SPEECH_RATE.driver:RADIO_SPEECH_RATE.engineer;
-    }
-    return utterance;
-  };
   forceAmbient();
 
   // Patch the actual submission point so the cadence applies on every browser,
