@@ -20,10 +20,10 @@ export function createAudio(R,settings={}){
   };
   forceAmbient();
 
-  // iOS WebAudio is an ambient session and therefore follows the hardware silent
-  // switch. Web Speech can select its own route, so force the aggregate page
-  // session back to ambient immediately before every utterance is submitted.
-  if(session&&synth&&typeof synth.speak==='function'&&!synth.__racingAmbientSpeakPatched){
+  // Patch the actual submission point so the cadence applies on every browser,
+  // while iOS additionally forces the ambient audio-session policy immediately
+  // before speech. This leaves the rate=2 silent priming utterance unchanged.
+  if(synth&&typeof synth.speak==='function'&&!synth.__racingAmbientSpeakPatched){
     const nativeSpeak=synth.speak.bind(synth),wrapped=utterance=>{forceAmbient();applyNaturalRadioRate(utterance);return nativeSpeak(utterance);};
     try{synth.speak=wrapped;patched=synth.speak===wrapped;}catch{}
     if(!patched){try{Object.defineProperty(synth,'speak',{configurable:true,value:wrapped});patched=synth.speak===wrapped;}catch{}}
