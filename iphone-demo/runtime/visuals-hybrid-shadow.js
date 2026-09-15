@@ -26,11 +26,12 @@ export function enhanceVisuals(W,settings={},mobile=false){
 
   W.updateHybridVehicleShadows=(cars=[],force=false)=>{
     const ranked=(cars||[]).filter(c=>!c.retired&&c.mesh?.visible!==false).map(c=>({c,d:W.camera.position.distanceToSquared(c.mesh.position)})).sort((a,b)=>a.d-b.d);
-    const next=ranked.slice(0,maxCasters).map(x=>x.c.id),key=next.join(',');
+    const next=ranked.slice(0,maxCasters).map(x=>x.c);
+    const key=next.map((c,i)=>String(c.id??c.driver?.id??c.mesh?.uuid??`slot-${i}`)).join(',');
     if(!force&&key===selectionKey)return{changed:false,casters:selected.size};
-    selectionKey=key;selected.clear();for(const id of next)selected.add(id);
-    for(const c of cars)setCaster(c,selected.has(c.id));
-    return{changed:true,casters:selected.size,ids:[...selected]};
+    selectionKey=key;selected.clear();for(const car of next)selected.add(car);
+    for(const c of cars)setCaster(c,selected.has(c));
+    return{changed:true,casters:selected.size,ids:next.map(c=>c.id??c.driver?.id??c.mesh?.uuid??null)};
   };
   W.hybridShadowPolicy={owner:'runtime-hybrid-vehicle-shadow-v1',contactShadowAll:true,realDirectionalNear:true,maxCasters,selected,selectionHz:8};
   return{...result,hybridVehicleShadows:true,maxRealShadowCasters:maxCasters};
