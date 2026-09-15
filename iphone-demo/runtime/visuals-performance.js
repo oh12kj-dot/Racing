@@ -11,6 +11,6 @@ export function enhanceVisuals(W,settings={},mobile=false){
     if(!force&&key===previousKey){stats.changed=false;stats.casters=selected.size;return stats;}
     previousKey=key;selected.clear();for(const c of bestCars)if(c)selected.add(c);for(const c of cars)setCaster(c,selected.has(c));stats.changed=true;stats.casters=selected.size;stats.updates++;return stats;
   };
-  W.hybridShadowPolicy={...(W.hybridShadowPolicy||{}),owner:'runtime-hybrid-shadow-allocation-free-v2',contactShadowAll:true,realDirectionalNear:true,maxCasters,selected};
+  W.hybridShadowPolicy={...(W.hybridShadowPolicy||{}),owner:'runtime-hybrid-vehicle-shadow-v1',selectionPolicy:'allocation-free-nearest-v2',contactShadowAll:true,realDirectionalNear:true,maxCasters,selected};
   return{...result,hybridVehicleShadows:true,maxRealShadowCasters:maxCasters,allocationFreeSelection:true};
 }
