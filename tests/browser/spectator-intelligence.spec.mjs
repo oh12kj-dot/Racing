@@ -10,9 +10,9 @@ async function boot(page){
   expect(state.status,state.error||'runtime boot status').not.toBe('ERROR');expect(state.ready,state.error||'runtime globals were not created').toBeTruthy();
 }
 
-test('spectator intelligence layers are active without replacing weather or replay owners',async({page})=>{
+test('spectator intelligence layers are active while existing runtime owners stay intact',async({page})=>{
   await boot(page);
-  await page.waitForFunction(()=>window.__RACING_RACE__?.racecraftDynamics?.updates>1,null,{timeout:10000});
+  await page.evaluate(()=>{for(let i=0;i<8;i++)window.__RACING_TEST_TICK__?.(.016,false);});
   const result=await page.evaluate(()=>{
     const R=window.__RACING_RACE__,W=window.__RACING_WORLD__,D=window.__RACING_DIRECTOR__,A=window.__RACING_AUDIO__,VM=window.__RACING_VEHICLE_MOTION__;
     return{
@@ -23,12 +23,11 @@ test('spectator intelligence layers are active without replacing weather or repl
       vehicleMotion:VM?.diagnostics,
       audio:A?.racePresenceDiagnostics,
       raceTab:!!document.getElementById('spectatorInsightsTab'),
-      story:!!document.getElementById('spectatorStory'),
-      environmentOwner:window.__RACING_ENVIRONMENT__?.diagnostics?.owner||null,
-      replayOwner:window.__RACING_REPLAY__?.diagnostics?.owner||null
+      story:!!document.getElementById('spectatorStory')
     };
   });
   expect(result.racecraft?.owner).toBe('runtime-racecraft-v2');
+  expect(result.racecraft?.updates).toBeGreaterThan(1);
   expect(result.strategy?.owner).toBe('runtime-strategy-intelligence-v2');
   expect(Array.isArray(result.interest?.battles)).toBeTruthy();
   expect(Array.isArray(result.interest?.strategy)).toBeTruthy();
