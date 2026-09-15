@@ -20,5 +20,5 @@ export function createVehicleMotion(W,R,{mobile=false}={}){
       c.bodyMotionTelemetry={pitch:s.pitch,roll:s.roll,heave:s.heave,longG,latG,steer,onKerb,lockup:lock,slide};
     }updates++;
   }
-  return{update,get diagnostics(){return{owner:'runtime-vehicle-motion-v3',updates,cars:states.size,rateHz:mobile?30:45,curbFrames,lockupFrames}}};
+  return{update,get diagnostics(){return{owner:'runtime-vehicle-motion-v2',updates,cars:states.size,rateHz:mobile?30:45,curbFrames,lockupFrames}}};
 }
