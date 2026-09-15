@@ -1,5 +1,6 @@
 import {createRace as createSpectatorRace} from './race-spectator-intelligence.js';
 import {resolvePitRuntimeSpec} from './pit-config.js';
+import {createTrajectoryController} from './trajectory-controller.js';
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const finite=v=>Number.isFinite(Number(v));
@@ -47,9 +48,25 @@ export function advancePitExitAfterLimiter(W,c,dt=.016,beforeV=null,raceTime=0){
 
 export function createRace(W,statusEl,settings={}){
   const R=createSpectatorRace(W,statusEl,settings),baseUpdate=R.update;
+  const mobile=!!globalThis.matchMedia?.('(pointer:coarse)')?.matches;
+  const trajectory=createTrajectoryController(W,R,{mobile});
   let limiterReleases=0,mergeReleases=0;
 
+  function preparePitApproach(){
+    const limit=Number(W.pitSpeedLimit)||22.22;
+    for(const c of R.cars||[]){
+      if(c.retired||c.pitState!=='ENTRY'||!W.inPitWindow?.(c.s)||c._runtimePitQueued)continue;
+      const dist=Number(W.pitDistanceToBox?.(c.s,c.teamId));if(!Number.isFinite(dist)||dist<-.5)continue;
+      const decel=clamp((Number(c._v18BaseBrake)||Number(c.brake)||15)*.52,5.5,9.5),target=Math.min(limit,Math.sqrt(Math.max(.35,2*decel*Math.max(.12,dist))));
+      if(dist<34)c.v=Math.min(Number(c.v)||0,target);
+      if(dist<8)c.v=Math.min(c.v,Math.max(1.8,target*.72));
+      if(dist<2.2)c.v=Math.min(c.v,Math.max(.7,dist*1.15));
+      c.pitApproachTargetSpeed=target;c.pitApproachDistance=dist;
+    }
+  }
+
   function update(dt){
+    const trajectoryFrame=trajectory.capture();preparePitApproach();
     const before=new Map((R.cars||[]).map(c=>[c.id,Number(c.v)||0]));
     baseUpdate(dt);
     for(const c of R.cars||[]){
@@ -57,11 +74,13 @@ export function createRace(W,statusEl,settings={}){
       if(!wasReleased&&c._runtimePitExitLimiterReleased)limiterReleases++;
       if(stage==='MERGE')mergeReleases++;
     }
+    trajectory.update(dt,trajectoryFrame);
   }
 
   return new Proxy(R,{get(target,prop){
     if(prop==='update')return update;
-    if(prop==='pitExitLimiterDiagnostics')return{owner:'runtime-pit-exit-release-v2',limiterReleases,mergeReleases,cars:(R.cars||[]).filter(c=>c._runtimePitExitLimiterReleased).map(c=>({id:c.id,phase:c._runtimePitPhase,pitState:c.pitState,releasedAt:c._runtimePitExitReleasedAt,v:c.v}))};
+    if(prop==='trajectoryDiagnostics')return trajectory.diagnostics();
+    if(prop==='pitExitLimiterDiagnostics')return{owner:'runtime-pit-exit-release-v3',limiterReleases,mergeReleases,cars:(R.cars||[]).filter(c=>c._runtimePitExitLimiterReleased).map(c=>({id:c.id,phase:c._runtimePitPhase,pitState:c.pitState,releasedAt:c._runtimePitExitReleasedAt,v:c.v}))};
     return Reflect.get(target,prop,target);
   }});
 }
