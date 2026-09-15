@@ -35,6 +35,7 @@ test('pit lane is clear, service apron is paved, and rebuilt pit building is vis
       buildingRows:buildingAudit.rows,
       seamOwner:seamAudit.owner,
       seamCount:seamAudit.count,
+      seamClosedCount:seamAudit.closedCount,
       seamRows:seamAudit.rows,
       pavingName:paving.name,
       pavingVisible:paving.visible,
@@ -65,9 +66,10 @@ test('pit lane is clear, service apron is paved, and rebuilt pit building is vis
   expect(r.buildingSigns).toBe(10);
   expect(r.buildingFrontBlockers,JSON.stringify(r.buildingRows)).toBe(0);
   expect(r.buildingRows.every(x=>x.opening&&x.visible&&x.visibleSolids>=9&&x.signs===1&&x.frontBlockers===0&&x.clearance>6&&x.workEdgeToGarageFront>4.4),JSON.stringify(r.buildingRows)).toBeTruthy();
-  expect(r.seamOwner).toBe('runtime-pit-building-seams-v1');
+  expect(r.seamOwner).toBe('runtime-pit-building-seams-v2');
   expect(r.seamCount).toBe(9);
-  expect(r.seamRows.every(x=>x.centreDistance>17&&x.centreDistance<19&&x.seamWidth>=.85),JSON.stringify(r.seamRows)).toBeTruthy();
+  expect(r.seamClosedCount).toBe(9);
+  expect(r.seamRows.every(x=>x.closedWedge&&x.frontGap>0&&x.frontGap<2&&x.backGap>0&&x.backGap<2.5),JSON.stringify(r.seamRows)).toBeTruthy();
   expect(r.pavingName).toBe('PIT_SERVICE_APRON_PAVING_RUNTIME');
   expect(r.pavingVisible).toBeTruthy();
   expect(r.floorCount).toBe(10);
@@ -82,6 +84,7 @@ test('pit lane is clear, service apron is paved, and rebuilt pit building is vis
   expect(r.circuitAudit?.persistentPitBuildingVisibleBays,JSON.stringify(r)).toBe(10);
   expect(r.circuitAudit?.persistentPitBuildingFrontBlockers,JSON.stringify(r)).toBe(0);
   expect(r.circuitAudit?.persistentPitBuildingSeams,JSON.stringify(r)).toBe(9);
+  expect(r.circuitAudit?.persistentPitBuildingClosedSeams,JSON.stringify(r)).toBe(9);
   expect(r.circuitAudit?.servicePavingFloors,JSON.stringify(r)).toBe(10);
   expect(r.circuitAudit?.servicePavingTopHits,JSON.stringify(r)).toBe(150);
 
