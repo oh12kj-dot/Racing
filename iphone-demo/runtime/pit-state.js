@@ -4,17 +4,28 @@ export function createPitStateMachine(W,R){
   const spec=resolvePitRuntimeSpec(W),QUEUE_GAP_METERS=spec.queueGapMeters,QUEUE_TRIGGER_METERS=spec.queueTriggerMeters,RELEASE_BEHIND_METERS=spec.releaseBehindMeters,RELEASE_AHEAD_METERS=spec.releaseAheadMeters,WORKING_EXIT_BLEND_METERS=spec.workingExitBlendMeters;
   const serviceTime=spec.serviceTime;
   let arrivalSerial=0;
-  const metrics={queued:0,released:0,services:0,legacyStopsRejected:0,doubleStacks:0,invariantRepairs:0,releaseWaits:0,safeReleases:0,serviceCompletions:0,stallRecoveries:0};
+  const metrics={queued:0,released:0,services:0,legacyStopsRejected:0,doubleStacks:0,invariantRepairs:0,releaseWaits:0,safeReleases:0,serviceCompletions:0,stallRecoveries:0,earlyEntriesDeferred:0,pitEntriesActivated:0};
   const wrapS=s=>{const total=W.total||1;return((s%total)+total)%total;};
   const pitMeters=s=>(W.pitUnwrappedFraction?.(s)??(wrapS(s)/(W.total||1)))*(W.total||1);
   const forwardDelta=(a,b)=>{const total=W.total||1;return((wrapS(b)-wrapS(a))%total+total)%total;};
+  const inPitWindow=c=>typeof W.inPitWindow==='function'?!!W.inPitWindow(c.s):true;
 
   function poseTrack(c){if(!c?.mesh)return;const q=W.sample(c.s,c.lane);c.mesh.position.copy(q.p);c.mesh.position.y+=.12;c.mesh.rotation.y=Math.atan2(q.t.x,q.t.z);}
-  function posePit(c,state=c.pitState){if(!c?.mesh)return;const q=W.pitPose?.(c.s,c.teamId,state);if(!q)return;c.mesh.position.copy(q.p);c.mesh.position.y+=.12;c.mesh.rotation.y=q.rotationY;}
+  function posePit(c,state=c.pitState){if(!c?.mesh)return;if(state==='ENTRY'&&!inPitWindow(c)){poseTrack(c);return;}const q=W.pitPose?.(c.s,c.teamId,state);if(!q)return;c.mesh.position.copy(q.p);c.mesh.position.y+=.12;c.mesh.rotation.y=q.rotationY;}
   function poseWorking(c){if(!c?.mesh)return;const q=W.pitWorkingPose?.(c.s)||W.pitPose?.(c.s,c.teamId,'ENTRY');if(!q)return;c.mesh.position.copy(q.p);c.mesh.position.y+=.12;c.mesh.rotation.y=q.rotationY;}
   function ensureArrival(c){
     if(c.pitState!=='NONE'&&c._runtimePitArrival==null)c._runtimePitArrival=++arrivalSerial;
+    if(c.pitState==='NONE'&&c._runtimePitPending){c._runtimePitPhase='PIT_APPROACH';return;}
     if(c.pitState==='NONE'&&c._runtimePitArrival!=null&&c._runtimePitPhase!=='MERGE'){c._runtimePitArrival=null;c._runtimePitQueued=false;c._runtimeQueueS=null;c._runtimeReleaseWait=false;c._runtimePitPhase='TRACK';}
+  }
+  function deferEarlyEntry(c){
+    if(c.retired||c.pitState!=='ENTRY'||inPitWindow(c))return false;
+    const fresh=!c._runtimePitPending;c._runtimePitPending=true;c.pitState='NONE';c.pitTimer=0;c._pitStopInitial=0;c._runtimePitPhase='PIT_APPROACH';c.pitLaneStatus='PIT APPROACH';poseTrack(c);if(fresh)metrics.earlyEntriesDeferred++;return true;
+  }
+  function activatePendingEntry(c){
+    if(!c._runtimePitPending||c.retired||c.pitState!=='NONE'||!inPitWindow(c))return false;
+    const off=Math.abs(Number(W.pitOffsetAtS?.(c.s))||0);if(W.inPitSpeedZone?.(c.s)||off>4.5)return false;
+    c._runtimePitPending=false;c.pitState='ENTRY';c.pitTimer=0;c._runtimePitPhase='PIT_ENTRY';c.pitLaneStatus='PIT ENTRY';metrics.pitEntriesActivated++;return true;
   }
   function removeFreshPitStopEvent(carId,eventStart){if(!Array.isArray(R.events))return;for(let i=R.events.length-1;i>=eventStart;i--){const e=R.events[i];if(e?.carId===carId&&e?.type==='PIT_STOP')R.events.splice(i,1);}}
   function serviceOccupants(){
@@ -73,6 +84,7 @@ export function createPitStateMachine(W,R){
   }
   function ensurePitMotion(c,b,dt){
     if(c.retired||c._runtimePitQueued||c._runtimeReleaseWait||!b||!['ENTRY','EXIT'].includes(c.pitState))return false;
+    if(c.pitState==='ENTRY'&&!inPitWindow(c))return false;
     const step=Math.max(0,Number(dt)||0);if(step<=0)return false;
     const beforeS=Number.isFinite(Number(b.s))?Number(b.s):c.s,progress=forwardDelta(beforeS,c.s),expected=Math.max(0,Number(b.v)||0,Number(c.v)||0)*step;
     if(progress>=Math.max(.015,expected*.08))return false;
@@ -82,6 +94,7 @@ export function createPitStateMachine(W,R){
   function repairInvariant(c){
     if(c.retired)return;let repaired=false;
     if(c._runtimePitQueued&&c.pitState!=='ENTRY'){c.pitState='ENTRY';repaired=true;}if(c._runtimeReleaseWait&&c.pitState!=='EXIT'){c.pitState='EXIT';repaired=true;}
+    if(c._runtimePitPending&&c.pitState!=='NONE'){c._runtimePitPending=false;repaired=true;}
     if(c.pitState==='STOP'){const bs=W.pitBoxS?.(c.teamId);if(Number.isFinite(bs)&&Math.abs(wrapS(c.s)-wrapS(bs))>.25){c.s=bs;repaired=true;}if((c.v||0)!==0){c.v=0;repaired=true;}}
     if(c.pitState==='NONE'&&c._runtimePitQueued){c._runtimePitQueued=false;c._runtimeQueueS=null;repaired=true;}if(repaired)metrics.invariantRepairs++;
   }
@@ -89,16 +102,22 @@ export function createPitStateMachine(W,R){
   function beforeUpdate(dt){
     const snapshot=[];
     for(const c of R.cars){
-      ensureArrival(c);
+      if(c.pitState==='ENTRY'&&!inPitWindow(c))deferEarlyEntry(c);
+      activatePendingEntry(c);ensureArrival(c);
       if(c._runtimeReleaseWait){if(releaseBlocked(c))holdRelease(c,false);else releaseToFastLane(c);}
-      snapshot[c.id]={state:c.pitState,v:c.v||0,s:c.s||0,pitTimer:Number(c.pitTimer)||0,phase:c._runtimePitPhase||'TRACK',releaseWait:!!c._runtimeReleaseWait};
-      if(c.pitState==='ENTRY'){if(!c._runtimePitPhase||c._runtimePitPhase==='TRACK')c._runtimePitPhase=W.inPitSpeedZone?.(c.s)?'FAST_LANE':'PIT_ENTRY';if(!W.inPitWindow?.(c.s))c.laneTarget=Math.max(c.laneTarget||0,3.8);}
+      snapshot[c.id]={state:c.pitState,v:c.v||0,s:c.s||0,pitTimer:Number(c.pitTimer)||0,phase:c._runtimePitPhase||'TRACK',releaseWait:!!c._runtimeReleaseWait,pending:!!c._runtimePitPending};
+      if(c.pitState==='ENTRY'&&inPitWindow(c)){if(!c._runtimePitPhase||['TRACK','PIT_APPROACH'].includes(c._runtimePitPhase))c._runtimePitPhase=W.inPitSpeedZone?.(c.s)?'FAST_LANE':'PIT_ENTRY';}
+      else if(c._runtimePitPending){c._runtimePitPhase='PIT_APPROACH';c.pitLaneStatus='PIT APPROACH';}
     }
     const occupied=serviceOccupants();for(const c of R.cars){if(c.retired||!c._runtimePitQueued)continue;if(occupied.has(c.teamId??0))holdQueue(c);else releaseQueue(c);}return snapshot;
   }
 
   function afterUpdate(dt,snapshot,eventStart){
-    for(const c of R.cars){ensureArrival(c);const b=snapshot[c.id]||{state:'NONE',v:c.v||0};rejectPrematureLegacyStop(c,b.state,b.v,dt,eventStart);}
+    for(const c of R.cars){
+      const b=snapshot[c.id]||{state:'NONE',v:c.v||0};
+      if(c.pitState==='ENTRY'&&!inPitWindow(c)){deferEarlyEntry(c);ensureArrival(c);continue;}
+      ensureArrival(c);rejectPrematureLegacyStop(c,b.state,b.v,dt,eventStart);
+    }
     for(const c of R.cars){const b=snapshot[c.id];if(b?.state==='STOP')advanceService(c,b,dt,eventStart);}
 
     const stopGroups=new Map();for(const c of R.cars){if(c.retired||c.pitState!=='STOP')continue;const team=c.teamId??0,list=stopGroups.get(team)||[];list.push(c);stopGroups.set(team,list);}
@@ -106,10 +125,10 @@ export function createPitStateMachine(W,R){
 
     let occupied=serviceOccupants();
     for(const c of R.cars){
-      if(c.retired||c.pitState!=='ENTRY')continue;const blocker=occupied.get(c.teamId??0),dist=W.pitDistanceToBox?.(c.s,c.teamId);
+      if(c.retired||c.pitState!=='ENTRY')continue;if(!inPitWindow(c)){deferEarlyEntry(c);continue;}const blocker=occupied.get(c.teamId??0),dist=W.pitDistanceToBox?.(c.s,c.teamId);
       if(c._runtimePitQueued){if(blocker)holdQueue(c,eventStart);else releaseQueue(c);continue;}
       if(blocker&&Number.isFinite(dist)&&dist<=QUEUE_TRIGGER_METERS&&dist>-2.5){queue(c,false,eventStart);continue;}
-      c._runtimePitPhase=Number.isFinite(dist)&&dist<24?'WORKING_APPROACH':'FAST_LANE';c.pitLaneStatus=c._runtimePitPhase==='WORKING_APPROACH'?'WORKING':'FAST LANE';
+      c._runtimePitPhase=Number.isFinite(dist)&&dist<24?'WORKING_APPROACH':(W.inPitSpeedZone?.(c.s)?'FAST_LANE':'PIT_ENTRY');c.pitLaneStatus=c._runtimePitPhase==='WORKING_APPROACH'?'WORKING':c._runtimePitPhase==='PIT_ENTRY'?'PIT ENTRY':'FAST LANE';
     }
     occupied=serviceOccupants();for(const c of R.cars){if(maybeStartService(c,dt,occupied))occupied.set(c.teamId??0,c);}
 
@@ -125,16 +144,18 @@ export function createPitStateMachine(W,R){
           c.pitLaneStatus=c._runtimePitPhase==='FAST_LANE_EXIT'?'PIT EXIT':'RELEASE';posePit(c,'EXIT');
         }else{c._runtimePitPhase='FAST_LANE_EXIT';c.pitLaneStatus='PIT EXIT';posePit(c,'EXIT');}
       }else if(c.pitState==='ENTRY'){
-        if(c._runtimePitQueued)holdQueue(c,eventStart);else posePit(c,'ENTRY');
+        if(!inPitWindow(c)){deferEarlyEntry(c);}
+        else if(c._runtimePitQueued)holdQueue(c,eventStart);else posePit(c,'ENTRY');
       }else if(b.state==='EXIT'&&c.pitState==='NONE'&&!c.retired){
         const uf=W.pitUnwrappedFraction?.(c.s),exit=spec.exitEndUF;
         if(Number.isFinite(uf)&&uf<exit){c.pitState='EXIT';c.v=Math.min(Math.max(b.v||0,8),W.pitSpeedLimit||22.22);c._runtimePitPhase='FAST_LANE_EXIT';c.pitLaneStatus='PIT EXIT';posePit(c,'EXIT');}
         else{c._runtimePitPhase='MERGE';c.lane=spec.mergeTrackOffset;c.laneTarget=spec.mergeLaneTarget;c.pitLaneStatus='MERGE';poseTrack(c);}
       }else if(c.pitState==='NONE'&&c._runtimePitPhase==='MERGE'){c._runtimePitPhase='TRACK';c._runtimePitArrival=null;c._runtimePitQueued=false;c._runtimeQueueS=null;c._runtimeReleaseWait=false;c.pitLaneStatus='TRACK';}
+      else if(c.pitState==='NONE'&&c._runtimePitPending){c._runtimePitPhase='PIT_APPROACH';c.pitLaneStatus='PIT APPROACH';poseTrack(c);}
       repairInvariant(c);
     }
   }
 
-  function diagnostics(){return{owner:'runtime',spec:{...spec,serviceTime:{...spec.serviceTime}},metrics:{...metrics},cars:R.cars.filter(c=>c.pitState!=='NONE'||c._runtimePitPhase==='MERGE').map(c=>({id:c.id,team:c.teamId,state:c.pitState,phase:c._runtimePitPhase||'TRACK',queued:!!c._runtimePitQueued,releaseWait:!!c._runtimeReleaseWait,s:c.s,v:c.v,status:c.pitLaneStatus,pitTimer:c.pitTimer}))};}
+  function diagnostics(){return{owner:'runtime',spec:{...spec,serviceTime:{...spec.serviceTime}},metrics:{...metrics},cars:R.cars.filter(c=>c.pitState!=='NONE'||c._runtimePitPhase==='MERGE'||c._runtimePitPending).map(c=>({id:c.id,team:c.teamId,state:c.pitState,phase:c._runtimePitPhase||'TRACK',queued:!!c._runtimePitQueued,releaseWait:!!c._runtimeReleaseWait,pending:!!c._runtimePitPending,s:c.s,v:c.v,status:c.pitLaneStatus,pitTimer:c.pitTimer}))};}
   return{beforeUpdate,afterUpdate,diagnostics,get metrics(){return{...metrics}}};
 }
