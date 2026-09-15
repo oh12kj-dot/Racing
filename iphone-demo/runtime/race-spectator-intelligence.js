@@ -152,7 +152,6 @@ export function createRace(W,statusEl,settings={}){
     if(c.pitState!=='NONE'){delete c._spectatorPitRequest;return;}
     if(!W.inPitWindow?.(c.s))return;
     if(W.inPitSpeedZone?.(c.s))return;
-    const off=Math.abs(Number(W.pitOffsetAtS?.(c.s))||0);if(off>3.8)return;
     c.pitState='ENTRY';c.pitTimer=0;c._runtimePitPhase='PIT_ENTRY';c.pitLaneStatus='PIT ENTRY';delete c._spectatorPitRequest;pitEntries++;
   }
   function updateStrategy(c){

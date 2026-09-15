@@ -23,13 +23,16 @@ test('pit intent stays on the circuit until the physical pit entry',async({page}
     const q=W.sample(c.s,c.lane),pit=W.pitPose(c.s,c.teamId,'ENTRY');
     const dx=c.mesh.position.x-q.p.x,dz=c.mesh.position.z-q.p.z;
     const pdx=c.mesh.position.x-pit.p.x,pdz=c.mesh.position.z-pit.p.z;
-    return{supported:true,inPit:W.inPitWindow(c.s),trackDistance:Math.hypot(dx,dz),pitDistance:Math.hypot(pdx,pdz),lane:c.lane,diag:R.pitTrafficIsolation};
+    return{supported:true,inPit:W.inPitWindow(c.s),trackDistance:Math.hypot(dx,dz),pitDistance:Math.hypot(pdx,pdz),lane:c.lane,state:c.pitState,pending:!!c._runtimePitPending,phase:c._runtimePitPhase,pitStateMetrics:R.pitStateDiagnostics?.metrics||{},diag:R.pitTrafficIsolation};
   });
   expect(r.supported).toBeTruthy();
   expect(r.inPit).toBeFalsy();
   expect(r.trackDistance,JSON.stringify(r)).toBeLessThan(.35);
   expect(r.pitDistance,JSON.stringify(r)).toBeGreaterThan(2.5);
-  expect(r.diag?.preEntryCorrections||0).toBeGreaterThan(0);
+  expect(r.state,JSON.stringify(r)).toBe('NONE');
+  expect(r.pending,JSON.stringify(r)).toBeTruthy();
+  expect(r.phase,JSON.stringify(r)).toBe('PIT_APPROACH');
+  expect(r.pitStateMetrics?.earlyEntriesDeferred||0).toBeGreaterThan(0);
 });
 
 test('pit longitudinal coordinate stays continuous across the entry line',async({page})=>{
@@ -118,7 +121,7 @@ test('fast-lane traffic passes a stationary working-lane service car',async({pag
     stopped.s=box;stopped.lap=1;stopped.v=0;stopped.pitState='STOP';stopped.pitTimer=99;stopped._pitStopInitial=99;stopped._runtimePitPhase='SERVICE';stopped._runtimePitQueued=false;stopped._runtimeReleaseWait=false;stopped.lane=3.7;stopped.laneTarget=3.7;
     passer.s=wrap(box-7);passer.lap=1;passer.v=18;passer.pitState='ENTRY';passer.pitTimer=0;passer._runtimePitPhase='FAST_LANE';passer._runtimePitQueued=false;passer._runtimeReleaseWait=false;passer.lane=3.7;passer.laneTarget=3.7;passer.baseMax=72;passer.max=72;passer.accel=7;passer.brake=16.5;
     const before=passer.s;
-    R.update(.5);
+    for(let i=0;i<10;i++)R.update(.05);
     const delta=((passer.s-before)%total+total)%total;
     const stopDelta=Math.abs(((stopped.s-box+total*.5)%total)-total*.5);
     const fastPose=W.pitFastPose(passer.s),workPose=W.pitPose(stopped.s,stopped.teamId,'STOP');
