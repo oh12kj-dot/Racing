@@ -15,13 +15,16 @@ export function enhanceVisuals(W,settings={},mobile=false){
   }
   function setCaster(car,on){
     const root=car?.mesh;if(!root)return;
-    const contact=root.userData?.contactShadow,meshes=root.userData?.hybridShadowMeshes||collect(root);
+    // Refresh the mesh list whenever the caster selection changes. Additional
+    // procedural/LOD meshes can be attached after makeCar(), so a creation-time
+    // cache alone can leave one stale castShadow=true mesh on every vehicle.
+    const contact=root.userData?.contactShadow,meshes=collect(root);
     for(const m of meshes)m.castShadow=!!on;
     if(contact)contact.castShadow=false;
     root.userData.vehicleShadowPolicy=on?'hybrid-near-real+contact':'hybrid-contact-only';
   }
   if(baseMakeCar){
-    W.makeCar=(color,type)=>{const car=baseMakeCar(color,type);collect(car);setCaster({mesh:car},false);return car;};
+    W.makeCar=(color,type)=>{const car=baseMakeCar(color,type);setCaster({mesh:car},false);return car;};
   }
 
   W.updateHybridVehicleShadows=(cars=[],force=false)=>{
