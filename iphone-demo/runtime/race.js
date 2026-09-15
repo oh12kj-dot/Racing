@@ -12,10 +12,13 @@ export function createRace(W,statusEl,settings={}){
   const generation={id:`run-${Date.now().toString(36)}`,startedAt:Date.now(),persistent:true,maxGenerations:LOG_POLICY.persistedGenerations};
   const pit=createPitStateMachine(W,R),barrierSafety=createBarrierSafety(W,R),radioVariety=createRadioVariety(R),prevDamage=[],seenBarrier=new Set();
   const trim=(arr,max)=>{if(Array.isArray(arr)&&arr.length>max)arr.splice(0,arr.length-max);};
+  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
   const bandDamage=kmh=>kmh<15?.018:kmh<38?.055:kmh<72?.15:kmh<115?.32:kmh<160?.55:.88;
   const barrierKey=x=>`${x.t}:${x.carId}:${Math.round(x.impactKmh||0)}:${x.zone||''}`;
   const workingPhases=new Set(['WORKING_APPROACH','QUEUE','SERVICE','RELEASE_WAIT','WORKING_EXIT']);
   const trafficIsolation={lastFast:0,lastWorking:0,preEntryCorrections:0};
+  let presentedCars=new Set();
+  const pitPresentation={owner:'runtime-pit-presentation-v1',activeCars:0,activeTeams:0,resets:0,completedCycles:0,lastDetails:[]};
   function enforceRetention(){trim(R.events,LOG_POLICY.events);trim(R.radio,LOG_POLICY.radio);trim(R.dynamicsTelemetry,LOG_POLICY.dynamicsSamples);trim(R.physicalCrashHistory,LOG_POLICY.crashHistory);}
   function clearDiagnostics(){if(Array.isArray(R.dynamicsTelemetry))R.dynamicsTelemetry.length=0;if(Array.isArray(R.physicalCrashHistory))R.physicalCrashHistory.length=0;}
   function applyBarrierMaterials(){
@@ -31,6 +34,28 @@ export function createRace(W,statusEl,settings={}){
       }
     }
     if(seenBarrier.size>140){const live=new Set(h.filter(x=>x?.type==='BARRIER').map(barrierKey));for(const k of seenBarrier)if(!live.has(k))seenBarrier.delete(k);}
+  }
+
+  // Presentation is synchronized after runtime/pit-state has finalized the frame.
+  // Legacy race layers can still call historical crew helpers during baseUpdate(),
+  // but this authoritative pass always wins. Once STOP -> EXIT happens, the crew
+  // gets an empty detail set and the serviced car's temporary wheel pose is reset.
+  function syncPitPresentation(dt){
+    const details=[],activeTeams=new Set(),nextCars=new Set();
+    for(const c of R.cars){
+      const active=!c.retired&&c.pitState==='STOP'&&c._runtimePitPhase==='SERVICE';
+      if(active){
+        const initial=Math.max(.001,Number(c._pitStopInitial)||Number(c.pitTimer)||.001),left=clamp(Number(c.pitTimer)||0,0,initial),progress=clamp(1-left/initial,0,1);
+        const phase=progress<.16?'ARRIVE':progress<.34?'JACKS':progress<.70?'TYRES':progress<.86?'DROP':'CLEAR';
+        details.push({teamId:c.teamId??0,carId:c.id,progress,phase});activeTeams.add(c.teamId??0);nextCars.add(c.id);W.animatePitStopCar?.(c,progress);
+      }else if(presentedCars.has(c.id)){
+        W.resetPitStopCar?.(c);pitPresentation.resets++;
+        if(c.pitState!=='STOP')pitPresentation.completedCycles++;
+      }
+    }
+    W.updateDetailedPitCrews?.(details,Math.max(0,Number(dt)||0));
+    W.updatePitCrews?.(activeTeams,Math.max(0,Number(dt)||0));
+    presentedCars=nextCars;pitPresentation.activeCars=nextCars.size;pitPresentation.activeTeams=activeTeams.size;pitPresentation.lastDetails=details.map(x=>({...x}));
   }
 
   // The mature race core still models every car in the circuit's narrow logical
@@ -74,7 +99,7 @@ export function createRace(W,statusEl,settings={}){
     const pitDistanceToBox=W.pitDistanceToBox;W.pitDistanceToBox=null;
     try{baseUpdate(dt);}finally{W.pitDistanceToBox=pitDistanceToBox;restorePitTraffic(isolated);}
     applyBarrierMaterials();
-    pit.afterUpdate(dt,snapshot,eventStart);restorePreEntryTrackVisual();barrierSafety.update();radioVariety.update();enforceRetention();
+    pit.afterUpdate(dt,snapshot,eventStart);syncPitPresentation(dt);restorePreEntryTrackVisual();barrierSafety.update();radioVariety.update();enforceRetention();
   }
 
   return new Proxy(R,{get(target,prop){
@@ -83,11 +108,12 @@ export function createRace(W,statusEl,settings={}){
     if(prop==='logGeneration')return generation;
     if(prop==='clearDiagnostics')return clearDiagnostics;
     if(prop==='pitStateDiagnostics')return pit.diagnostics();
+    if(prop==='pitPresentationDiagnostics')return{...pitPresentation,lastDetails:pitPresentation.lastDetails.map(x=>({...x}))};
     if(prop==='pitTrafficIsolation')return{...trafficIsolation};
     if(prop==='barrierSafetyDiagnostics')return barrierSafety.diagnostics();
     if(prop==='barrierSafetyController')return barrierSafety;
     if(prop==='radioVarietyDiagnostics')return radioVariety.diagnostics();
-    if(prop==='runtimeSafety')return{pit:pit.diagnostics(),barrier:barrierSafety.diagnostics(),pitTraffic:{...trafficIsolation}};
+    if(prop==='runtimeSafety')return{pit:pit.diagnostics(),pitPresentation:{...pitPresentation},barrier:barrierSafety.diagnostics(),pitTraffic:{...trafficIsolation}};
     return Reflect.get(target,prop,target);
   }});
 }
