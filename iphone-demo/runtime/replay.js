@@ -4,7 +4,7 @@ export function createReplay(W,R,{enabled=true}={}){
   const label=document.createElement('div');label.style.cssText='display:none;position:fixed;z-index:72;left:14px;top:max(112px,calc(env(safe-area-inset-top) + 106px));padding:5px 9px;border-radius:5px;background:#9b1212e8;border:1px solid #ffffff55;color:#fff;font:900 10px -apple-system,sans-serif;letter-spacing:.08em;pointer-events:none';document.body.appendChild(label);
 
   function snapshot(){
-    const t=Number(R.race?.t)||0,cars=R.cars.map(c=>({id:c.id,x:c.mesh?.position?.x||0,y:c.mesh?.position?.y||0,z:c.mesh?.position?.z||0,ry:c.mesh?.rotation?.y||0,visible:c.mesh?.visible!==false}));
+    const t=Number(R.race?.t)||0,cars=R.cars.map(c=>({id:c.id,s:Number(c.s)||0,lane:Number(c.lane)||0,x:c.mesh?.position?.x||0,y:c.mesh?.position?.y||0,z:c.mesh?.position?.z||0,ry:c.mesh?.rotation?.y||0,visible:c.mesh?.visible!==false}));
     buffer.push({t,cars});while(buffer.length&&t-buffer[0].t>maxHistory)buffer.shift();
   }
   function scanEvents(){
@@ -24,10 +24,10 @@ export function createReplay(W,R,{enabled=true}={}){
   }
   function apply(){
     const frame=currentFrame();if(!frame||saved)return false;saved=[];const map=new Map(frame.cars.map(x=>[x.id,x]));
-    for(const c of R.cars){if(!c.mesh)continue;const r=map.get(c.id);saved.push({mesh:c.mesh,x:c.mesh.position.x,y:c.mesh.position.y,z:c.mesh.position.z,ry:c.mesh.rotation.y,visible:c.mesh.visible});if(!r)continue;c.mesh.position.set(r.x,r.y,r.z);c.mesh.rotation.y=r.ry;c.mesh.visible=r.visible;}
+    for(const c of R.cars){if(!c.mesh)continue;const r=map.get(c.id);saved.push({car:c,mesh:c.mesh,s:c.s,lane:c.lane,x:c.mesh.position.x,y:c.mesh.position.y,z:c.mesh.position.z,ry:c.mesh.rotation.y,visible:c.mesh.visible});if(!r)continue;c.s=r.s;c.lane=r.lane;c.mesh.position.set(r.x,r.y,r.z);c.mesh.rotation.y=r.ry;c.mesh.visible=r.visible;}
     return true;
   }
-  function restore(){if(!saved)return;for(const x of saved){x.mesh.position.set(x.x,x.y,x.z);x.mesh.rotation.y=x.ry;x.mesh.visible=x.visible;}saved=null;}
+  function restore(){if(!saved)return;for(const x of saved){x.car.s=x.s;x.car.lane=x.lane;x.mesh.position.set(x.x,x.y,x.z);x.mesh.rotation.y=x.ry;x.mesh.visible=x.visible;}saved=null;}
   function stop(){restore();active=null;pending=null;label.style.display='none';}
   return{capture,apply,restore,stop,get active(){return!!active},get event(){return active?.event||pending?.event||null},get focusId(){return active?.event?.carId??null},get bufferedSeconds(){return buffer.length?buffer[buffer.length-1].t-buffer[0].t:0},get diagnostics(){return{owner:'runtime-replay-v1',active:!!active,pending:!!pending,frames:buffer.length,bufferedSeconds:this.bufferedSeconds,lastReplay}}};
 }
