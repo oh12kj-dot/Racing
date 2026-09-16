@@ -67,8 +67,9 @@ export function createTrajectoryController(W,R,{mobile=false}={}){
     if((c.pitState==='ENTRY'&&W.inPitWindow?.(c.s))||c.pitState==='EXIT'){
       st.lane=Number(c.lane)||st.lane;st.laneV=0;st.laneA=0;st.yawError=0;st.steer=0;return;
     }
-    if(c.spinState==='SLIDE'){
-      st.lane=Number(c.lane)||st.lane;st.laneV=clamp(st.laneV,-5,5);st.yawError=clamp(Number(c.slipAngle)||0,-.65,.65);trackPose(c,st.yawError);return;
+    if(String(c.spinState||'NONE')!=='NONE'){
+      st.lane=Number(c.lane)||st.lane;st.laneV=0;st.laneA=0;st.yawError=clamp(Number(c.slipAngle)||0,-1.55,1.55);st.steer=0;st.steerRate=0;st.source='PHYSICAL_INCIDENT';
+      c.steeringAngle=Number(c.counterSteer)||0;c.steeringRate=0;c.yawError=st.yawError;c.trajectorySource='PHYSICAL_INCIDENT';return;
     }
     const request=intent(c);let target=safetyConstrain(c,request.target);st.target=target;st.source=request.source;metrics.arbitrations++;
     const v=Math.max(1,Number(c.v)||0),skill=clamp(Number(c.driver?.racecraft)||.84,.65,1),cons=clamp(Number(c.driverProfile?.consistency)||1,.90,1.08),aggr=clamp(Number(c.driver?.aggression)||.6,.35,.97);
