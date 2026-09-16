@@ -24,12 +24,24 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
     }
   }
   const profiles={OPTIMAL:new Float32Array(opt),ATTACK_LEFT:new Float32Array(count),ATTACK_RIGHT:new Float32Array(count),DEFEND:new Float32Array(count),WET:new Float32Array(count)};
+  let wetSideState=-1;
   for(let i=0;i<count;i++){
     const kNow=curv[i],kNext=curv[wrap(i+Math.max(1,Math.round(45/step)))],corner=clamp((Math.abs(kNow)+Math.abs(kNext))*95,0,1),straight=1-corner;
     profiles.ATTACK_LEFT[i]=clamp(opt[i]-(.55+.60*straight),-3.3,3.3);
     profiles.ATTACK_RIGHT[i]=clamp(opt[i]+(.55+.60*straight),-3.3,3.3);
     const inside=Math.sign(kNext||kNow||1),defendBias=inside*(.42+.48*straight);profiles.DEFEND[i]=clamp(opt[i]+defendBias,-3.2,3.2);
-    const wetSide=-Math.sign(kNext||kNow||((i&1)?1:-1)),wetBias=wetSide*(.55+.35*corner);profiles.WET[i]=clamp(opt[i]+wetBias,-3.25,3.25);
+    const wetReference=Math.abs(kNext)>.0011?kNext:Math.abs(kNow)>.0011?kNow:0;
+    if(wetReference)wetSideState=-Math.sign(wetReference);
+    const wetBias=wetSideState*(.55+.35*corner);profiles.WET[i]=clamp(opt[i]+wetBias,-3.25,3.25);
+  }
+  for(let pass=0;pass<2;pass++){
+    for(let i=0;i<count;i++)tmp[i]=profiles.WET[wrap(i-1)]*.18+profiles.WET[i]*.64+profiles.WET[wrap(i+1)]*.18;
+    profiles.WET.set(tmp);
+  }
+  const wetMaxDelta=clamp(step*.055,.16,.28);
+  for(let pass=0;pass<2;pass++){
+    for(let i=0;i<count;i++){const prev=profiles.WET[wrap(i-1)];profiles.WET[i]=clamp(profiles.WET[i],prev-wetMaxDelta,prev+wetMaxDelta);}
+    for(let i=count-1;i>=0;i--){const next=profiles.WET[wrap(i+1)];profiles.WET[i]=clamp(profiles.WET[i],next-wetMaxDelta,next+wetMaxDelta);}
   }
   const curvatureProfiles={};
   function buildCurvature(line){
@@ -47,6 +59,6 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
   W.racingCurvatureAt=s=>field(curvatureProfiles.OPTIMAL,s);
   W.racingLineFor=(s,mode='OPTIMAL')=>field(profiles[modeName(mode)],s);
   W.racingCurvatureFor=(s,mode='OPTIMAL')=>field(curvatureProfiles[modeName(mode)],s);
-  W.multiCornerLineDiagnostics={owner:'runtime-multi-corner-line-v1',count,step,horizonMeters:125,passes:4,modes:Object.keys(profiles)};
+  W.multiCornerLineDiagnostics={owner:'runtime-multi-corner-line-v2',count,step,horizonMeters:125,passes:4,wetContinuityDelta:wetMaxDelta,modes:Object.keys(profiles)};
   return W;
 }

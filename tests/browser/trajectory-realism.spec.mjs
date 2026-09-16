@@ -35,3 +35,22 @@ test('fallback OBB contact audit latches one continuous overlap',()=>{
   const contacts=R.events.filter(e=>e.type==='CONTACT'&&e.data?.trajectoryAudit);expect(contacts).toHaveLength(1);expect(T.diagnostics().contactLatches).toBe(1);
   b.s=120;b.mesh.position.z=120;const snap=T.capture();R.race.t+=.016;T.update(.016,snap);expect(T.diagnostics().contactLatches).toBe(0);
 });
+
+test('wet racing line stays continuous instead of alternating across straights',async({page})=>{
+  await page.goto('/iphone-demo/index.html?runtimeTest=1',{waitUntil:'domcontentloaded'});
+  await page.waitForFunction(()=>!!window.__RACING_WORLD__||document.querySelector('#status')?.textContent==='ERROR',null,{timeout:30000});
+  const result=await page.evaluate(()=>{
+    const W=window.__RACING_WORLD__,status=document.querySelector('#status')?.textContent||'',error=document.querySelector('#error')?.textContent||'';
+    if(!W?.racingLineFor)return{supported:false,status,error};
+    const d=W.multiCornerLineDiagnostics||{},count=Math.max(1,Number(d.count)||1200),step=(Number(d.step)||((W.total||1)/count));
+    let maxJump=0,maxStraightJump=0,largeStraightJumps=0;
+    for(let i=0;i<count;i++){
+      const s=i*step,next=(i+1)*step,a=Number(W.racingLineFor(s,'WET'))||0,b=Number(W.racingLineFor(next,'WET'))||0,jump=Math.abs(b-a),k=Math.abs(Number(W.racingCurvatureAt?.(s))||0);
+      maxJump=Math.max(maxJump,jump);if(k<.0011){maxStraightJump=Math.max(maxStraightJump,jump);if(jump>.36)largeStraightJumps++;}
+    }
+    return{supported:true,status,error,maxJump,maxStraightJump,largeStraightJumps,allowed:Number(d.wetContinuityDelta)||null,owner:d.owner||''};
+  });
+  expect(result.status,result.error||JSON.stringify(result)).not.toBe('ERROR');expect(result.supported).toBeTruthy();
+  expect(result.owner).toBe('runtime-multi-corner-line-v2');expect(result.largeStraightJumps,JSON.stringify(result)).toBe(0);
+  expect(result.maxStraightJump,JSON.stringify(result)).toBeLessThan(.31);expect(result.maxJump,JSON.stringify(result)).toBeLessThan(.31);
+});
