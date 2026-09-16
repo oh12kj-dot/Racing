@@ -1,4 +1,4 @@
-export {buildWorld} from './world-spectator-atmosphere.js';
+export {buildWorld} from './world-trajectory-lines.js';
 export {createRace} from './race-performance.js';
 export {createAudio} from './audio-race-presence.js';
 export {createUI} from './ui-performance.js';

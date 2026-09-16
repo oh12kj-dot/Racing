@@ -6,9 +6,9 @@ export function createVehicleMotion(W,R,{mobile=false}={}){
     for(const c of R.cars||[]){
       if(!c?.mesh||c.retired)continue;const body=bodyFor(c);if(!body)continue;
       let s=states.get(c.id);if(!s){s={pitch:0,roll:0,heave:0,prevV:Number(c.v)||0,baseX:body.rotation.x||0,baseZ:body.rotation.z||0,baseY:body.position.y||0,body};states.set(c.id,s);}if(s.body!==body){s.body=body;s.baseX=body.rotation.x||0;s.baseZ=body.rotation.z||0;s.baseY=body.position.y||0;s.pitch=0;s.roll=0;s.heave=0;s.prevV=Number(c.v)||0;}
-      const v=Math.max(0,Number(c.v)||0),dv=(v-s.prevV)/Math.max(.001,frameDt),longG=clamp(dv/9.81,-2.2,1.4),brake=clamp(Number(c.racingBrake??c.brakeVisual)||0,0,1),throttle=clamp(Number(c.racingThrottle)||0,0,1),k=Number(W.racingCurvatureAt?.(c.s)??W.curvatureAt?.(c.s))||0;
-      const latG=clamp(v*v*k/9.81,-3.8,3.8),slip=clamp(Number(c.slipAngle)||0,-1.2,1.2),lock=c.spinState==='LOCKUP',slide=c.spinState==='SLIDE';
-      const pitchTarget=clamp(-longG*.012+brake*.013-throttle*.005,-.022,.044),rollTarget=clamp(-latG*.010-slip*.010,-.050,.050);
+      const v=Math.max(0,Number(c.v)||0),dv=(v-s.prevV)/Math.max(.001,frameDt),longG=clamp(dv/9.81,-2.2,1.4),brake=clamp(Number(c.racingBrake??c.brakeVisual)||0,0,1),throttle=clamp(Number(c.racingThrottle)||0,0,1),k=Number(W.racingCurvatureFor?.(c.s,c.racingLineMode||'OPTIMAL')??W.racingCurvatureAt?.(c.s)??W.curvatureAt?.(c.s))||0;
+      const controllerLat=Number(c.lateralAcceleration),latG=Number.isFinite(controllerLat)?clamp(controllerLat/9.81,-3.8,3.8):clamp(v*v*k/9.81,-3.8,3.8),slip=clamp(Number(c.slipAngle)||0,-1.2,1.2),steer=clamp(Number(c.steeringAngle)||0,-.8,.8),lock=c.spinState==='LOCKUP',slide=c.spinState==='SLIDE';
+      const pitchTarget=clamp(-longG*.012+brake*.013-throttle*.005,-.022,.044),rollTarget=clamp(-latG*.010-slip*.010-steer*.006,-.050,.050);
       const onKerb=!!c.onKerb||String(c.surfaceType||c.surface||'').toUpperCase().includes('KERB')||(Math.abs(Number(c.lane)||0)>3.02&&v>22);
       const curbWave=onKerb?Math.sin(((Number(c.s)||0)*1.65)+(R.race?.t||0)*v*.55)*clamp((v-18)/65,0,.012):0;
       const lockShake=lock?Math.sin((R.race?.t||0)*44+c.id)*.0045:0,slideDrop=slide?-.006:0;
@@ -17,7 +17,7 @@ export function createVehicleMotion(W,R,{mobile=false}={}){
       s.pitch+=(pitchTarget-s.pitch)*pitchF;s.roll+=(rollTarget-s.roll)*rollF;s.heave+=(heaveTarget-s.heave)*heaveF;
       body.rotation.x=s.baseX+s.pitch;body.rotation.z=s.baseZ+s.roll;body.position.y=s.baseY+s.heave;s.prevV=v;
       if(onKerb)curbFrames++;if(lock)lockupFrames++;
-      c.bodyMotionTelemetry={pitch:s.pitch,roll:s.roll,heave:s.heave,longG,latG,onKerb,lockup:lock,slide};
+      c.bodyMotionTelemetry={pitch:s.pitch,roll:s.roll,heave:s.heave,longG,latG,steer,onKerb,lockup:lock,slide};
     }updates++;
   }
   return{update,get diagnostics(){return{owner:'runtime-vehicle-motion-v2',updates,cars:states.size,rateHz:mobile?30:45,curbFrames,lockupFrames}}};
