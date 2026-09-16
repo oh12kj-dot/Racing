@@ -39,6 +39,14 @@ test('pit stop service capture only engages within a sub-quarter-meter stopping 
   expect(c.pitState).toBe('STOP');expect(c._runtimePitStopCaptureDistance).toBeLessThanOrEqual(.22);expect(P.metrics.maxServiceCaptureMeters).toBeLessThanOrEqual(.22);
 });
 
+test('legacy STOP cannot bypass the bounded pit service capture window',()=>{
+  const W=pitWorld(),c=car(0,{teamId:0,s:99.45,v:.7,pitState:'ENTRY',_runtimePitPhase:'WORKING_APPROACH'}),R={cars:[c],events:[]},P=createPitStateMachine(W,R);
+  let snap=P.beforeUpdate();c.s=99.50;c.pitState='STOP';c.pitTimer=4.1;P.afterUpdate(.016,snap,0);
+  expect(c.pitState).toBe('ENTRY');expect(P.metrics.legacyStopsRejected).toBe(1);
+  c.s=99.90;c.v=.7;c.pitState='ENTRY';c._runtimePitPhase='WORKING_APPROACH';snap=P.beforeUpdate();c.s=99.93;c.pitState='STOP';c.pitTimer=4.1;P.afterUpdate(.016,snap,0);
+  expect(c.pitState).toBe('STOP');expect(c._runtimePitStopCaptureDistance).toBeLessThanOrEqual(.22);expect(P.metrics.services).toBe(1);
+});
+
 test('fallback OBB contact audit latches one continuous overlap',()=>{
   const W=world(),a=car(0,{s:100,lane:0,v:20}),b=car(1,{s:100.2,lane:.2,v:19}),R=race([a,b]),T=createTrajectoryController(W,R);
   for(let i=0;i<12;i++){const snap=T.capture();R.race.t+=.016;T.update(.016,snap);}
