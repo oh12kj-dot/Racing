@@ -1,1 +1,1 @@
-export {createRace} from './race-formation-dynamics.js';
+export {createRace} from './race-rules-thermal.js';
