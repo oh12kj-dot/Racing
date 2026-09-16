@@ -31,20 +31,24 @@ test('pit exit merge starts from the runtime merge offset instead of stale pit l
   expect(c.trajectorySource).toBe('PIT_MERGE');expect(c.lane).toBeGreaterThan(3.0);expect(c.lane).toBeLessThan(3.3);
 });
 
-test('pit stop service capture only engages within a sub-quarter-meter stopping window',()=>{
+test('pit stop service capture preserves the actual sub-quarter-meter stop position',()=>{
   expect(pitStopCaptureWindow(.7,.016)).toBeLessThanOrEqual(.22);expect(pitStopCaptureWindow(20,.05)).toBe(.22);
   const W=pitWorld(),c=car(0,{teamId:0,s:99.45,v:.7,pitState:'ENTRY',_runtimePitPhase:'WORKING_APPROACH'}),R={cars:[c],events:[]},P=createPitStateMachine(W,R);
   let snap=P.beforeUpdate();c.s=99.47;P.afterUpdate(.016,snap,0);expect(c.pitState).toBe('ENTRY');
   c.s=99.90;c.v=.7;snap=P.beforeUpdate();c.s=99.92;P.afterUpdate(.016,snap,0);
-  expect(c.pitState).toBe('STOP');expect(c._runtimePitStopCaptureDistance).toBeLessThanOrEqual(.22);expect(P.metrics.maxServiceCaptureMeters).toBeLessThanOrEqual(.22);
+  expect(c.pitState).toBe('STOP');expect(c.s).toBeCloseTo(99.92,6);expect(c._runtimePitServiceS).toBeCloseTo(99.92,6);
+  expect(c.mesh.position.z).toBeCloseTo(99.92,6);expect(c._runtimePitStopCaptureDistance).toBeLessThanOrEqual(.22);expect(P.metrics.maxServiceCaptureMeters).toBeLessThanOrEqual(.22);
+  snap=P.beforeUpdate();c.s=100;P.afterUpdate(.016,snap,0);
+  expect(c.s).toBeCloseTo(99.92,6);expect(c.mesh.position.z).toBeCloseTo(99.92,6);
 });
 
-test('legacy STOP cannot bypass the bounded pit service capture window',()=>{
+test('legacy STOP cannot bypass the bounded pit service capture window or snap to box centre',()=>{
   const W=pitWorld(),c=car(0,{teamId:0,s:99.45,v:.7,pitState:'ENTRY',_runtimePitPhase:'WORKING_APPROACH'}),R={cars:[c],events:[]},P=createPitStateMachine(W,R);
   let snap=P.beforeUpdate();c.s=99.50;c.pitState='STOP';c.pitTimer=4.1;P.afterUpdate(.016,snap,0);
   expect(c.pitState).toBe('ENTRY');expect(P.metrics.legacyStopsRejected).toBe(1);
   c.s=99.90;c.v=.7;c.pitState='ENTRY';c._runtimePitPhase='WORKING_APPROACH';snap=P.beforeUpdate();c.s=99.93;c.pitState='STOP';c.pitTimer=4.1;P.afterUpdate(.016,snap,0);
-  expect(c.pitState).toBe('STOP');expect(c._runtimePitStopCaptureDistance).toBeLessThanOrEqual(.22);expect(P.metrics.services).toBe(1);
+  expect(c.pitState).toBe('STOP');expect(c.s).toBeCloseTo(99.93,6);expect(c._runtimePitServiceS).toBeCloseTo(99.93,6);
+  expect(c._runtimePitStopCaptureDistance).toBeLessThanOrEqual(.22);expect(P.metrics.services).toBe(1);
 });
 
 test('fallback OBB contact audit latches one continuous overlap',()=>{
