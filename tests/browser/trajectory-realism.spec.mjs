@@ -36,6 +36,17 @@ test('fallback OBB contact audit latches one continuous overlap',()=>{
   b.s=120;b.mesh.position.z=120;const snap=T.capture();R.race.t+=.016;T.update(.016,snap);expect(T.diagnostics().contactLatches).toBe(0);
 });
 
+test('physical incident controller keeps ownership through spin, recovery and residual slide',()=>{
+  const W=world(),c=car(0,{spinState:'NONE',slipAngle:.48,counterSteer:-.3}),R=race([c]),T=createTrajectoryController(W,R);
+  const snap=T.capture();c.spinState='SLIDE';c.mesh.position.x=5.75;c.mesh.position.y=.31;c.mesh.position.z=103.4;c.mesh.rotation.y=.92;R.race.t+=.016;T.update(.016,snap);
+  expect(c.trajectorySource).toBe('PHYSICAL_INCIDENT');expect(c.mesh.position.x).toBe(5.75);expect(c.mesh.position.y).toBe(.31);expect(c.mesh.position.z).toBe(103.4);expect(c.mesh.rotation.y).toBe(.92);
+  const snap2=T.capture();c.spinState='RECOVER';c.mesh.position.x=4.6;c.mesh.position.z=104.1;c.mesh.rotation.y=.61;R.race.t+=.016;T.update(.016,snap2);
+  expect(c.trajectorySource).toBe('PHYSICAL_INCIDENT');expect(c.mesh.position.x).toBe(4.6);expect(c.mesh.position.z).toBe(104.1);expect(c.mesh.rotation.y).toBe(.61);
+  const snap3=T.capture();c.spinState='NONE';R.physicalSpinStates=[{carId:c.id,extra:1.2}];c.mesh.position.x=3.4;c.mesh.position.z=104.7;c.mesh.rotation.y=.28;R.race.t+=.016;T.update(.016,snap3);
+  expect(c.trajectorySource).toBe('PHYSICAL_INCIDENT');expect(c.mesh.position.x).toBe(3.4);expect(c.mesh.position.z).toBe(104.7);expect(c.mesh.rotation.y).toBe(.28);
+  const snap4=T.capture();R.physicalSpinStates=[];R.race.t+=.016;T.update(.016,snap4);expect(c.trajectorySource).not.toBe('PHYSICAL_INCIDENT');expect(c.mesh.position.x).toBeCloseTo(c.lane,6);
+});
+
 test('wet racing line stays continuous instead of alternating across straights',async({page})=>{
   await page.goto('/iphone-demo/index.html?runtimeTest=1',{waitUntil:'domcontentloaded'});
   await page.waitForFunction(()=>!!window.__RACING_WORLD__||document.querySelector('#status')?.textContent==='ERROR',null,{timeout:30000});
