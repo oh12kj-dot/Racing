@@ -49,7 +49,11 @@ export function createTrajectoryController(W,R,{mobile=false}={}){
     }
     return out;
   }
-  function updateCar(c,dt,before){
+  function physicalOwns(c,owners){
+    if(String(c.spinState||'NONE')!=='NONE')return true;if(!owners)return false;
+    for(let i=0;i<owners.length;i++)if(Number(owners[i]?.carId)===Number(c.id))return true;return false;
+  }
+  function updateCar(c,dt,before,physicalIncident=false){
     const st=stateFor(c),tune=tuneFor(c),session=String(R.sessionPhase||''),phase=String(c._runtimePitPhase||''),preGreen=(Number(R.race?.t)||0)<(Number(R.race?.green)||0);
     if(preGreen||session==='FORMATION'||session==='QUALIFYING'||String(R.flag||'GREEN')==='RED'){
       st.lane=Number(c.lane)||st.lane;st.laneV=0;st.laneA=0;st.yawError=0;st.steer=0;st.steerRate=0;st.target=Number(c.laneTarget)||st.lane;st.source='SESSION_CONTROL';
@@ -67,7 +71,7 @@ export function createTrajectoryController(W,R,{mobile=false}={}){
     if((c.pitState==='ENTRY'&&W.inPitWindow?.(c.s))||c.pitState==='EXIT'){
       st.lane=Number(c.lane)||st.lane;st.laneV=0;st.laneA=0;st.yawError=0;st.steer=0;return;
     }
-    if(String(c.spinState||'NONE')!=='NONE'){
+    if(physicalIncident){
       st.lane=Number(c.lane)||st.lane;st.laneV=0;st.laneA=0;st.yawError=clamp(Number(c.slipAngle)||0,-1.55,1.55);st.steer=0;st.steerRate=0;st.source='PHYSICAL_INCIDENT';
       c.steeringAngle=Number(c.counterSteer)||0;c.steeringRate=0;c.yawError=st.yawError;c.trajectorySource='PHYSICAL_INCIDENT';return;
     }
@@ -109,7 +113,12 @@ export function createTrajectoryController(W,R,{mobile=false}={}){
       R.events?.push({id:`traj-contact-${Date.now()}-${i}-${j}`,type:'CONTACT',t:now,carId:a.id,data:{otherId:b.id,physical:true,trajectoryAudit:true,impactKmh:Math.round(rel),severity:sev}});metrics.unhandledContacts++;
     }
   }
-  function update(dt,snapshot){const step=clamp(Number(dt)||.016,.001,.05);for(const c of R.cars||[])updateCar(c,step,snapshot?.[c.id]);auditContacts();metrics.updates++;}
+  function update(dt,snapshot){
+    const step=clamp(Number(dt)||.016,.001,.05),cars=R.cars||[];let owners=null,needOwners=false;
+    for(const c of cars)if(String(c.spinState||'NONE')!=='NONE'||states.get(c.id)?.source==='PHYSICAL_INCIDENT'){needOwners=true;break;}
+    if(needOwners)owners=R.physicalSpinStates||null;
+    for(const c of cars)updateCar(c,step,snapshot?.[c.id],physicalOwns(c,owners));auditContacts();metrics.updates++;
+  }
   function diagnostics(){return{owner:'runtime-trajectory-controller-v3-pooled',...metrics,snapshotAllocations:1,contactLatches:contactLatch.size,cars:[...states.entries()].map(([id,s])=>({id,lane:s.lane,laneV:s.laneV,laneA:s.laneA,yawError:s.yawError,steer:s.steer,target:s.target,source:s.source}))};}
   return{capture,update,diagnostics};
 }
