@@ -8,7 +8,7 @@ const classTune={
 };
 
 export function createTrajectoryController(W,R,{mobile=false}={}){
-  const states=new Map(),frame=[],total=Math.max(1,Number(W.total)||1),metrics={updates:0,arbitrations:0,safetyVetoes:0,pitApproaches:0,mergeFrames:0,legacySeparationRepairs:0,unhandledContacts:0,maxLaneAccel:0,maxYawError:0};
+  const states=new Map(),frame=[],contactLatch=new Set(),total=Math.max(1,Number(W.total)||1),metrics={updates:0,arbitrations:0,safetyVetoes:0,pitApproaches:0,mergeFrames:0,legacySeparationRepairs:0,unhandledContacts:0,maxLaneAccel:0,maxYawError:0};
   const tuneFor=c=>classTune[c?.type]||classTune.gt;
   const lineAt=(c,s=c.s)=>clamp(Number(W.racingLineFor?.(s,c.racingLineMode||'OPTIMAL')??W.racingLineAt?.(s)??0)||0,-3.35,3.35);
   const progress=c=>Number(c?._v8Progress??((c?.lap||0)*total+(c?.s||0)))||0;
@@ -50,15 +50,18 @@ export function createTrajectoryController(W,R,{mobile=false}={}){
     return out;
   }
   function updateCar(c,dt,before){
-    const st=stateFor(c),tune=tuneFor(c),session=String(R.sessionPhase||''),preGreen=(Number(R.race?.t)||0)<(Number(R.race?.green)||0);
+    const st=stateFor(c),tune=tuneFor(c),session=String(R.sessionPhase||''),phase=String(c._runtimePitPhase||''),preGreen=(Number(R.race?.t)||0)<(Number(R.race?.green)||0);
     if(preGreen||session==='FORMATION'||session==='QUALIFYING'||String(R.flag||'GREEN')==='RED'){
       st.lane=Number(c.lane)||st.lane;st.laneV=0;st.laneA=0;st.yawError=0;st.steer=0;st.steerRate=0;st.target=Number(c.laneTarget)||st.lane;st.source='SESSION_CONTROL';
       c.steeringAngle=0;c.steeringRate=0;c.lateralVelocity=0;c.lateralAcceleration=0;c.yawError=0;c.trajectorySource='SESSION_CONTROL';return;
     }
-    if(before&&before.pitState==='NONE'&&c.pitState==='NONE'&&before.spin==='NONE'&&c.spinState!=='SLIDE'){
+    if(before&&before.pitState!=='NONE'&&c.pitState==='NONE'&&phase==='MERGE'){
+      st.lane=Number.isFinite(Number(c.lane))?Number(c.lane):st.lane;st.laneV=0;st.laneA=0;st.yawError=0;st.steer=0;st.steerRate=0;
+    }
+    if(before&&before.pitState==='NONE'&&c.pitState==='NONE'&&before.spin==='NONE'&&c.spinState==='NONE'&&(c.incident||0)<=0&&!c.hazardAvoiding&&!['HEAVY','SEVERE','DESTROYED'].includes(String(c.crashState||''))){
       let ds=(Number(c.s)||0)-before.s;if(ds>total*.5)ds-=total;if(ds<-total*.5)ds+=total;
-      const expected=Math.max(0,(before.v+Math.max(0,Number(c.v)||0))*.5*dt);
-      if(ds<-.04||(before.v>10&&expected>.12&&ds<expected*.22)){c.s=((before.s+expected)%total+total)%total;metrics.legacySeparationRepairs++;}
+      const afterV=Math.max(0,Number(c.v)||0),expected=Math.max(0,(before.v+afterV)*.5*dt),shortProgress=before.v>10&&afterV>before.v*.72&&expected>.12&&ds<expected*.22;
+      if(ds<-.04||shortProgress){c.s=((before.s+expected)%total+total)%total;metrics.legacySeparationRepairs++;}
     }
     if(c.retired||c.pitState==='STOP'||c._runtimePitQueued||c._runtimeReleaseWait){st.lane=Number(c.lane)||st.lane;st.laneV=0;st.laneA=0;st.yawError=0;st.steer=0;return;}
     if((c.pitState==='ENTRY'&&W.inPitWindow?.(c.s))||c.pitState==='EXIT'){
@@ -92,13 +95,16 @@ export function createTrajectoryController(W,R,{mobile=false}={}){
     const session=String(R.sessionPhase||''),now=R.race?.t||0;if(now<(Number(R.race?.green)||0)||session==='FORMATION'||session==='QUALIFYING'||String(R.flag||'GREEN')==='RED')return;
     const cars=R.cars||[];
     for(let i=0;i<cars.length;i++)for(let j=i+1;j<cars.length;j++){
-      const a=cars[i],b=cars[j];if(a.retired||b.retired||a.pitState!=='NONE'||b.pitState!=='NONE'||!a.mesh||!b.mesh)continue;if(!overlapOBB(a,b)||recentPhysical(a,b)||recentEventContact(a,b,now))continue;
+      const a=cars[i],b=cars[j],code=i*64+j;if(a.retired||b.retired||a.pitState!=='NONE'||b.pitState!=='NONE'||!a.mesh||!b.mesh){contactLatch.delete(code);continue;}
+      if(!overlapOBB(a,b)){contactLatch.delete(code);continue;}
+      if(recentPhysical(a,b)||recentEventContact(a,b,now)){contactLatch.add(code);continue;}
+      if(contactLatch.has(code))continue;contactLatch.add(code);
       const rel=Math.hypot(((a.v||0)-(b.v||0))*3.6,((a.lateralVelocity||0)-(b.lateralVelocity||0))*3.6),sev=clamp((rel-6)/95,0,1),dmg=.004+sev*.075;a.damage=clamp((a.damage||0)+dmg,0,1);b.damage=clamp((b.damage||0)+dmg,0,1);
       if(sev>.42){if(a.spinState==='NONE'){a.spinState='SLIDE';a.spinSeverity=Math.max(a.spinSeverity||0,.36+sev*.35);}if(b.spinState==='NONE'){b.spinState='SLIDE';b.spinSeverity=Math.max(b.spinSeverity||0,.36+sev*.35);}}
       R.events?.push({id:`traj-contact-${Date.now()}-${i}-${j}`,type:'CONTACT',t:now,carId:a.id,data:{otherId:b.id,physical:true,trajectoryAudit:true,impactKmh:Math.round(rel),severity:sev}});metrics.unhandledContacts++;
     }
   }
   function update(dt,snapshot){const step=clamp(Number(dt)||.016,.001,.05);for(const c of R.cars||[])updateCar(c,step,snapshot?.[c.id]);auditContacts();metrics.updates++;}
-  function diagnostics(){return{owner:'runtime-trajectory-controller-v3-pooled',...metrics,snapshotAllocations:1,cars:[...states.entries()].map(([id,s])=>({id,lane:s.lane,laneV:s.laneV,laneA:s.laneA,yawError:s.yawError,steer:s.steer,target:s.target,source:s.source}))};}
+  function diagnostics(){return{owner:'runtime-trajectory-controller-v3-pooled',...metrics,snapshotAllocations:1,contactLatches:contactLatch.size,cars:[...states.entries()].map(([id,s])=>({id,lane:s.lane,laneV:s.laneV,laneA:s.laneA,yawError:s.yawError,steer:s.steer,target:s.target,source:s.source}))};}
   return{capture,update,diagnostics};
 }
