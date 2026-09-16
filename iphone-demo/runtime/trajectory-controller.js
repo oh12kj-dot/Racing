@@ -74,10 +74,14 @@ export function createTrajectoryController(W,R,{mobile=false}={}){
     const v=Math.max(1,Number(c.v)||0),skill=clamp(Number(c.driver?.racecraft)||.84,.65,1),cons=clamp(Number(c.driverProfile?.consistency)||1,.90,1.08),aggr=clamp(Number(c.driver?.aggression)||.6,.35,.97);
     const lookAhead=clamp(5+v*.34,7,31),error=target-st.lane,desiredYaw=clamp(Math.atan2(error,lookAhead),-.36,.36);
     const maxLatA=tune.latG*9.81*clamp(.68+.32*skill,.72,1)*clamp(.92+(cons-1)*.7,.86,1.05),response=clamp(2.15+skill*1.75+aggr*.45,2.6,4.45);
-    const maxLaneV=clamp(2.0+v*.035,2.2,4.8),desiredLaneV=clamp(Math.tan(desiredYaw)*v,-maxLaneV,maxLaneV);
+    const maxLaneV=clamp(2.0+v*.035,2.2,4.8),stoppingLaneV=Math.sqrt(Math.max(0,2*maxLatA*Math.abs(error)))*.78;
+    let desiredLaneV=clamp(Math.tan(desiredYaw)*v,-maxLaneV,maxLaneV);desiredLaneV=clamp(desiredLaneV,-stoppingLaneV,stoppingLaneV);
     const wantedA=clamp(error*response+(desiredLaneV-st.laneV)*(2.3+skill),-maxLatA,maxLatA),jerkLimit=maxLatA*(mobile?3.0:3.8),deltaA=clamp(wantedA-st.laneA,-jerkLimit*dt,jerkLimit*dt);st.laneA+=deltaA;
     st.laneV=clamp(st.laneV+st.laneA*dt,-maxLaneV,maxLaneV);
-    if(Math.abs(error)<.035&&Math.abs(st.laneV)<.25){st.lane=target;st.laneV*=.5;}else st.lane+=st.laneV*dt;
+    const nextLane=st.lane+st.laneV*dt,crossed=Math.abs(error)>.001&&Math.sign(target-nextLane)!==Math.sign(error);
+    if(crossed){st.lane=target;st.laneV*=.18;st.laneA*=.35;}
+    else if(Math.abs(error)<.035&&Math.abs(st.laneV)<.25){st.lane=target;st.laneV*=.5;}
+    else st.lane=nextLane;
     st.lane=clamp(st.lane,-3.72,3.72);if(st.lane===-3.72||st.lane===3.72)st.laneV*=.35;
     const yawFromMotion=Math.asin(clamp(st.laneV/v,-.48,.48)),wheelbase=tune.wheelbase,maxSteer=tune.steer*clamp(1.12-v/130,.52,1),desiredSteer=clamp(Math.atan2(wheelbase*Math.tan(yawFromMotion),Math.max(2,v*.10)),-maxSteer,maxSteer),maxStep=tune.rate*dt;
     const oldSteer=st.steer;st.steer+=clamp(desiredSteer-st.steer,-maxStep,maxStep);st.steerRate=(st.steer-oldSteer)/Math.max(.001,dt);st.yawError=wrapAngle(yawFromMotion);
