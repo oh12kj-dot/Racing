@@ -1,11 +1,13 @@
 import {test,expect} from '@playwright/test';
 import {createTrajectoryController} from '../../iphone-demo/runtime/trajectory-controller.js';
+import {createPitStateMachine,pitStopCaptureWindow} from '../../iphone-demo/runtime/pit-state.js';
 
 function pos(x=0,z=0){return{x,y:0,z,copy(p){this.x=Number(p.x)||0;this.y=Number(p.y)||0;this.z=Number(p.z)||0;return this;}};}
 function mesh(){return{position:pos(),rotation:{y:0},visible:true};}
 function world(){return{total:1000,racingLineFor:()=>0,racingLineAt:()=>0,inPitWindow:()=>false,sample:(s,lane)=>({p:{x:Number(lane)||0,y:0,z:Number(s)||0},t:{x:0,z:1}})};}
 function car(id=0,overrides={}){return{id,type:'gt',length:5,width:2,s:100,lane:0,laneTarget:0,v:30,lap:0,pitState:'NONE',spinState:'NONE',retired:false,driver:{racecraft:.86,aggression:.65},mesh:mesh(),...overrides};}
 function race(cars,{t=20,green=4,flag='GREEN',sessionPhase='RACE'}={}){return{cars,race:{t,green},flag,sessionPhase,events:[],physicalCrashHistory:[]};}
+function pitWorld(){return{...world(),inPitWindow:()=>true,inPitSpeedZone:()=>true,pitSpeedLimit:22.22,pitBoxS:()=>100,pitDistanceToBox:s=>100-Number(s||0),pitPose:s=>({p:{x:0,y:0,z:Number(s)||0},rotationY:0}),pitWorkingPose:s=>({p:{x:0,y:0,z:Number(s)||0},rotationY:0})};}
 
 test('trajectory controller turns lane requests into bounded progressive steering',()=>{
   const W=world(),c=car(0,{laneTarget:2,battleState:'ATTACK'}),R=race([c]),T=createTrajectoryController(W,R);
@@ -27,6 +29,14 @@ test('pit exit merge starts from the runtime merge offset instead of stale pit l
   const W=world(),c=car(0,{lane:4,laneTarget:4,pitState:'EXIT',_runtimePitPhase:'FAST_LANE_EXIT',v:12}),R=race([c]),T=createTrajectoryController(W,R);
   const snap=T.capture();c.pitState='NONE';c._runtimePitPhase='MERGE';c.lane=3.2;c.laneTarget=0;c.s+=.2;R.race.t+=.016;T.update(.016,snap);
   expect(c.trajectorySource).toBe('PIT_MERGE');expect(c.lane).toBeGreaterThan(3.0);expect(c.lane).toBeLessThan(3.3);
+});
+
+test('pit stop service capture only engages within a sub-quarter-meter stopping window',()=>{
+  expect(pitStopCaptureWindow(.7,.016)).toBeLessThanOrEqual(.22);expect(pitStopCaptureWindow(20,.05)).toBe(.22);
+  const W=pitWorld(),c=car(0,{teamId:0,s:99.45,v:.7,pitState:'ENTRY',_runtimePitPhase:'WORKING_APPROACH'}),R={cars:[c],events:[]},P=createPitStateMachine(W,R);
+  let snap=P.beforeUpdate();c.s=99.47;P.afterUpdate(.016,snap,0);expect(c.pitState).toBe('ENTRY');
+  c.s=99.90;c.v=.7;snap=P.beforeUpdate();c.s=99.92;P.afterUpdate(.016,snap,0);
+  expect(c.pitState).toBe('STOP');expect(c._runtimePitStopCaptureDistance).toBeLessThanOrEqual(.22);expect(P.metrics.maxServiceCaptureMeters).toBeLessThanOrEqual(.22);
 });
 
 test('fallback OBB contact audit latches one continuous overlap',()=>{
