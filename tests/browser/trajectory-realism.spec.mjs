@@ -1,0 +1,37 @@
+import {test,expect} from '@playwright/test';
+import {createTrajectoryController} from '../../iphone-demo/runtime/trajectory-controller.js';
+
+function pos(x=0,z=0){return{x,y:0,z,copy(p){this.x=Number(p.x)||0;this.y=Number(p.y)||0;this.z=Number(p.z)||0;return this;}};}
+function mesh(){return{position:pos(),rotation:{y:0},visible:true};}
+function world(){return{total:1000,racingLineFor:()=>0,racingLineAt:()=>0,inPitWindow:()=>false,sample:(s,lane)=>({p:{x:Number(lane)||0,y:0,z:Number(s)||0},t:{x:0,z:1}})};}
+function car(id=0,overrides={}){return{id,type:'gt',length:5,width:2,s:100,lane:0,laneTarget:0,v:30,lap:0,pitState:'NONE',spinState:'NONE',retired:false,driver:{racecraft:.86,aggression:.65},mesh:mesh(),...overrides};}
+function race(cars,{t=20,green=4,flag='GREEN',sessionPhase='RACE'}={}){return{cars,race:{t,green},flag,sessionPhase,events:[],physicalCrashHistory:[]};}
+
+test('trajectory controller turns lane requests into bounded progressive steering',()=>{
+  const W=world(),c=car(0,{laneTarget:2,battleState:'ATTACK'}),R=race([c]),T=createTrajectoryController(W,R);
+  for(let i=0;i<90;i++){const snap=T.capture();c.s+=c.v*.016;R.race.t+=.016;T.update(.016,snap);}
+  expect(c.lane).toBeGreaterThan(.25);expect(c.lane).toBeLessThanOrEqual(2.05);
+  expect(Number.isFinite(c.steeringAngle)).toBeTruthy();expect(Math.abs(c.steeringAngle)).toBeLessThanOrEqual(.431);
+  expect(Number.isFinite(c.lateralAcceleration)).toBeTruthy();expect(Math.abs(c.lateralAcceleration)).toBeLessThanOrEqual(1.95*9.81+.01);
+  expect(Number.isFinite(c.yawError)).toBeTruthy();expect(Math.abs(c.yawError)).toBeLessThan(.5);
+  expect(T.diagnostics().snapshotAllocations).toBe(1);
+});
+
+test('pre-green and formation control remain authoritative',()=>{
+  const W=world(),c=car(0,{lane:2.5,laneTarget:0}),R=race([c],{t:1,green:4,sessionPhase:'FORMATION'}),T=createTrajectoryController(W,R),before=c.lane;
+  for(let i=0;i<20;i++){const snap=T.capture();T.update(.016,snap);}
+  expect(c.lane).toBe(before);expect(c.lateralVelocity).toBe(0);expect(c.steeringAngle).toBe(0);expect(c.trajectorySource).toBe('SESSION_CONTROL');
+});
+
+test('pit exit merge starts from the runtime merge offset instead of stale pit lane state',()=>{
+  const W=world(),c=car(0,{lane:4,laneTarget:4,pitState:'EXIT',_runtimePitPhase:'FAST_LANE_EXIT',v:12}),R=race([c]),T=createTrajectoryController(W,R);
+  const snap=T.capture();c.pitState='NONE';c._runtimePitPhase='MERGE';c.lane=3.2;c.laneTarget=0;c.s+=.2;R.race.t+=.016;T.update(.016,snap);
+  expect(c.trajectorySource).toBe('PIT_MERGE');expect(c.lane).toBeGreaterThan(3.0);expect(c.lane).toBeLessThan(3.3);
+});
+
+test('fallback OBB contact audit latches one continuous overlap',()=>{
+  const W=world(),a=car(0,{s:100,lane:0,v:20}),b=car(1,{s:100.2,lane:.2,v:19}),R=race([a,b]),T=createTrajectoryController(W,R);
+  for(let i=0;i<12;i++){const snap=T.capture();R.race.t+=.016;T.update(.016,snap);}
+  const contacts=R.events.filter(e=>e.type==='CONTACT'&&e.data?.trajectoryAudit);expect(contacts).toHaveLength(1);expect(T.diagnostics().contactLatches).toBe(1);
+  b.s=120;b.mesh.position.z=120;const snap=T.capture();R.race.t+=.016;T.update(.016,snap);expect(T.diagnostics().contactLatches).toBe(0);
+});
