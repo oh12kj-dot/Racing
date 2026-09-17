@@ -52,3 +52,11 @@ test('predictive lateral avoidance is dt-normalized instead of frame-count depen
   expect(source).toContain('step=frameRateAlpha(.20*respect,dt)');
   expect(source).not.toContain('(safeLat-Math.abs(delta))*.20*respect');
 });
+
+test('side-by-side safety corridor is dt-normalized',()=>{
+  const source=readFileSync(new URL('../../iphone-demo/runtime/race-side-by-side.js',import.meta.url),'utf8');
+  expect(source).toContain('frameRateAlpha');
+  expect(source).toContain('reserveSideBySide(dt)');
+  expect(source).toContain('blend=frameRateAlpha(blendPer60,dt)');
+  expect(source).not.toContain("lo.laneTarget+=(mid-desired*.5-lo.laneTarget)*blendPer60");
+});
