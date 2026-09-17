@@ -1,4 +1,5 @@
 import {test,expect} from '@playwright/test';
+import {readFileSync} from 'node:fs';
 
 async function boot(page){
   await page.goto('/iphone-demo/index.html?runtimeTest=1',{waitUntil:'domcontentloaded'});
@@ -21,4 +22,15 @@ test('racecraft owns lane intent while strategy remains telemetry-only',async({p
   expect(r.strategy?.passesPrepared,JSON.stringify(r.strategy)).toBe(0);
   expect(r.strategy?.defencesPrepared,JSON.stringify(r.strategy)).toBe(0);
   expect(r.trajectory?.owner).toBe('runtime-trajectory-controller-v3-pooled');
+});
+
+test('driver traits influence racecraft without adding a second attack/defend lane controller',()=>{
+  const source=readFileSync(new URL('../../iphone-demo/runtime/race-driver-dynamics.js',import.meta.url),'utf8');
+  const start=source.indexOf('function postTraits('),end=source.indexOf('\n  function beginLockup',start);
+  expect(start).toBeGreaterThanOrEqual(0);expect(end).toBeGreaterThan(start);
+  const body=source.slice(start,end);
+  expect(body).not.toContain('laneTarget');
+  expect(body).not.toContain("battleState==='ATTACK'");
+  expect(body).not.toContain("battleState==='DEFEND'");
+  expect(source).toContain("c.driverProfile=p");
 });
