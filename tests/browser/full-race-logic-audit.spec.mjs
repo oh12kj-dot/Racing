@@ -78,11 +78,12 @@ test('normal green longitudinal control yields to local safety speed authorities
 test('predictive collision braking requests a cap that the final longitudinal owner enforces',()=>{
   const contact=readFileSync(new URL('../../iphone-demo/runtime/race-contact-avoidance.js',import.meta.url),'utf8');
   const base=readFileSync(new URL('../../iphone-demo/runtime/race-base.js',import.meta.url),'utf8');
-  expect(contact).toContain('c.predictiveSpeedCap=Number.isFinite(launch)&&launch>=0?launch:null');
+  expect(contact).toContain('c.predictiveSpeedCap=launch!=null&&Number.isFinite(Number(launch))&&Number(launch)>=0?Number(launch):null');
   expect(contact).toContain('requestSpeedCap(c,cap)');
   expect(contact).toContain('requestSpeedCap(c,front.v+');
   expect(contact).not.toContain('c.v=Math.max(target');
   expect(base).toContain('const safetyCap=Number(c.predictiveSpeedCap)');
+  expect(base).toContain('safetyActive=c.predictiveSpeedCap!=null&&Number.isFinite(safetyCap)');
   expect(base).toContain('if(safetyActive&&c.v>safetyCap)');
   expect(base).toContain('physicalSafetyLimit=Math.max(safetyCap,before-brakeAvail*dt)');
   expect(base).toContain('safetyCap:c.racingSafetyCap??null');

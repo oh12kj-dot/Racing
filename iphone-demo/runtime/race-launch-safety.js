@@ -8,7 +8,7 @@ export function createRace(W,statusEl,settings={}){
   function pose(c){const q=W.sample(c.s,c.lane);c.mesh.position.copy(q.p);c.mesh.position.y+=.12;c.mesh.rotation.y=Math.atan2(q.t.x,q.t.z);}
   function normaliseGridStart(){if(gridNormalised)return;const phase=R.sessionPhase;if(phase==='QUALIFYING'||phase==='FORMATION')return;const grid=Array.isArray(R.qualifying)&&R.qualifying.length?R.qualifying.map(x=>x.carId):R.getStandings().map(c=>c.id);grid.forEach((id,pos)=>{const c=R.cars[id];if(!c)return;const row=Math.floor(pos/2),col=pos%2,p=-row*12.4;c._v8Progress=p;c.s=wrap(p);c.lap=row===0?0:-1;c.position=pos+1;c.prevPosition=pos+1;c.v=0;c.lane=(col?-1:1)*2.55+(row%2?.14:-.14);c.laneTarget=c.lane;c.pitState='NONE';c.pitTimer=0;c.pitLaneStatus='TRACK';c._serviceExtra=false;c._repairAdded=false;c._pitFailure=null;c._v24PitFailure=null;c._doubleStackWait=0;c.lastLapStart=R.race.t;c.sectorStart=R.race.t;pose(c);});gridNormalised=true;}
   function nearestAhead(c){let car=null,dist=Infinity;for(const o of R.cars){if(o===c||o.retired||o.pitState!=='NONE')continue;const d=gap(c,o);if(d>0&&d<dist){dist=d;car=o;}}return{car,dist};}
-  function requestLaunchCap(c,cap){const x=Math.max(0,Number(cap)||0),old=Number(c.launchSpeedCap);c.launchSpeedCap=Number.isFinite(old)?Math.min(old,x):x;}
+  function requestLaunchCap(c,cap){const x=Math.max(0,Number(cap)||0),old=c.launchSpeedCap;c.launchSpeedCap=old!=null&&Number.isFinite(Number(old))?Math.min(Number(old),x):x;}
   function launchDiscipline(dt){
     for(const c of R.cars)c.launchSpeedCap=null;
     const phase=R.sessionPhase;if(phase==='QUALIFYING'||phase==='FORMATION'||R.flag!=='GREEN'||R.race.t<(R.race.green||0))return;if(raceStartAt===null)raceStartAt=R.race.t;const age=R.race.t-raceStartAt;if(age>14)return;

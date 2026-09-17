@@ -50,7 +50,7 @@ export function createRace(W,statusEl,settings={}){
     const mode=st.line||chooseLine(c),x=speedEnvelope(c,mode);st.raw=x.target;
     if(!Number.isFinite(st.target)||Math.abs(st.target-before)>35)st.target=x.target;
     const tau=x.target<st.target?.24:.78,blend=1-Math.exp(-dt/tau);st.target+=(x.target-st.target)*blend;
-    const safetyCap=Number(c.predictiveSpeedCap),safetyActive=Number.isFinite(safetyCap)&&safetyCap>=0;
+    const safetyCap=Number(c.predictiveSpeedCap),safetyActive=c.predictiveSpeedCap!=null&&Number.isFinite(safetyCap)&&safetyCap>=0;
     if(safetyActive){st.target=Math.min(st.target,safetyCap);st.raw=Math.min(st.raw,safetyCap);}
     const error=st.target-before;st.hold=Math.max(0,st.hold-dt);const wanted=error<-1.40?'BRAKE':error>1.80?'THROTTLE':'COAST';if(wanted!==st.mode&&(st.hold<=0||error<-4.8)){st.mode=wanted;st.hold=wanted==='COAST'?.20:.30;}
     const k=Math.abs(lineCurv(mode,c.s)),latDemand=before*before*k,latUse=clamp(latDemand/Math.max(1,x.gCap),0,.985),longAvail=Math.sqrt(Math.max(.03,1-latUse*latUse)),accelBase=Math.max(2.5,c._v18BaseAccel||c.accel||6)*(1+(c.energyMode==='PUSH'?.07:0))*(.45+.55*longAvail),brakeAvail=x.brakeBase*(.30+.70*longAvail);

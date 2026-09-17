@@ -27,5 +27,5 @@ test('launch speed discipline requests a cap instead of directly fighting final 
   const start=launch.indexOf('function launchDiscipline(dt)'),end=launch.indexOf('\n  function isHazard',start),body=launch.slice(start,end);
   expect(body).toContain('requestLaunchCap(c,cap)');
   expect(body).not.toContain('c.v=Math.min(c.v,cap)');
-  expect(avoidance).toContain('c.predictiveSpeedCap=Number.isFinite(launch)&&launch>=0?launch:null');
+  expect(avoidance).toContain('c.predictiveSpeedCap=launch!=null&&Number.isFinite(Number(launch))&&Number(launch)>=0?Number(launch):null');
 });
