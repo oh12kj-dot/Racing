@@ -65,3 +65,12 @@ test('race-control uses VSC delta tracking instead of a universal fixed-speed ca
   expect(source).toContain('s.allowed+=referenceVscSpeed(c)*dt');expect(source).toContain('s.delta=s.allowed-s.actual');
   expect(source).not.toContain('135/3.6');expect(source).not.toContain('37.5');
 });
+
+test('normal green longitudinal control yields to local safety speed authorities',()=>{
+  const source=readFileSync(new URL('../../iphone-demo/runtime/race-base.js',import.meta.url),'utf8');
+  const clear=source.match(/const clearState=c=>([^;]+);/)?.[1]||'';
+  expect(clear).toContain('!c.localYellow');
+  expect(clear).toContain('!c.hydroplaning');
+  expect(clear).toContain('!punctured(c)');
+  expect(source).toContain("const punctured=c=>c?.fault==='PUNCTURE'");
+});
