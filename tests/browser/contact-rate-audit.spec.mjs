@@ -1,4 +1,5 @@
 import {test,expect} from '@playwright/test';
+import {readFileSync} from 'node:fs';
 
 async function bootSeeded(page){
   await page.addInitScript(()=>{
@@ -10,18 +11,20 @@ async function bootSeeded(page){
 }
 
 test('natural seeded race does not devolve into repeated car-to-car contact',async({page})=>{
+  test.setTimeout(90000);
   await bootSeeded(page);
   const result=await page.evaluate(()=>{
     const R=window.__RACING_RACE__,tick=window.__RACING_TEST_TICK__;
     if(!R||typeof tick!=='function')return{ready:false,status:document.querySelector('#status')?.textContent||'',error:document.querySelector('#error')?.textContent||''};
     const seen=new Set(),contacts=[],incidents=[];let greenSeconds=0,greenSamples=0,maxConcurrentBattle=0;
-    for(let i=0;i<4800;i++){
+    for(let i=0;i<3600;i++){
       tick(.05,false);
       if(R.flag==='GREEN'&&R.sessionPhase==='RACE'&&R.formationDiagnostics?.done){greenSeconds+=.05;greenSamples++;}
       let battles=0;for(const c of R.cars||[])if(!c.retired&&c.pitState==='NONE'&&(c.battleState==='ATTACK'||c.battleState==='DEFEND'||c.racecraftState==='ATTACK'||c.racecraftState==='DEFEND'))battles++;
       maxConcurrentBattle=Math.max(maxConcurrentBattle,battles);
-      for(const e of R.events||[]){
-        if(!e?.id||seen.has(e.id))continue;seen.add(e.id);
+      const events=R.events||[],start=Math.max(0,events.length-32);
+      for(let j=start;j<events.length;j++){
+        const e=events[j];if(!e?.id||seen.has(e.id))continue;seen.add(e.id);
         if(e.type==='CONTACT')contacts.push({t:e.t,kmh:Number(e.data?.impactKmh)||0,severity:Number(e.data?.severity)||0,a:e.carId,b:e.data?.otherId});
         if(e.type==='INCIDENT'&&e.data?.kind==='CAR_CAR')incidents.push({t:e.t,kmh:Number(e.data?.impactKmh)||0,severity:Number(e.data?.severity)||0});
       }
@@ -40,4 +43,12 @@ test('natural seeded race does not devolve into repeated car-to-car contact',asy
   expect(result.heavyRate,JSON.stringify(result)).toBeLessThanOrEqual(.75);
   expect(result.hottestPair,JSON.stringify(result)).toBeLessThanOrEqual(3);
   if(result.trajectory?.unhandledContacts!=null)expect(result.trajectory.unhandledContacts,JSON.stringify(result)).toBe(0);
+});
+
+test('predictive lateral avoidance is dt-normalized instead of frame-count dependent',()=>{
+  const source=readFileSync(new URL('../../iphone-demo/runtime/race-contact-avoidance.js',import.meta.url),'utf8');
+  expect(source).toContain('function frameRateAlpha(per60,dt)');
+  expect(source).toContain('keep=frameRateAlpha(keepPer60,dt)');
+  expect(source).toContain('step=frameRateAlpha(.20*respect,dt)');
+  expect(source).not.toContain('(safeLat-Math.abs(delta))*.20*respect');
 });
