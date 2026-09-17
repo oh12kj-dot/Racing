@@ -31,17 +31,24 @@ test('pit approach stays in fast lane until close to its own box',async({page})=
   expect(r.supported).toBeTruthy();expect(r.approach).toBeLessThanOrEqual(8);expect(Math.abs(r.l10||0)).toBeLessThan(.15);expect(r.l5).toBeGreaterThan(.2);expect(r.cleared).toBeGreaterThan(0);
 });
 
-test('different teams can start service concurrently',async({page})=>{
+test('different teams can enter service concurrently without snapping to the pit-box centre',async({page})=>{
   await boot(page);
   const r=await page.evaluate(()=>{
     const R=window.__RACING_RACE__,W=window.__RACING_WORLD__,cars=R.cars.filter(c=>!c.retired);const a=cars[0],b=cars.find(c=>c!==a&&c.teamId!==a.teamId);if(!a||!b)return{supported:false};
-    for(const c of cars){c.pitState='NONE';c._runtimePitPhase='TRACK';c._runtimePitQueued=false;c._runtimeReleaseWait=false;c._runtimePitArrival=null;c.pitTimer=0;}
+    for(const c of cars){c.pitState='NONE';c._runtimePitPhase='TRACK';c._runtimePitQueued=false;c._runtimeReleaseWait=false;c._runtimePitArrival=null;c._runtimePitServiceS=null;c._runtimePitStopCaptureDistance=0;c.pitTimer=0;}
     const total=W.total||1;
     for(const c of[a,b]){const box=W.pitBoxS(c.teamId);c.s=((box-.30)%total+total)%total;c.v=7;c.pitState='ENTRY';c._runtimePitPhase='WORKING_APPROACH';c._runtimePitQueued=false;c._runtimeReleaseWait=false;}
     R.update(.05);
-    return{supported:true,a:{team:a.teamId,state:a.pitState,phase:a._runtimePitPhase,timer:a.pitTimer},b:{team:b.teamId,state:b.pitState,phase:b._runtimePitPhase,timer:b.pitTimer}};
+    const first={a:a.pitState,b:b.pitState};
+    let ticks=1;while(ticks<20&&(a.pitState!=='STOP'||b.pitState!=='STOP')){R.update(.05);ticks++;}
+    return{supported:true,first,ticks,a:{team:a.teamId,state:a.pitState,phase:a._runtimePitPhase,timer:a.pitTimer,capture:a._runtimePitStopCaptureDistance,serviceS:a._runtimePitServiceS,box:W.pitBoxS(a.teamId)},b:{team:b.teamId,state:b.pitState,phase:b._runtimePitPhase,timer:b.pitTimer,capture:b._runtimePitStopCaptureDistance,serviceS:b._runtimePitServiceS,box:W.pitBoxS(b.teamId)},diag:R.pitStateDiagnostics};
   });
-  expect(r.supported).toBeTruthy();expect(r.a.team).not.toBe(r.b.team);expect(r.a.state,JSON.stringify(r)).toBe('STOP');expect(r.b.state,JSON.stringify(r)).toBe('STOP');expect(r.a.phase).toBe('SERVICE');expect(r.b.phase).toBe('SERVICE');
+  expect(r.supported).toBeTruthy();expect(r.a.team).not.toBe(r.b.team);
+  expect(r.first.a,JSON.stringify(r)).toBe('ENTRY');expect(r.first.b,JSON.stringify(r)).toBe('ENTRY');
+  expect(r.a.state,JSON.stringify(r)).toBe('STOP');expect(r.b.state,JSON.stringify(r)).toBe('STOP');expect(r.a.phase).toBe('SERVICE');expect(r.b.phase).toBe('SERVICE');
+  expect(r.a.capture,JSON.stringify(r)).toBeLessThanOrEqual(.22);expect(r.b.capture,JSON.stringify(r)).toBeLessThanOrEqual(.22);
+  expect(Math.abs(r.a.serviceS-r.a.box),JSON.stringify(r)).toBeGreaterThan(0);expect(Math.abs(r.b.serviceS-r.b.box),JSON.stringify(r)).toBeGreaterThan(0);
+  expect(r.diag?.metrics?.maxServiceCaptureMeters??Infinity,JSON.stringify(r)).toBeLessThanOrEqual(.22);
 });
 
 test('working-lane exit traffic cannot deadlock another car release',async({page})=>{
