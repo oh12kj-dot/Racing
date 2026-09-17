@@ -21,7 +21,7 @@ test('racecraft owns lane intent while strategy remains telemetry-only',async({p
   expect(r.strategy?.laneIntentMode).toBe('telemetry-only');
   expect(r.strategy?.passesPrepared,JSON.stringify(r.strategy)).toBe(0);
   expect(r.strategy?.defencesPrepared,JSON.stringify(r.strategy)).toBe(0);
-  expect(r.trajectory?.owner).toBe('runtime-trajectory-controller-v3-pooled');
+  expect(r.trajectory?.owner).toBe('runtime-trajectory-controller-v4-physical-sync');
 });
 
 test('driver traits influence racecraft without adding a second attack/defend lane controller',()=>{
