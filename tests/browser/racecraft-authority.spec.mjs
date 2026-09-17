@@ -44,3 +44,11 @@ test('blue flag cooling and hydro states pre-empt tactical racecraft',()=>{
   expect(body).toContain("transition(c,s,'RESET',specialState?'SPECIAL STATE PRIORITY':'RACECRAFT INACTIVE',.8)");
   expect(body).toContain("c.racecraftIntent=specialState?'SPECIAL':'RESET'");
 });
+
+test('legacy core yields normal tactical lane intent to racecraft',()=>{
+  const source=readFileSync(new URL('../../iphone-demo/runtime/race-core.js',import.meta.url),'utf8');
+  expect(source).toContain("const externalLaneAuthority=()=>W.runtimeRacecraftAuthority==='runtime-racecraft-v2'");
+  expect(source).toContain("const opt=(!externalLaneAuthority()&&flag==='GREEN'");
+  expect(source).toContain("if(!externalLaneAuthority()){if(flag!=='GREEN')c.laneTarget*=.92");
+  expect(source).toContain('if(!W.runtimeTrajectoryControl)c.lane=T.MathUtils.lerp');
+});
