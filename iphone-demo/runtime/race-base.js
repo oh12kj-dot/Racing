@@ -5,7 +5,8 @@ export function createRace(W,statusEl,settings={}){
   const latG={formula:3.75,hyper:2.85,lmh:2.85,proto:2.95,gt:2.05,supercar:1.82,touring:1.72},look=[0,18,38,62,92,128,170,215],controllers=new Map(),preSpeed=[],preS=[],prePit=[],telemetry=[];
   const serviceTime={formula:2.6,proto:3.1,hyper:3.3,lmh:3.2,gt:4.1,supercar:4.3,touring:4.7};
   let telemetryAcc=0;
-  const clearState=c=>!c.retired&&c.pitState==='NONE'&&c.spinState==='NONE'&&!c.hazardAvoiding&&(c.incident||0)<=0;
+  const punctured=c=>c?.fault==='PUNCTURE'||(c?.wheelState||[]).some(w=>w?.puncture);
+  const clearState=c=>!c.retired&&c.pitState==='NONE'&&c.spinState==='NONE'&&!c.hazardAvoiding&&!c.localYellow&&!c.hydroplaning&&!punctured(c)&&(c.incident||0)<=0;
   for(const c of R.cars)controllers.set(c.id,{target:c.v||0,accel:0,prevAccel:0,mode:'COAST',hold:0,raw:c.v||0,line:'OPTIMAL',jerk:0});
 
   function aheadOf(c){const r=R.spatialNeighbours?.get?.(c.id);return r?.aheadView||r?.ahead||null;}
@@ -35,7 +36,7 @@ export function createRace(W,statusEl,settings={}){
     c.trackEvolutionGrip=1+(e.dryLine||0)*.018*(1-off)-(e.marbles||0)*.055*off;c.racingLineDeviation=deviation;
   }
   function speedEnvelope(c,mode){
-    const baseTop=c.baseMax||c.classPerformance?.top||c.baseMaxNominal||c.max||72,top=Math.max(24,baseTop)*(1+(c.slipstream||0)*.020),wet=clamp(W.env?.wetness||0,0,1),wear=clamp(c.wear||0,0,1),tempGrip=clamp(c.tempGrip||1,.75,1.08),surface=clamp(c.surfaceGrip||1,.80,1.08),evolution=clamp(c.trackEvolutionGrip||1,.88,1.04),aero=clamp(Math.min(c.aeroFront??1,c.aeroRear??1),.55,1),tyreGrip=clamp(tempGrip*surface*evolution*(1-wear*.13)*(1-wet*.20),.56,1.06),ideal=lineValue(c,mode),deviation=Math.abs((c.lane||0)-ideal),cornerDemand=clamp(Math.abs(lineCurv(mode,c.s+28))*70,0,1),lineEfficiency=1-cornerDemand*clamp(deviation/3,0,1)*.10,gCap=(latG[c.type]||2.0)*9.81*tyreGrip*(.82+.18*aero)*lineEfficiency,brakeBase=Math.max(7,c._v18BaseBrake||c.brake||15.5)*clamp(.74+.26*tyreGrip,.62,1.04)*(1-wet*.20);let target=top;
+    const baseTop=c.baseMax||c.classPerformance?.top||c.baseMaxNominal||c.max||72,top=Math.max(24,baseTop)*(1+(c.slipstream||0)*.020),wet=clamp(Number(W.env?.wetness)||0,0,1),wear=clamp(c.wear||0,0,1),tempGrip=clamp(c.tempGrip||1,.75,1.08),surface=clamp(c.surfaceGrip||1,.80,1.08),evolution=clamp(c.trackEvolutionGrip||1,.88,1.04),aero=clamp(Math.min(c.aeroFront??1,c.aeroRear??1),.55,1),tyreGrip=clamp(tempGrip*surface*evolution*(1-wear*.13)*(1-wet*.20),.56,1.06),ideal=lineValue(c,mode),deviation=Math.abs((c.lane||0)-ideal),cornerDemand=clamp(Math.abs(lineCurv(mode,c.s+28))*70,0,1),lineEfficiency=1-cornerDemand*clamp(deviation/3,0,1)*.10,gCap=(latG[c.type]||2.0)*9.81*tyreGrip*(.82+.18*aero)*lineEfficiency,brakeBase=Math.max(7,c._v18BaseBrake||c.brake||15.5)*clamp(.74+.26*tyreGrip,.62,1.04)*(1-wet*.20);let target=top;
     for(const d of look){const k=Math.abs(lineCurv(mode,c.s+d));if(k<.00105)continue;const corner=Math.min(top,Math.sqrt(Math.max(1,gCap/k))),allowed=Math.sqrt(corner*corner+2*brakeBase*d);if(allowed<target)target=allowed;}
     const a=aheadOf(c);if(a?.car&&a.dist<90){const other=a.car,lat=Math.abs((other.lane||0)-(c.lane||0)),overlap=lat<(c.width+other.width)*.48+.35;if(overlap){const safe=(c.length+other.length)*.5+4.5+Math.max(0,c.v||0)*.18,closing=Math.max(0,(c.v||0)-(other.v||0)),ttc=closing>.3?(a.dist-safe)/closing:99;if(a.dist<safe+26||ttc<3.2){const margin=clamp((a.dist-safe)/24,0,1);target=Math.min(target,(other.v||0)+margin*5.5);}}}
     if(c.damageState==='HEAVY'||(c.damage||0)>.68)target=Math.min(target,18);else if((c.damage||0)>.38)target=Math.min(target,32);
