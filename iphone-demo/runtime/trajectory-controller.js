@@ -60,7 +60,7 @@ export function createTrajectoryController(W,R,{mobile=false}={}){
     if(!c?.mesh||!latestPhysical(c))return false;const q=W.sample(c.s,c.lane);if(!q?.p||!q?.t)return false;
     const side=q.side||{x:q.t.z||0,z:-(q.t.x||0)},dx=(c.mesh.position.x||0)-(q.p.x||0),dz=(c.mesh.position.z||0)-(q.p.z||0),lat=dx*(side.x||0)+dz*(side.z||0),long=dx*(q.t.x||0)+dz*(q.t.z||0);
     const lateral=clamp(lat,-1.15,1.15),longitudinal=clamp(long,-1.15,1.15);if(Math.abs(lateral)<.004&&Math.abs(longitudinal)<.004)return false;
-    st.lane=clamp((Number(c.lane)||st.lane)+lateral,-3.72,3.72);c.lane=st.lane;st.laneV=clamp(st.laneV+lateral*3.2,-5,5);st.contactLong=clamp(st.contactLong+longitudinal,-1.35,1.35);metrics.physicalSyncs++;return true;
+    st.lane=clamp((Number(c.lane)||st.lane)+lateral,-3.72,3.72);c.lane=st.lane;if(Math.abs(lateral)>=.004){const carry=st.laneV*lateral>0?.55:.18;st.laneV=clamp(st.laneV*carry+lateral*.55,-5,5);st.laneA*=.35;}st.contactLong=clamp(st.contactLong+longitudinal,-1.35,1.35);metrics.physicalSyncs++;return true;
   }
   function updateCar(c,dt,before){
     const st=stateFor(c),tune=tuneFor(c),session=String(R.sessionPhase||''),phase=String(c._runtimePitPhase||''),preGreen=(Number(R.race?.t)||0)<(Number(R.race?.green)||0);
