@@ -7,7 +7,7 @@ export function createRace(W,statusEl,settings={}){
   const emit=(type,c,data={})=>{R.events?.push({id:`v38-${Date.now()}-${Math.random()}`,type,t:R.race.t,carId:c?.id??null,data});while(R.events?.length>180)R.events.shift();};
   const radio=(c,text,kind='URGENT')=>{if(!R.radio||!c)return;R.radio.push({id:`v38r-${Date.now()}-${Math.random()}`,t:R.race.t,carId:c.id,name:c.name,text,kind});while(R.radio.length>40)R.radio.shift();};
   const massOf=c=>c.massKg||c.classPerformance?.massKg||massTable[c.type]||1100,spinKind=s=>s<.46?'LIGHT':s<.74?'MAJOR':'VIOLENT';
-  const markVelocityAuthority=c=>{if(c)c._physicalVelocityAuthorityAt=Number(R.race?.t)||0;};
+  const markVelocityAuthority=c=>{if(c){c._physicalVelocityAuthorityAt=Number(R.race?.t)||0;c.incident=Math.max(Number(c.incident)||0,.02);}};
   const pairCode=(a,b)=>{const x=Number(a.id)&255,y=Number(b.id)&255;return x<y?(x<<8)|y:(y<<8)|x;};
   for(const c of R.cars)c.damageZones=c.damageZones||{front:0,rear:0,left:0,right:0,suspension:0};
 
