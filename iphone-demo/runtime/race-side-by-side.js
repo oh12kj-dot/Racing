@@ -6,14 +6,12 @@ export function createRace(W,statusEl,settings={}){
   const frameRateAlpha=(per60,dt)=>{const a=clamp(Number(per60)||0,0,.999),frames=Math.max(0,Number(dt)||0)*60;return 1-Math.pow(1-a,frames);};
   function longGap(a,b){const d=Math.abs(((b.s-a.s)%total+total)%total);return Math.min(d,total-d);}
   function reserveSideBySide(dt){
-    if(R.sessionPhase==='QUALIFYING'||R.sessionPhase==='FORMATION'||R.flag!=='GREEN')return;const now=R.race.t,proposals=new Map();for(const [k,x] of [...reservations])if(x.until<now)reservations.delete(k);
-    const propose=(car,target,blend)=>{let p=proposals.get(car.id);if(!p){p={base:Number.isFinite(Number(car.laneTarget))?Number(car.laneTarget):Number(car.lane)||0,delta:0,weight:0};proposals.set(car.id,p);}p.delta+=(target-p.base)*blend;p.weight+=blend;};
+    if(R.sessionPhase==='QUALIFYING'||R.sessionPhase==='FORMATION'||R.flag!=='GREEN')return;const now=R.race.t;for(const [k,x] of [...reservations])if(x.until<now)reservations.delete(k);
     for(let i=0;i<R.cars.length;i++)for(let j=i+1;j<R.cars.length;j++){
       const a=R.cars[i],b=R.cars[j];if(a.retired||b.retired||a.pitState!=='NONE'||b.pitState!=='NONE'||a.hazardAvoiding||b.hazardAvoiding)continue;const body=((a.length||5)+(b.length||5))*.5,lg=longGap(a,b);if(lg>body+5.5)continue;
       const desired=((a.width||2)+(b.width||2))*.5+.42,lat=Math.abs((a.lane||0)-(b.lane||0));if(lat>desired+1.4)continue;const key=pairKey(a,b),existing=reservations.get(key);let low,high;if(existing){low=existing.low;high=existing.high;}else{const aLow=(a.lane||0)<(b.lane||0)||((a.lane||0)===(b.lane||0)&&a.id<b.id);low=aLow?a.id:b.id;high=aLow?b.id:a.id;}reservations.set(key,{low,high,until:now+.75});
-      const mid=clamp(((a.lane||0)+(b.lane||0))*.5,-3.72+desired*.5,3.72-desired*.5),lo=byId.get(low),hi=byId.get(high);if(lo&&hi){const blendPer60=clamp(.18+Math.max(0,desired-lat)*.10,.18,.34),blend=frameRateAlpha(blendPer60,dt);propose(lo,mid-desired*.5,blend);propose(hi,mid+desired*.5,blend);lo.avoid=Math.max(lo.avoid||0,.55);hi.avoid=Math.max(hi.avoid||0,.55);}
+      const mid=clamp(((a.lane||0)+(b.lane||0))*.5,-3.72+desired*.5,3.72-desired*.5),lo=byId.get(low),hi=byId.get(high);if(lo&&hi){const blendPer60=clamp(.18+Math.max(0,desired-lat)*.10,.18,.34),blend=frameRateAlpha(blendPer60,dt);lo.laneTarget+=(mid-desired*.5-lo.laneTarget)*blend;hi.laneTarget+=(mid+desired*.5-hi.laneTarget)*blend;lo.avoid=Math.max(lo.avoid||0,.55);hi.avoid=Math.max(hi.avoid||0,.55);}
     }
-    for(const [id,p] of proposals){const c=byId.get(id);if(!c)continue;const scale=p.weight>1?1/p.weight:1;c.laneTarget=clamp(p.base+p.delta*scale,-3.72,3.72);}
   }
   function isSideRub(a,b,e){if(!a||!b)return false;const body=((a.length||5)+(b.length||5))*.5,lg=longGap(a,b),lat=Math.abs((a.lane||0)-(b.lane||0)),rel=Math.abs((a.v||0)-(b.v||0)),sideBySide=lg<body+1.8&&lat>((a.width||2)+(b.width||2))*.24,sev=Number(e?.data?.severity)||0;return sideBySide&&rel<6&&sev<.64;}
   function update(dt){
