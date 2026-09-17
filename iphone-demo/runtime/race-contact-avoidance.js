@@ -26,7 +26,7 @@ export function createRace(W,statusEl,settings={}){
     c.laneTarget=desired;
   }
   function predictiveAvoidance(dt){
-    for(const c of R.cars)c.predictiveSpeedCap=null;
+    for(const c of R.cars){const launch=Number(c.launchSpeedCap);c.predictiveSpeedCap=Number.isFinite(launch)&&launch>=0?launch:null;}
     const phase=R.sessionPhase,green=R.flag==='GREEN';if(phase==='QUALIFYING'||phase==='FORMATION'||!green)return;if(raceStartAt===null)raceStartAt=R.race.t;const launchAge=R.race.t-raceStartAt;
     for(const c of R.cars){if(c.retired||c.pitState!=='NONE')continue;const a=nearestAhead(c);if(!a.car)continue;const front=a.car,lat=Math.abs((front.lane||0)-(c.lane||0)),overlapLane=lat<((front.width||2)+(c.width||2))*.58,closing=Math.max(0,c.v-front.v),bodyGap=((front.length||5)+(c.length||5))*.5,reaction=launchAge<11?.42:.26,desired=bodyGap+2+c.v*reaction*.10+closing*.42,usable=Math.max(.05,a.dist-bodyGap),ttc=closing>.15?usable/closing:99;
       if(overlapLane&&a.dist<desired){const urgency=clamp((desired-a.dist)/Math.max(1,desired-bodyGap),0,1),target=Math.max(0,front.v+(1-urgency)*1.8),decel=(c.brakeNominal||c.brake||15)*(launchAge<8?.72:.58),cap=Math.max(target,c.v-decel*dt*(.55+urgency*.65));requestSpeedCap(c,cap);c.overtake=Math.min(c.overtake||0,.35);interventions++;}
