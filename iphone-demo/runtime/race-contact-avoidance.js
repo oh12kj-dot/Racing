@@ -7,6 +7,7 @@ export function createRace(W,statusEl,settings={}){
   function signedGap(a,b){let d=(b?.s||0)-(a?.s||0);if(d>total*.5)d-=total;if(d<-total*.5)d+=total;return d;}
   function spatialFor(c){return(R.spatialNeighbours||W.runtimeSpatialNeighbours)?.get?.(c.id);}
   function nearestAhead(c){const n=spatialFor(c),candidate=n?.aheadView||n?.ahead;if(candidate?.car&&candidate.car!==c&&!candidate.car.retired&&candidate.car.pitState==='NONE')return{car:candidate.car,dist:Number(candidate.dist)||Infinity};let car=null,dist=Infinity;for(const o of R.cars){if(o===c||o.retired||o.pitState!=='NONE')continue;const d=forwardGap(c,o);if(d>0&&d<dist){dist=d;car=o;}}return{car,dist};}
+  function requestSpeedCap(c,cap){const x=Math.max(0,Number(cap)||0),old=Number(c.predictiveSpeedCap);c.predictiveSpeedCap=Number.isFinite(old)?Math.min(old,x):x;}
   function lateralSafety(c){
     if(c.retired||c.pitState!=='NONE')return;
     const current=Number(c.lane)||0;let desired=Number.isFinite(Number(c.laneTarget))?Number(c.laneTarget):current;
@@ -24,15 +25,16 @@ export function createRace(W,statusEl,settings={}){
     c.laneTarget=desired;
   }
   function predictiveAvoidance(dt){
+    for(const c of R.cars)c.predictiveSpeedCap=null;
     const phase=R.sessionPhase,green=R.flag==='GREEN';if(phase==='QUALIFYING'||phase==='FORMATION'||!green)return;if(raceStartAt===null)raceStartAt=R.race.t;const launchAge=R.race.t-raceStartAt;
     for(const c of R.cars){if(c.retired||c.pitState!=='NONE')continue;const a=nearestAhead(c);if(!a.car)continue;const front=a.car,lat=Math.abs((front.lane||0)-(c.lane||0)),overlapLane=lat<((front.width||2)+(c.width||2))*.58,closing=Math.max(0,c.v-front.v),bodyGap=((front.length||5)+(c.length||5))*.5,reaction=launchAge<11?.42:.26,desired=bodyGap+2+c.v*reaction*.10+closing*.42,usable=Math.max(.05,a.dist-bodyGap),ttc=closing>.15?usable/closing:99;
-      if(overlapLane&&a.dist<desired){const urgency=clamp((desired-a.dist)/Math.max(1,desired-bodyGap),0,1),target=Math.max(0,front.v+(1-urgency)*1.8),decel=(c.brakeNominal||c.brake||15)*(launchAge<8?.72:.58);c.v=Math.max(target,c.v-decel*dt*(.55+urgency*.65));c.overtake=Math.min(c.overtake||0,.35);interventions++;}
-      if(overlapLane&&ttc<1.45){c.v=Math.min(c.v,front.v+Math.max(0,(ttc-.45)*1.5));c.avoid=Math.max(c.avoid||0,.65);}
+      if(overlapLane&&a.dist<desired){const urgency=clamp((desired-a.dist)/Math.max(1,desired-bodyGap),0,1),target=Math.max(0,front.v+(1-urgency)*1.8),decel=(c.brakeNominal||c.brake||15)*(launchAge<8?.72:.58),cap=Math.max(target,c.v-decel*dt*(.55+urgency*.65));requestSpeedCap(c,cap);c.overtake=Math.min(c.overtake||0,.35);interventions++;}
+      if(overlapLane&&ttc<1.45){requestSpeedCap(c,front.v+Math.max(0,(ttc-.45)*1.5));c.avoid=Math.max(c.avoid||0,.65);}
       if(launchAge<9&&a.dist<38){const keep=clamp(.16+(9-launchAge)*.018,.16,.32);c.laneTarget+=(c.lane-c.laneTarget)*keep;c.avoid=Math.max(c.avoid||0,.30);}
       if(a.dist<bodyGap+1.2){const safeLat=((front.width||2)+(c.width||2))*.53+.20,delta=(c.lane||0)-(front.lane||0);if(Math.abs(delta)<safeLat){const dir=delta===0?(c.id%2?1:-1):Math.sign(delta),respect=1-clamp((c.driver?.aggression||.6)-.45,0,.45)*.35;c.laneTarget=clamp(c.laneTarget+dir*(safeLat-Math.abs(delta))*.20*respect,-3.75,3.75);}}
     }
     for(const c of R.cars)lateralSafety(c);
   }
   function update(dt){predictiveAvoidance(dt);baseUpdate(dt);}
-  return new Proxy(R,{get(target,prop){if(prop==='update')return update;if(prop==='collisionAvoidance')return{raceStartAt,interventions,lateralVetoes,mode:'predictive-only-physical-obb-authoritative',spatialGrid:!!(R.spatialNeighbours||W.runtimeSpatialNeighbours)};return Reflect.get(target,prop,target);}});
+  return new Proxy(R,{get(target,prop){if(prop==='update')return update;if(prop==='collisionAvoidance')return{raceStartAt,interventions,lateralVetoes,mode:'predictive-cap-physical-obb-authoritative',spatialGrid:!!(R.spatialNeighbours||W.runtimeSpatialNeighbours)};return Reflect.get(target,prop,target);}});
 }
