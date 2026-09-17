@@ -23,7 +23,7 @@ test('extra pit service preserves the captured stop position instead of snapping
     if(c.pitState!=='STOP'||!Number.isFinite(captured))return{supported:true,box,first,afterCapture};
     c.pitTimer=.001;c._pitStopInitial=.001;
     R.update(.05);
-    return{supported:true,box,captured,first,afterCapture,afterExtra:{state:c.pitState,phase:c._runtimePitPhase,s:c.s,serviceS:c._runtimePitServiceS,pitTimer:c.pitTimer},strategy:R.strategyFor?.(c.id)};
+    return{supported:true,box,captured,first,afterCapture,afterExtra:{state:c.pitState,phase:c._runtimePitPhase,s:c.s,serviceS:c._runtimePitServiceS,pitTimer:c.pitTimer}};
   });
   expect(r.supported).toBeTruthy();
   expect(r.first?.state,JSON.stringify(r)).toBe('ENTRY');
