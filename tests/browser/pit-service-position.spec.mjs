@@ -17,13 +17,16 @@ test('extra pit service preserves the captured stop position instead of snapping
     const box=W.pitBoxS(c.teamId),total=W.total||1,serviceS=((box-.10)%total+total)%total;
     c.retired=false;c.damage=.32;c.s=serviceS;c.v=.7;c.pitState='ENTRY';c._runtimePitPhase='WORKING_APPROACH';c._runtimePitQueued=false;c._runtimeReleaseWait=false;c.pitTimer=0;c._runtimePitServiceS=null;c._runtimePitStopCaptureDistance=0;
     R.update(.05);
-    const captured=Number(c._runtimePitServiceS),afterCapture={state:c.pitState,phase:c._runtimePitPhase,s:c.s,captured};
-    if(c.pitState!=='STOP'||!Number.isFinite(captured))return{supported:true,box,afterCapture};
+    const first={state:c.pitState,phase:c._runtimePitPhase,s:c.s,serviceS:c._runtimePitServiceS};
+    let ticks=1;while(ticks<30&&c.pitState!=='STOP'){R.update(.05);ticks++;}
+    const captured=c._runtimePitServiceS==null?null:Number(c._runtimePitServiceS),afterCapture={state:c.pitState,phase:c._runtimePitPhase,s:c.s,captured,ticks};
+    if(c.pitState!=='STOP'||!Number.isFinite(captured))return{supported:true,box,first,afterCapture};
     c.pitTimer=.001;c._pitStopInitial=.001;
     R.update(.05);
-    return{supported:true,box,captured,afterCapture,afterExtra:{state:c.pitState,phase:c._runtimePitPhase,s:c.s,serviceS:c._runtimePitServiceS,pitTimer:c.pitTimer},strategy:R.strategyFor?.(c.id)};
+    return{supported:true,box,captured,first,afterCapture,afterExtra:{state:c.pitState,phase:c._runtimePitPhase,s:c.s,serviceS:c._runtimePitServiceS,pitTimer:c.pitTimer},strategy:R.strategyFor?.(c.id)};
   });
   expect(r.supported).toBeTruthy();
+  expect(r.first?.state,JSON.stringify(r)).toBe('ENTRY');
   expect(r.afterCapture?.state,JSON.stringify(r)).toBe('STOP');
   expect(Number.isFinite(r.captured),JSON.stringify(r)).toBeTruthy();
   expect(Math.abs(r.captured-r.box),JSON.stringify(r)).toBeGreaterThan(.02);
