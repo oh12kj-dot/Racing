@@ -46,7 +46,7 @@ export function createRace(W,statusEl,settings={}){
   }
   function defer(c,eventStart,radioStart,why){
     const p=planFor(c);p.deferred++;p.holdReason=why;p.earliest=Math.max(p.earliest,R.race.t+(why==='STAY OUT · SHORT RACE'?7:2.8));
-    c.pitState='NONE';c.pitTimer=0;c.pitLaneStatus='TRACK';c.laneTarget*=.82;
+    c.pitState='NONE';c.pitTimer=0;c.pitLaneStatus='TRACK';if(W.runtimeRacecraftAuthority!=='runtime-racecraft-v2')c.laneTarget*=.82;
     if(c.strategy){c.strategy.window='HOLD';c.strategy.reason=why;}
     removeNewPitMessages(c.id,eventStart,radioStart);
   }
