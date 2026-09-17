@@ -6,7 +6,7 @@ export function createRace(W,statusEl,settings={}){
   function forwardGap(a,b){return wrap((b?.s||0)-(a?.s||0));}
   function signedGap(a,b){let d=(b?.s||0)-(a?.s||0);if(d>total*.5)d-=total;if(d<-total*.5)d+=total;return d;}
   function spatialFor(c){return(R.spatialNeighbours||W.runtimeSpatialNeighbours)?.get?.(c.id);}
-  function nearestAhead(c){const n=spatialFor(c),candidate=n?.aheadView||n?.ahead;if(candidate?.car&&candidate.car!==c&&!candidate.car.retired&&candidate.car.pitState==='NONE')return{car:candidate.car,dist:Number(candidate.dist)||Infinity};let car=null,dist=Infinity;for(const o of R.cars){if(o===c||o.retired||o.pitState!=='NONE')continue;const d=forwardGap(c,o);if(d>0&&d<dist){dist=d;car=o;}}return{car,dist};}
+  function nearestAhead(c){let car=null,dist=Infinity;for(const o of R.cars){if(o===c||o.retired||o.pitState!=='NONE')continue;const laneGap=Math.abs((o.lane||0)-(c.lane||0)),sameChannel=laneGap<((o.width||2)+(c.width||2))*.58;if(!sameChannel)continue;const d=forwardGap(c,o);if(d>0&&d<dist){dist=d;car=o;}}return{car,dist};}
   function requestSpeedCap(c,cap){const x=Math.max(0,Number(cap)||0),old=Number(c.predictiveSpeedCap);c.predictiveSpeedCap=Number.isFinite(old)?Math.min(old,x):x;}
   function frameRateAlpha(per60,dt){const a=clamp(Number(per60)||0,0,.999),frames=Math.max(0,Number(dt)||0)*60;return 1-Math.pow(1-a,frames);}
   function lateralSafety(c){
