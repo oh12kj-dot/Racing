@@ -115,6 +115,7 @@ export function createTrajectoryController(W,R,{mobile=false}={}){
     for(let i=0;i<cars.length;i++)for(let j=i+1;j<cars.length;j++){
       const a=cars[i],b=cars[j],code=i*64+j;if(a.retired||b.retired||a.pitState!=='NONE'||b.pitState!=='NONE'||!a.mesh||!b.mesh){contactLatch.delete(code);continue;}
       if(!overlapOBB(a,b)){contactLatch.delete(code);continue;}
+      if(R.resolvePhysicalPair?.(a,b)){contactLatch.add(code);continue;}
       if(recentPhysical(a,b)||recentEventContact(a,b,now)){contactLatch.add(code);continue;}
       if(contactLatch.has(code))continue;contactLatch.add(code);
       const rel=Math.hypot(((a.v||0)-(b.v||0))*3.6,((a.lateralVelocity||0)-(b.lateralVelocity||0))*3.6),sev=clamp((rel-6)/95,0,1),dmg=.004+sev*.075;a.damage=clamp((a.damage||0)+dmg,0,1);b.damage=clamp((b.damage||0)+dmg,0,1);
