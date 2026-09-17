@@ -121,7 +121,7 @@ export function createTrajectoryController(W,R,{mobile=false}={}){
       R.events?.push({id:`traj-contact-${Date.now()}-${i}-${j}`,type:'CONTACT',t:now,carId:a.id,data:{otherId:b.id,physical:true,trajectoryAudit:true,impactKmh:Math.round(rel),severity:sev}});metrics.unhandledContacts++;
     }
   }
-  function update(dt,snapshot){const step=clamp(Number(dt)||.016,.001,.05);for(const c of R.cars||[])updateCar(c,step,snapshot?.[c.id]);R.resolvePhysicalContacts?.(true);auditContacts();metrics.updates++;}
+  function update(dt,snapshot){const step=clamp(Number(dt)||.016,.001,.05);for(const c of R.cars||[])updateCar(c,step,snapshot?.[c.id]);R.resolvePhysicalContacts?.(false);auditContacts();metrics.updates++;}
   function diagnostics(){return{owner:'runtime-trajectory-controller-v4-physical-sync',...metrics,snapshotAllocations:1,contactLatches:contactLatch.size,cars:[...states.entries()].map(([id,s])=>({id,lane:s.lane,laneV:s.laneV,laneA:s.laneA,yawError:s.yawError,steer:s.steer,target:s.target,contactLong:s.contactLong,source:s.source}))};}
   return{capture,update,diagnostics};
 }
