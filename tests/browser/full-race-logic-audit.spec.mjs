@@ -47,7 +47,7 @@ test('pit release safety uses time-to-collision for a fast car arriving from beh
 test('contact layers no longer erase physical contact outcomes after the fact',()=>{
   const contact=readFileSync(new URL('../../iphone-demo/runtime/race-contact-avoidance.js',import.meta.url),'utf8');
   const side=readFileSync(new URL('../../iphone-demo/runtime/race-side-by-side.js',import.meta.url),'utf8');
-  expect(contact).toContain("mode:'predictive-only-physical-obb-authoritative'");
+  expect(contact).toContain("mode:'predictive-cap-physical-obb-authoritative'");
   expect(contact).not.toContain('suppressedFalseContacts');expect(contact).not.toContain('damage=b.damage');
   expect(side).toContain("contactPolicy:'physical-contact-authoritative'");
   expect(side).not.toContain('puncture=false');expect(side).not.toContain('events.push=function');
@@ -73,4 +73,16 @@ test('normal green longitudinal control yields to local safety speed authorities
   expect(clear).toContain('!c.hydroplaning');
   expect(clear).toContain('!punctured(c)');
   expect(source).toContain("const punctured=c=>c?.fault==='PUNCTURE'");
+});
+
+test('predictive collision braking requests a cap that the final longitudinal owner enforces',()=>{
+  const contact=readFileSync(new URL('../../iphone-demo/runtime/race-contact-avoidance.js',import.meta.url),'utf8');
+  const base=readFileSync(new URL('../../iphone-demo/runtime/race-base.js',import.meta.url),'utf8');
+  expect(contact).toContain('c.predictiveSpeedCap=null');
+  expect(contact).toContain('requestSpeedCap(c,cap)');
+  expect(contact).toContain('requestSpeedCap(c,front.v+');
+  expect(contact).not.toContain('c.v=Math.max(target');
+  expect(base).toContain('const safetyCap=Number(c.predictiveSpeedCap)');
+  expect(base).toContain('if(safetyActive&&c.v>safetyCap)');
+  expect(base).toContain('safetyCap:c.racingSafetyCap??null');
 });
