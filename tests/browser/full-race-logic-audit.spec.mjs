@@ -84,6 +84,7 @@ test('predictive collision braking requests a cap that the final longitudinal ow
   expect(contact).not.toContain('c.v=Math.max(target');
   expect(base).toContain('const safetyCap=Number(c.predictiveSpeedCap)');
   expect(base).toContain('if(safetyActive&&c.v>safetyCap)');
+  expect(base).toContain('physicalSafetyLimit=Math.max(safetyCap,before-brakeAvail*dt)');
   expect(base).toContain('safetyCap:c.racingSafetyCap??null');
 });
 
@@ -93,4 +94,12 @@ test('deferred pit strategy does not overwrite racecraft lane intent',()=>{
   expect(start).toBeGreaterThanOrEqual(0);expect(end).toBeGreaterThan(start);
   expect(body).toContain("if(W.runtimeRacecraftAuthority!=='runtime-racecraft-v2')c.laneTarget*=.82");
   expect(writes).toHaveLength(1);
+});
+
+test('physical contact owns velocity through the contact frame',()=>{
+  const source=readFileSync(new URL('../../iphone-demo/runtime/race-physical.js',import.meta.url),'utf8');
+  expect(source).toContain('c._physicalVelocityAuthorityAt=Number(R.race?.t)||0');
+  expect(source).toContain('c.incident=Math.max(Number(c.incident)||0,.02)');
+  expect(source).toContain('markVelocityAuthority(c);c.v*=speedMul');
+  expect(source).toContain('markVelocityAuthority(a);markVelocityAuthority(b)');
 });
