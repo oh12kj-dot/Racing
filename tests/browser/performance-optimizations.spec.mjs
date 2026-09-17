@@ -32,7 +32,7 @@ test('quality-preserving performance runtime is active',async({page})=>{
   expect(r.gridSize,JSON.stringify(r)).toBeGreaterThanOrEqual(20);
   expect(r.ui?.hz).toBe(12);
   expect(r.strategy?.owner).toBe('runtime-strategy-authority-v2');
-  expect(r.strategy?.decisionRate).toBe('half-fleet-per-frame');
+  expect(r.strategy?.decisionRate).toBe('time-based-30hz');
   expect(r.strategy?.decisionUpdates,JSON.stringify(r)).toBeGreaterThan(0);
   expect(r.strategy?.decisionSkips,JSON.stringify(r)).toBeGreaterThan(0);
   expect(r.collision?.spatialGrid).toBe(true);
