@@ -87,13 +87,14 @@ export function createRace(W,statusEl,settings={}){
     if(c.pitState!=='NONE')posePit(c);else if(c._v41PitManaged===false)c.pitLaneStatus='TRACK';
   }
 
-  // Hazard-only spatial grid supplements the cheap race-order broad phase during pile-ups.
+  // Hazard-only spatial grid is retained only as a fallback when the physical authority is unavailable.
   const extraLatch=new Set(),shapeA={},shapeB={};
   function fillShape(c,o){const y=c.mesh.rotation.y||0;o.fx=Math.sin(y);o.fz=Math.cos(y);o.rx=Math.cos(y);o.rz=-Math.sin(y);o.L=(c.length||5.1)*.5;o.W=(c.width||2)*.5;o.x=c.mesh.position.x;o.z=c.mesh.position.z;}
   function rad(o,x,z){return o.L*Math.abs(o.fx*x+o.fz*z)+o.W*Math.abs(o.rx*x+o.rz*z);}
   function overlapOBB(a,b){fillShape(a,shapeA);fillShape(b,shapeB);const dx=shapeB.x-shapeA.x,dz=shapeB.z-shapeA.z,axes=[[shapeA.fx,shapeA.fz],[shapeA.rx,shapeA.rz],[shapeB.fx,shapeB.fz],[shapeB.rx,shapeB.rz]];for(const [x,z] of axes){const l=Math.hypot(x,z)||1,ax=x/l,az=z/l;if(rad(shapeA,ax,az)+rad(shapeB,ax,az)-Math.abs(dx*ax+dz*az)<=0)return false;}return true;}
   function recentBaseContact(a,b){const h=R.physicalCrashHistory||[];for(let i=h.length-1;i>=0&&i>=h.length-8;i--){const x=h[i];if(R.race.t-x.t>.20)break;if(x.type==='CAR_CAR'&&((x.a===a.id&&x.b===b.id)||(x.a===b.id&&x.b===a.id)))return true;}return false;}
   function pileupContacts(){
+    if(typeof R.resolvePhysicalContacts==='function')return;
     const hazards=R.cars.filter(c=>!c.retired&&c.pitState==='NONE'&&c.mesh?.visible!==false&&(c.spinState!=='NONE'||(c.v||0)<7||['HEAVY','SEVERE'].includes(c.crashState)));if(!hazards.length)return;
     const cell=12,grid=new Map(),key=(x,z)=>`${Math.floor(x/cell)},${Math.floor(z/cell)}`;for(const c of R.cars){if(c.retired||c.pitState!=='NONE'||c.mesh?.visible===false)continue;const k=key(c.mesh.position.x,c.mesh.position.z);let a=grid.get(k);if(!a)grid.set(k,a=[]);a.push(c);}const live=new Set();
     for(const h of hazards){const cx=Math.floor(h.mesh.position.x/cell),cz=Math.floor(h.mesh.position.z/cell);for(let dx=-1;dx<=1;dx++)for(let dz=-1;dz<=1;dz++){const list=grid.get(`${cx+dx},${cz+dz}`)||[];for(const o of list){if(o===h)continue;const a=Math.min(h.id,o.id),b=Math.max(h.id,o.id),code=a*64+b;if(live.has(code)){continue;}live.add(code);if(recentBaseContact(h,o)||!overlapOBB(h,o))continue;if(extraLatch.has(code))continue;extraLatch.add(code);const rel=Math.abs((h.v||0)-(o.v||0))*3.6+Math.min(h.v||0,o.v||0)*1.2,sev=clamp((rel-12)/150,0,1),dmg=.018+sev*.34;for(const c of[h,o]){c.damage=clamp((c.damage||0)+dmg,0,1);if(c.damage>.90){c.damage=1;c.v=0;c.retired=true;c.fault='CRASH';c.crashState='DESTROYED';}else if(rel>48&&c.spinState==='NONE'){c.spinState='SLIDE';c.spinSeverity=Math.max(c.spinSeverity||0,.45+sev*.4);}W.updateCarDamage?.(c);}R.events?.push({id:`v41pile-${Date.now()}-${Math.random()}`,type:'CONTACT',t:R.race.t,carId:h.id,data:{otherId:o.id,physical:true,pileup:true,impactKmh:Math.round(rel),severity:sev}});}}}
