@@ -86,3 +86,10 @@ test('predictive collision braking requests a cap that the final longitudinal ow
   expect(base).toContain('if(safetyActive&&c.v>safetyCap)');
   expect(base).toContain('safetyCap:c.racingSafetyCap??null');
 });
+
+test('deferred pit strategy does not overwrite racecraft lane intent',()=>{
+  const source=readFileSync(new URL('../../iphone-demo/runtime/race-pit-strategy.js',import.meta.url),'utf8');
+  expect(source).toContain("if(W.runtimeRacecraftAuthority!=='runtime-racecraft-v2')c.laneTarget*=.82");
+  const start=source.indexOf('function defer('),end=source.indexOf('\n  function admit',start),body=source.slice(start,end);
+  expect(body).not.toContain("c.laneTarget*=.82;\n    if(c.strategy)");
+});
