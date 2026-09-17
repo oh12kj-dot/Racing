@@ -47,6 +47,7 @@ export function advancePitExitAfterLimiter(W,c,dt=.016,beforeV=null,raceTime=0){
 }
 
 export function createRace(W,statusEl,settings={}){
+  W.runtimeTrajectoryControl='runtime-trajectory-controller-v3-pooled';
   const R=createSpectatorRace(W,statusEl,settings),baseUpdate=R.update,beforeSpeed=new Float64Array(Math.max(1,R.cars?.length||20));
   const mobile=!!globalThis.matchMedia?.('(pointer:coarse)')?.matches,trajectory=createTrajectoryController(W,R,{mobile});
   let limiterReleases=0,mergeReleases=0,updates=0;
