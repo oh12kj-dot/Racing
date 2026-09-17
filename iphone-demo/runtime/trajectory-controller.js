@@ -27,12 +27,13 @@ export function createTrajectoryController(W,R,{mobile=false}={}){
   }
   function legacyIntent(c){return clamp(Number.isFinite(Number(c.laneTarget))?Number(c.laneTarget):Number(c.lane)||0,-3.65,3.65);}
   function intent(c){
-    const legacy=legacyIntent(c),ideal=lineAt(c),phase=String(c._runtimePitPhase||'');
+    const legacy=legacyIntent(c),ideal=lineAt(c),phase=String(c._runtimePitPhase||''),launchAge=(Number(R.race?.t)||0)-(Number(R.race?.green)||0);
     if(String(R.flag||'GREEN')!=='GREEN')return{target:legacy,source:'CAUTION'};
     if(c.pitState==='ENTRY'&&!W.inPitWindow?.(c.s)){metrics.pitApproaches++;return{target:legacy,source:'PIT_APPROACH'};}
     if(phase==='MERGE'){metrics.mergeFrames++;return{target:ideal,source:'PIT_MERGE'};}
     if(c.hazardAvoiding)return{target:legacy,source:'HAZARD'};
     if((c.avoid||0)>.05)return{target:legacy,source:'COLLISION_AVOID'};
+    if(launchAge>=0&&launchAge<8)return{target:legacy,source:'LAUNCH'};
     if(c.blueFlag)return{target:legacy,source:'BLUE_FLAG'};
     if(c.battleState==='ATTACK'||c.racecraftState==='ATTACK'||c.racecraftState==='SWITCHBACK')return{target:legacy,source:'ATTACK'};
     if(c.battleState==='DEFEND'||c.racecraftState==='DEFEND')return{target:legacy,source:'DEFEND'};
