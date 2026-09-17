@@ -89,7 +89,8 @@ test('predictive collision braking requests a cap that the final longitudinal ow
 
 test('deferred pit strategy does not overwrite racecraft lane intent',()=>{
   const source=readFileSync(new URL('../../iphone-demo/runtime/race-pit-strategy.js',import.meta.url),'utf8');
-  expect(source).toContain("if(W.runtimeRacecraftAuthority!=='runtime-racecraft-v2')c.laneTarget*=.82");
-  const start=source.indexOf('function defer('),end=source.indexOf('\n  function admit',start),body=source.slice(start,end);
-  expect(body).not.toContain("c.laneTarget*=.82;\n    if(c.strategy)");
+  const start=source.indexOf('function defer('),end=source.indexOf('\n  function admit',start),body=source.slice(start,end),writes=body.match(/c\.laneTarget\*=\.82/g)||[];
+  expect(start).toBeGreaterThanOrEqual(0);expect(end).toBeGreaterThan(start);
+  expect(body).toContain("if(W.runtimeRacecraftAuthority!=='runtime-racecraft-v2')c.laneTarget*=.82");
+  expect(writes).toHaveLength(1);
 });
