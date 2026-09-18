@@ -96,7 +96,9 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
   scene.updateMatrixWorld(true);
 
   let remainingTrack=0,remainingPit=0;
-  for(const r of rows){if(r.visible===false||r.protectedSpan)continue;if(r.trackHit)remainingTrack++;if(r.pitHit)remainingPit++;}
+  function refreshRemaining(){remainingTrack=0;remainingPit=0;for(const r of rows){if(r.visible===false||r.protectedSpan)continue;if(r.trackHit)remainingTrack++;if(r.pitHit)remainingPit++;}}
+  refreshRemaining();
+  W.enforceSceneryClearance=(objects,source='late-scene')=>{for(const o of(Array.isArray(objects)?objects:[objects]))inspectObject(o,source);scene.updateMatrixWorld(true);refreshRemaining();return{suppressed,suppressedTrack,suppressedPit,remainingTrack,remainingPit,valid:remainingTrack===0&&remainingPit===0};};
 
   W.tvCameraAnchors=[{name:'T1/T2',fraction:.035,side:-1,lateral:48,height:14,fov:42},{name:'S CURVES',fraction:.115,side:1,lateral:42,height:12,fov:46},{name:'DUNLOP',fraction:.215,side:1,lateral:46,height:13,fov:44},{name:'DEGNER',fraction:.315,side:-1,lateral:42,height:11,fov:45},{name:'HAIRPIN',fraction:.425,side:1,lateral:38,height:10,fov:43},{name:'SPOON',fraction:.615,side:-1,lateral:48,height:12,fov:46},{name:'130R',fraction:.845,side:-1,lateral:44,height:13,fov:44},{name:'CHICANE',fraction:.925,side:1,lateral:40,height:12,fov:42},{name:'MAIN STRAIGHT',fraction:.992,side:-1,lateral:55,height:15,fov:40}].map(x=>{const q=W.sample(total*x.fraction),p=q.p.clone().addScaledVector(q.side,x.side*x.lateral);p.y+=(x.height||12);return{...x,s:total*x.fraction,position:p};});
   const absoluteLandmarks={};for(const r of rows){if(!/FERRIS|HOTEL|GRANDSTAND|CONTROL_TOWER|POND|MAIN_GATE|GP_SQUARE|CENTER|PADDOCK/i.test(r.name))continue;absoluteLandmarks[r.name]={...r.position,rotationY:r.rotationY,source:r.source};}
