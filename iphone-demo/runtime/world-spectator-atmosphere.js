@@ -4,7 +4,7 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
   const W=buildPlacedWorld(THREE,TRACK,settings,circuitName),root=new THREE.Group();root.name='SPECTATOR_ATMOSPHERE_V2';W.scene.add(root);
   const total=Math.max(1,Number(W.total)||1),mobile=matchMedia?.('(pointer:coarse)')?.matches||innerWidth<760;
   const crowdCount=mobile?72:132,cameraCount=mobile?5:9,marshalCount=mobile?8:14,serviceCount=mobile?2:4;
-  const diagnostics={owner:'runtime-spectator-atmosphere-v2',crowdCount:0,cameraCount:0,marshalCount:0,serviceCount:0,clearance:null};
+  const diagnostics={owner:'runtime-spectator-atmosphere-v2',crowdCount:0,cameraCount:0,marshalCount:0,serviceCount:0};
   const skin=new THREE.MeshStandardMaterial({color:0xc89a78,roughness:.9}),cloth=new THREE.MeshStandardMaterial({color:0x334d6a,roughness:.86}),orange=new THREE.MeshStandardMaterial({color:0xff6517,roughness:.82}),dark=new THREE.MeshStandardMaterial({color:0x1c2329,roughness:.78}),white=new THREE.MeshStandardMaterial({color:0xe5e7e8,roughness:.72}),glass=new THREE.MeshStandardMaterial({color:0x263b48,roughness:.28,metalness:.12});
   const crowdBodyGeo=new THREE.CapsuleGeometry(.14,.42,2,4),crowdHeadGeo=new THREE.SphereGeometry(.12,5,4),crowdBodies=new THREE.InstancedMesh(crowdBodyGeo,cloth,crowdCount),crowdHeads=new THREE.InstancedMesh(crowdHeadGeo,skin,crowdCount),dummy=new THREE.Object3D();
   crowdBodies.name='SPECTATOR_CROWD_BODIES_V2';crowdHeads.name='SPECTATOR_CROWD_HEADS_V2';root.add(crowdBodies,crowdHeads);
@@ -25,18 +25,12 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
   function serviceVehicle(s,side,index){const q=W.sample(s,side*(34+index*3)),g=new THREE.Group();g.name=`SERVICE_VEHICLE_V2_${index}`;g.position.copy(q.p);g.rotation.y=Math.atan2(q.t.x,q.t.z);root.add(g);const body=new THREE.Mesh(new THREE.BoxGeometry(2.0,.72,4.2),index%2?orange:white);body.position.y=.62;g.add(body);const cab=new THREE.Mesh(new THREE.BoxGeometry(1.85,.72,1.65),white);cab.position.set(0,1.18,-.70);g.add(cab);for(const x of[-.82,.82])for(const z of[-1.28,1.28]){const wheel=new THREE.Mesh(new THREE.CylinderGeometry(.31,.31,.20,8),dark);wheel.rotation.z=Math.PI/2;wheel.position.set(x,.34,z);g.add(wheel);}diagnostics.serviceCount++;}
   for(let i=0;i<serviceCount;i++)serviceVehicle(total*(.18+i*.21),i%2?1:-1,i);
 
-  // These groups are added after the main placement validator. Re-run the same
-  // driveable-corridor guard so a marshal post/camera/service vehicle cannot land
-  // on another branch of Suzuka's figure-eight or inside the pit-entry path.
-  const lateGroups=root.children.filter(o=>o?.isGroup);
-  diagnostics.clearance=W.enforceSceneryClearance?.(lateGroups,'spectator-atmosphere')||null;
-
   const previousUpdate=W.updateTrackside?.bind(W);
   W.updateTrackside=(flag,race,standings=[])=>{
     previousUpdate?.(flag,race,standings);const t=Number(race?.t)||0,final=standings[0]&&standings[0].lap>=Math.max(0,(race?.lapsTarget||1)-1);
     for(const x of flags){x.flag.material.color.setHex(final?0xffffff:(flag==='SC'||flag==='VSC'||flag==='YELLOW')?0xffdd24:flag==='RED'?0xe52d2d:0x42d46a);x.flag.rotation.y=Math.sin(t*6.5+x.seed)*.14;x.flag.rotation.z=Math.sin(t*4.2+x.seed*.7)*.08;}
   };
   W.spectatorAtmosphere=diagnostics;
-  const priorAudit=W.auditCircuit?.bind(W);W.auditCircuit=()=>{const a=priorAudit?priorAudit():{};return{...a,spectatorAtmosphere:{...diagnostics},notes:[...(a.notes||[]),'Trackside spectator atmosphere adds lightweight crowd, marshal, broadcast-camera and service-vehicle context without changing simulation geometry; late groups are revalidated against track and pit corridors.']};};
+  const priorAudit=W.auditCircuit?.bind(W);W.auditCircuit=()=>{const a=priorAudit?priorAudit():{};return{...a,spectatorAtmosphere:{...diagnostics},notes:[...(a.notes||[]),'Trackside spectator atmosphere adds lightweight crowd, marshal, broadcast-camera and service-vehicle context without changing simulation geometry.']};};
   W.circuitAudit=W.auditCircuit();return W;
 }
