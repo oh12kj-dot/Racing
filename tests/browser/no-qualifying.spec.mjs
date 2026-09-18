@@ -16,14 +16,16 @@ async function boot(page){
   expect(state.ready,state.error||'runtime race was not created').toBeTruthy();
 }
 
-test('qualifying implementation is removed from the active session controller',()=>{
+test('qualifying implementation is removed from the active race runtime',()=>{
   const championship=readFileSync(new URL('../../iphone-demo/runtime/race-championship-core.js',import.meta.url),'utf8');
   const gridLock=readFileSync(new URL('../../iphone-demo/runtime/race-grid-lock.js',import.meta.url),'utf8');
+  const raceBase=readFileSync(new URL('../../iphone-demo/runtime/race-base.js',import.meta.url),'utf8');
   expect(championship).not.toContain("sessionPhase='QUALIFYING'");
   expect(championship).not.toContain('qualifyingClock');
   expect(championship).not.toContain('POLE POSITION');
   expect(championship).not.toContain("prop==='qualifying'");
   expect(gridLock).not.toContain("phase==='QUALIFYING'");
+  expect(raceBase).not.toContain("sessionPhase==='QUALIFYING'");
 });
 
 test('runtime starts directly in the race session without qualifying data',async({page})=>{
