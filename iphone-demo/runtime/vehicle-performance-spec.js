@@ -77,7 +77,7 @@ export function performanceAdvantage(followerType,leaderType){
 
 export function resolveMulticlassPassPlan({followerType='gt',leaderType='gt',gapM=999,closingMps=0,brakingLoad=0,leaderLane=0,halfWidth=3.55}={}){
   const p=performanceFor(followerType),adv=performanceAdvantage(followerType,leaderType),gap=Math.max(0,Number(gapM)||0),closing=Math.max(0,Number(closingMps)||0),load=Math.max(0,Math.min(1,Number(brakingLoad)||0)),limit=Math.max(2.2,Math.min(2.75,Number(halfWidth)||3.55));
-  const eligible=adv.faster&&gap>9&&gap<=p.multiclassPassRangeM&&closing>=p.minPassClosingMps&&load<.52;
+  const eligible=adv.faster&&gap>5.5&&gap<=p.multiclassPassRangeM&&closing>=p.minPassClosingMps&&load<.52;
   const targetLane=(Number(leaderLane)||0)>=0?-limit:limit;
   return{eligible,targetLane,paceDelta:adv.paceDelta,topDelta:adv.topDelta,rangeM:p.multiclassPassRangeM,minClosingMps:p.minPassClosingMps};
 }
