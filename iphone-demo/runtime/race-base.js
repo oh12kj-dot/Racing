@@ -22,7 +22,7 @@ export function createRace(W,statusEl,settings={}){
   function lineValue(c,mode,s=c.s){return clamp(W.racingLineFor?.(s,mode)??W.racingLineAt?.(s)??0,-3.25,3.25);}
   function lineCurv(mode,s){return W.racingCurvatureFor?.(s,mode)??W.racingCurvatureAt?.(s)??W.curvatureAt?.(s)??0;}
   function applyLine(c,dt){
-    if(!clearState(c)||R.flag!=='GREEN'||R.sessionPhase==='FORMATION'||R.sessionPhase==='QUALIFYING')return;
+    if(!clearState(c)||R.flag!=='GREEN'||R.sessionPhase==='FORMATION')return;
     const st=controllers.get(c.id),mode=chooseLine(c),ideal=lineValue(c,mode),traffic=(c.avoid||0)>0||c.blueFlag||c.coolingMode;
     st.line=mode;c.racingLineMode=mode;c.racingLineTarget=ideal;
     // Existing pass/avoid logic owns the lane during close traffic; otherwise use the planned line.
@@ -44,7 +44,7 @@ export function createRace(W,statusEl,settings={}){
   }
   function longitudinal(c,dt,before){
     const st=controllers.get(c.id);if(!st)return;
-    if(!clearState(c)||R.flag!=='GREEN'||R.sessionPhase==='FORMATION'||R.sessionPhase==='QUALIFYING'){
+    if(!clearState(c)||R.flag!=='GREEN'||R.sessionPhase==='FORMATION'){
       st.target=c.v||0;st.raw=st.target;st.accel=0;st.prevAccel=0;st.mode='COAST';st.hold=0;st.jerk=0;c.racingThrottle=0;c.racingBrake=0;c.racingSafetyCap=null;return;
     }
     const mode=st.line||chooseLine(c),x=speedEnvelope(c,mode);st.raw=x.target;
