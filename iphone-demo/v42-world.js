@@ -1,1 +1,1 @@
-export {buildWorld} from './runtime/world-base.js';
+export {buildWorld} from './runtime/world-v42-hygiene.js';
