@@ -121,6 +121,7 @@ export function createRace(W,statusEl,settings={}){
 
   return new Proxy(R,{get(target,prop){
     if(prop==='update')return update;
+    if(prop==='firstLapPitCause')return car=>firstLapCause(car);
     if(prop==='pitTraffic')return{active:activePitCars().map(c=>c.id),recentAdmissions:[...admissions],plans:[...plans].map(([carId,p])=>({carId,...p})),shortRace,runtimeOwner:W.runtimePitStateMachineOwner||null};
     return Reflect.get(target,prop,target);
   }});
