@@ -58,29 +58,10 @@ export function createRace(W,statusEl){
     c.driver.tireCare=Math.max(.65,Math.min(.99,c.driver.tireCare*team.tyre));
     c.driver.wetSkill=Math.max(.65,Math.min(.99,c.driver.wetSkill*team.wet));
     c.fault=null;c.faultFactor=1;c.drsEligible=false;c.drsActive=false;c.battleState='CLEAR';
-    c.lastSectors=[null,null,null];c.bestSectors=[Infinity,Infinity,Infinity];c.sectorIndex=0;c.sectorStart=0;
+    c.lastSectors=[null,null,null];c.bestSectors=[Infinity,Infinity,Infinity];c.sectorIndex=sectorOf(c);c.sectorStart=0;
     c.radioWarnings={wear60:false,wear80:false,drs:false};
     recolorCar(c,team.color);
   });
-
-  // 2) Qualifying: simulated session determines the actual starting grid.
-  const qualifying=base.cars.map(c=>{
-    const machine=(c.machine.power+c.machine.aero+c.machine.brake)/3;
-    const wetPenalty=round.wet>.35?(1-c.driver.wetSkill)*2.4:0;
-    const time=90.7-(c.driver.racecraft-.75)*4.0-(machine-1)*24+wetPenalty+Math.random()*.72;
-    return{carId:c.id,time};
-  }).sort((a,b)=>a.time-b.time);
-  function poseGrid(){
-    qualifying.forEach((q,pos)=>{
-      const c=base.cars[q.carId],row=Math.floor(pos/2),col=pos%2;
-      c.s=wrap(-row*12.4);c.lap=0;c.v=0;c.position=pos+1;c.prevPosition=pos+1;
-      c.lane=(col?-1:1)*2.55+(row%2?.14:-.14);c.laneTarget=c.lane;
-      const p=W.sample(c.s,c.lane);c.mesh.position.copy(p.p);c.mesh.position.y+=.12;c.mesh.rotation.y=Math.atan2(p.t.x,p.t.z);
-    });
-  }
-  poseGrid();
-  let sessionPhase='QUALIFYING',qualifyingClock=0,raceStarted=false;
-  pushRadio(base.cars[qualifying[0].carId],`POLE POSITION · ${qualifying[0].time.toFixed(3)}s`,'QUALI');
 
   // 5) DRS zones.
   const drsZones=[[.955,1],[0,.075],[.555,.635]];
@@ -154,7 +135,6 @@ export function createRace(W,statusEl){
     for(const c of base.cars){
       if(c.retired)continue;
       const s=sectorOf(c);
-      if(!raceStarted){c.sectorIndex=s;c.sectorStart=base.race.t;continue;}
       if(s!==c.sectorIndex){
         const elapsed=Math.max(.001,base.race.t-c.sectorStart),old=c.sectorIndex;
         c.lastSectors[old]=elapsed;c.bestSectors[old]=Math.min(c.bestSectors[old],elapsed);globalBest[old]=Math.min(globalBest[old],elapsed);
@@ -182,13 +162,6 @@ export function createRace(W,statusEl){
   }
 
   function update(dt){
-    if(sessionPhase==='QUALIFYING'){
-      qualifyingClock+=dt;
-      const pole=base.cars[qualifying[0].carId];
-      statusEl.textContent=`QUALIFYING · P1 ${pole.name} ${qualifying[0].time.toFixed(3)}`;
-      if(qualifyingClock>=3.4){sessionPhase='RACE';raceStarted=true;base.cars.forEach(c=>{c.sectorIndex=sectorOf(c);c.sectorStart=0;});pushRadio(null,'GRID SET · PREPARE FOR START','CONTROL');}
-      return;
-    }
     prepareDRSAndBattle(dt);
     base.update(dt);
     for(const c of base.cars)maybeMechanical(c,dt);
@@ -198,8 +171,6 @@ export function createRace(W,statusEl){
   const api=new Proxy(base,{
     get(target,prop){
       if(prop==='update')return update;
-      if(prop==='sessionPhase')return sessionPhase;
-      if(prop==='qualifying')return qualifying;
       if(prop==='teams')return teams;
       if(prop==='radio')return extraRadio;
       if(prop==='globalBestSectors')return globalBest;
