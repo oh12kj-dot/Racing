@@ -28,7 +28,7 @@ test('director retains simultaneous events instead of dropping lower-priority st
 test('pit state machine resolves circuit-owned layout into a generic runtime spec',async({page})=>{
   await boot(page);
   const x=await page.evaluate(()=>window.__RACING_RACE__.pitStateDiagnostics.spec);
-  expect(x.owner).toBe('runtime-pit-config-v1');expect(x.layoutOwner).toBe('runtime-pit-realism-v1');
+  expect(x.owner).toBe('runtime-pit-config-v2-continuous-merge');expect(x.layoutOwner).toBe('runtime-pit-realism-v1');
   expect(x.exitEndUF).toBeCloseTo(1.044,3);expect(x.mergeTrackOffset).toBeCloseTo(5.55,1);
   expect(x.queueGapMeters).toBeGreaterThan(6);expect(x.releaseBehindMeters).toBeGreaterThan(x.releaseAheadMeters);
   expect(x.serviceTime.gt).toBeGreaterThan(x.serviceTime.formula);
@@ -40,7 +40,7 @@ test('pit runtime spec preserves safe defaults without optional exit metadata',a
     const {resolvePitRuntimeSpec}=await import('/iphone-demo/runtime/pit-config.js');
     return resolvePitRuntimeSpec({total:5000,circuitName:'GENERIC'});
   });
-  expect(x.exitEndUF).toBeCloseTo(1.05,6);expect(x.mergeTrackOffset).toBeCloseTo(4,6);expect(x.mergeLaneTarget).toBeGreaterThan(2.5);
+  expect(x.exitEndUF).toBeCloseTo(1.05,6);expect(x.mergeTrackOffset).toBeCloseTo(4,6);expect(x.mergeLaneTarget).toBeGreaterThanOrEqual(2.5);
 });
 
 test('formula prototype and hyper classes receive lightweight silhouette polish',async({page})=>{

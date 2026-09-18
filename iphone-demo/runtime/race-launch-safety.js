@@ -1,4 +1,5 @@
 import {createRace as createV27Race} from './v27-race.js';
+import {projectedSideBySideRisk} from './race-contact-avoidance.js';
 
 export function createRace(W,statusEl,settings={}){
   const R=createV27Race(W,statusEl,settings),baseUpdate=R.update,total=Math.max(1,W.total||1),clamp=(v,a,b)=>Math.max(a,Math.min(b,v)),wrap=v=>((v%total)+total)%total;
@@ -12,10 +13,13 @@ export function createRace(W,statusEl,settings={}){
   function launchDiscipline(dt){
     for(const c of R.cars)c.launchSpeedCap=null;
     const phase=R.sessionPhase;if(phase==='QUALIFYING'||phase==='FORMATION'||R.flag!=='GREEN'||R.race.t<(R.race.green||0))return;if(raceStartAt===null)raceStartAt=R.race.t;const age=R.race.t-raceStartAt;if(age>14)return;
-    for(const c of R.cars){if(c.retired||c.pitState!=='NONE')continue;const a=nearestAhead(c);if(!a.car)continue;const f=a.car,body=((c.length||5)+(f.length||5))*.5,lat=Math.abs((c.lane||0)-(f.lane||0)),sameChannel=lat<((c.width||2)+(f.width||2))*.62;
+    for(const c of R.cars){if(c.retired||c.pitState!=='NONE')continue;const a=nearestAhead(c);if(!a.car)continue;const f=a.car,body=((c.length||5)+(f.length||5))*.5,lat=Math.abs((c.lane||0)-(f.lane||0)),cornerLoad=clamp(Math.max(Number(W.braking?.(c.s))||0,Number(W.braking?.((c.s||0)+24))||0),0,1),parallelRisk=a.dist<=body+2.8?projectedSideBySideRisk(c,f,{horizon:.9,cornerLoad}):null,safelyParallel=!!parallelRisk?.parallelClear,sameChannel=!safelyParallel&&lat<((c.width||2)+(f.width||2))*.62;
+      // Once two cars have established physically separate, non-converging lanes,
+      // launch spacing must not behave like adaptive cruise control. They are racing
+      // side-by-side and may continue accelerating until a real projected conflict exists.
       if(sameChannel&&a.dist<body+9){const clearance=Math.max(0,a.dist-body),room=clamp((clearance-3.5)/5.5,0,1),cap=f.v+.12+room*.45;requestLaunchCap(c,cap);c.overtake=Math.min(c.overtake||0,.22);c.avoid=Math.max(c.avoid||0,.8);}
-      if(a.dist<34){const holdPer60=clamp(.30-age*.012,.14,.30),hold=frameRateAlpha(holdPer60,dt);c.laneTarget+=(c.lane-c.laneTarget)*hold;}
-      for(const o of R.cars){if(o===c||o.retired||o.pitState!=='NONE')continue;const longitudinal=Math.min(Math.abs((o.s||0)-(c.s||0)),total-Math.abs((o.s||0)-(c.s||0)));if(longitudinal>((c.length||5)+(o.length||5))*.55+1.2)continue;const lateral=(c.lane||0)-(o.lane||0),need=((c.width||2)+(o.width||2))*.53+.28;if(Math.abs(lateral)<need){const dir=lateral===0?(c.id%2?1:-1):Math.sign(lateral),step=frameRateAlpha(.22,dt);c.laneTarget=clamp(c.laneTarget+dir*(need-Math.abs(lateral))*step,-3.72,3.72);}}
+      if(a.dist<34&&!safelyParallel){const holdPer60=clamp(.30-age*.012,.14,.30),hold=frameRateAlpha(holdPer60,dt);c.laneTarget+=(c.lane-c.laneTarget)*hold;}
+      for(const o of R.cars){if(o===c||o.retired||o.pitState!=='NONE')continue;const longitudinal=Math.min(Math.abs((o.s||0)-(c.s||0)),total-Math.abs((o.s||0)-(c.s||0)));if(longitudinal>((c.length||5)+(o.length||5))*.55+1.2)continue;const lateral=(c.lane||0)-(o.lane||0),need=((c.width||2)+(o.width||2))*.53+.28;if(Math.abs(lateral)<need){const risk=projectedSideBySideRisk(c,o,{horizon:.8,cornerLoad});if(risk.parallelClear)continue;const dir=lateral===0?(c.id%2?1:-1):Math.sign(lateral),step=frameRateAlpha(.22,dt);c.laneTarget=clamp(c.laneTarget+dir*(need-Math.abs(lateral))*step,-3.72,3.72);}}
     }
   }
   function isHazard(c){return!!c&&!c.recovered&&c.pitState==='NONE'&&(c.retired||c.spinState==='SLIDE'||c.spinState==='RECOVER'||(c.incident||0)>.15||((c.v||0)<7&&R.race.t>(R.race.green||0)+2));}
