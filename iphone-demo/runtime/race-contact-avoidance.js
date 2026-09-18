@@ -33,8 +33,8 @@ export function createRace(W,statusEl,settings={}){
     for(const c of R.cars){const launch=c.launchSpeedCap;c.predictiveSpeedCap=launch!=null&&Number.isFinite(Number(launch))&&Number(launch)>=0?Number(launch):null;}
     const phase=R.sessionPhase,flag=String(R.flag||'GREEN'),caution=flag==='VSC'||flag==='SC',active=flag==='GREEN'||caution;if(phase==='QUALIFYING'||phase==='FORMATION'||!active)return;if(raceStartAt===null)raceStartAt=R.race.t;const launchAge=R.race.t-raceStartAt;
     for(const c of R.cars){
-      if(c.retired||c.pitState!=='NONE')continue;const threats=conflictingAhead(c);if(!threats.length)continue;
-      for(const a of threats){const front=a.car,conflict=laneConflict(c,front),closing=Math.max(0,c.v-front.v),bodyGap=((front.length||5)+(c.length||5))*.5,reaction=caution?.24:launchAge<11?.18:.12,desired=bodyGap+(caution?3.2:2)+c.v*reaction+closing*(caution?.60:launchAge<11?.52:.42),usable=Math.max(.05,a.dist-bodyGap),ttc=closing>.15?usable/closing:99,ttcLimit=caution?1.9:launchAge<11?1.7:1.45;
+      if(c.retired||c.pitState!=='NONE')continue;const threats=conflictingAhead(c);if(!threats.length)continue;const multiThreat=threats.length>1;
+      for(const a of threats){const front=a.car,conflict=laneConflict(c,front),closing=Math.max(0,c.v-front.v),bodyGap=((front.length||5)+(c.length||5))*.5,reaction=caution?.24:launchAge<11?.18:.12,compression=multiThreat?Math.min(2.2,.8+closing*.10):0,desired=bodyGap+(caution?3.2:2)+c.v*reaction+closing*(caution?.60:launchAge<11?.52:.42)+compression,usable=Math.max(.05,a.dist-bodyGap),ttc=closing>.15?usable/closing:99,ttcLimit=caution?1.9:launchAge<11?1.7:1.45;
         if(conflict&&a.dist<desired){const urgency=clamp((desired-a.dist)/Math.max(1,desired-bodyGap),0,1),target=Math.max(0,front.v+(1-urgency)*(caution?.9:1.8)),decel=(c.brakeNominal||c.brake||15)*(caution?.78:launchAge<8?.72:.58),cap=Math.max(target,c.v-decel*dt*(.55+urgency*.65));requestSpeedCap(c,cap);c.overtake=Math.min(c.overtake||0,.35);interventions++;}
         if(conflict&&ttc<ttcLimit){requestSpeedCap(c,front.v+Math.max(0,(ttc-.45)*(caution?.9:1.5)));c.avoid=Math.max(c.avoid||0,.65);}
       }
