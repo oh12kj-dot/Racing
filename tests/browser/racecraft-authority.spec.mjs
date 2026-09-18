@@ -16,12 +16,12 @@ test('racecraft owns lane intent while strategy remains telemetry-only',async({p
     return{authority:W.runtimeRacecraftAuthority,racecraft:R.racecraftDynamics,strategy:R.strategyDynamics,trajectory:R.trajectoryDiagnostics};
   });
   expect(r.authority).toBe('runtime-racecraft-v2');
-  expect(r.racecraft?.owner).toBe('runtime-racecraft-v2');
+  expect(r.racecraft?.owner).toBe('runtime-racecraft-v3-multiclass');
   expect(r.strategy?.racecraftAuthority).toBe('runtime-racecraft-v2');
   expect(r.strategy?.laneIntentMode).toBe('telemetry-only');
   expect(r.strategy?.passesPrepared,JSON.stringify(r.strategy)).toBe(0);
   expect(r.strategy?.defencesPrepared,JSON.stringify(r.strategy)).toBe(0);
-  expect(r.trajectory?.owner).toBe('runtime-trajectory-controller-v4-physical-sync');
+  expect(r.trajectory?.owner).toBe('runtime-trajectory-controller-v5-class-calibrated');
 });
 
 test('driver traits influence racecraft without adding a second attack/defend lane controller',()=>{
