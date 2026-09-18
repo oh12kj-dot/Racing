@@ -97,6 +97,12 @@ export function createPitStateMachine(W,R){
     if(c.retired||c._driveThroughServing||c.pitState!=='ENTRY'||c._runtimePitQueued||!inPitWindow(c)||occupied.has(c.teamId??0))return false;
     const dist=W.pitDistanceToBox?.(c.s,c.teamId),speed=Math.max(0,Number(c.v)||0);if(!Number.isFinite(dist))return false;const capture=pitStopCaptureWindow(speed,dt);return Math.abs(dist)<=capture&&speed<=2.6?startService(c,Math.abs(dist)):false;
   }
+  function advanceWorkingApproach(c,b,dt){
+    if(c.retired||c._driveThroughServing||c.pitState!=='ENTRY'||c._runtimePitQueued||c._runtimePitPhase!=='WORKING_APPROACH'||!b)return false;
+    const step=Math.max(.001,Math.min(.05,Number(dt)||.016)),beforeS=Number.isFinite(Number(b.s))?Number(b.s):Number(c.s)||0,dist=Number(W.pitDistanceToBox?.(beforeS,c.teamId));if(!Number.isFinite(dist)||dist<-.25)return false;
+    const v0=Math.max(0,Number(b.v)||0),brakeCapability=Math.max(6,Math.min(12,Number(c.brake)||10)),captureTarget=.06,remaining=Math.max(0,dist-captureTarget),envelope=Math.sqrt(Math.max(0,2*brakeCapability*remaining)),desired=Math.min(v0,envelope),v1=Math.max(desired,v0-brakeCapability*step),travel=Math.min(remaining,Math.max(0,(v0+v1)*.5*step));
+    c.s=wrapS(beforeS+travel);c.v=travel<=1e-6?Math.max(0,v0-brakeCapability*step):v1;return true;
+  }
   function handleDriveThrough(c,b,dt,eventStart){
     if(!c._driveThroughServing||c._runtimePitPending||!inPitWindow(c))return false;removeFreshPitStopEvent(c.id,eventStart);c._runtimePitQueued=false;c._runtimeReleaseWait=false;clearServiceAnchor(c);
     const beforeS=Number.isFinite(b?.s)?b.s:c.s,limit=W.pitSpeedLimit||22.22;c.v=Math.min(limit,Math.max(Number(c.v)||0,Number(b?.v)||0,10));c.s=wrapS(beforeS+c.v*Math.max(.001,dt));const uf=Number(W.pitUnwrappedFraction?.(c.s));
@@ -153,6 +159,7 @@ export function createPitStateMachine(W,R){
       if(blocker&&Number.isFinite(dist)&&dist<=spec.queueTriggerMeters&&dist>-2.5){queue(c,false,eventStart);continue;}
       c._runtimePitPhase=Number.isFinite(dist)&&dist<24?'WORKING_APPROACH':(W.inPitSpeedZone?.(c.s)?'FAST_LANE':'PIT_ENTRY');c.pitLaneStatus=c._runtimePitPhase==='WORKING_APPROACH'?'WORKING':c._runtimePitPhase==='PIT_ENTRY'?'PIT ENTRY':'FAST LANE';
     }
+    for(const c of R.cars){if(c.pitState==='ENTRY'&&!c._driveThroughServing&&!c._runtimePitQueued)advanceWorkingApproach(c,snapshot[c.id],dt);}
     occupied=serviceOccupants();for(const c of R.cars){if(maybeStartService(c,dt,occupied))occupied.set(c.teamId??0,c);}
     for(const c of R.cars){
       const b=snapshot[c.id]||{state:'NONE',v:0,s:c.s};if(c._driveThroughServing&&handleDriveThrough(c,b,dt,eventStart)){repairInvariant(c);continue;}ensurePitMotion(c,b,dt);
