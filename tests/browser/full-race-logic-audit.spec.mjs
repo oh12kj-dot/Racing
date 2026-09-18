@@ -87,7 +87,7 @@ test('predictive collision braking requests a cap that the final longitudinal ow
   expect(base).toContain('const safetyCap=Number(c.predictiveSpeedCap)');
   expect(base).toContain('safetyActive=c.predictiveSpeedCap!=null&&Number.isFinite(safetyCap)');
   expect(base).toContain('if(safetyActive&&c.v>safetyCap)');
-  expect(base).toContain('physicalSafetyLimit=Math.max(safetyCap,before-Math.max(.25,brakeAvail)*dt)');
+  expect(base).toContain('physicalSafetyLimit=Math.max(safetyCap,before-brakeAvail*dt)');
   expect(base).toContain('safetyCap:c.racingSafetyCap??null');
 });
 
