@@ -47,5 +47,5 @@ export function createRace(W,statusEl,settings={}){
     for(const c of R.cars)lateralSafety(c);
   }
   function update(dt){predictiveAvoidance(dt);baseUpdate(dt);}
-  return new Proxy(R,{get(target,prop){if(prop==='update')return update;if(prop==='collisionAvoidance')return{raceStartAt,interventions,lateralVetoes,passEscapes,mode:'pass-aware-predictive-cap-physical-obb-authoritative',spatialGrid:!!(R.spatialNeighbours||W.runtimeSpatialNeighbours),frameRateInvariant:true,cautionAware:true,projectedLaneConflict:true};return Reflect.get(target,prop,target);}});
+  return new Proxy(R,{get(target,prop){if(prop==='update')return update;if(prop==='collisionAvoidance')return{raceStartAt,interventions,lateralVetoes,passEscapes,mode:'predictive-cap-physical-obb-authoritative',passAware:true,spatialGrid:!!(R.spatialNeighbours||W.runtimeSpatialNeighbours),frameRateInvariant:true,cautionAware:true,projectedLaneConflict:true};return Reflect.get(target,prop,target);}});
 }
