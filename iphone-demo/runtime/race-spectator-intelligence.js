@@ -1,4 +1,5 @@
 import {createRace as createStrategyRace} from './race-strategy-dynamics.js';
+import {resolveMulticlassPassPlan} from './vehicle-performance-spec.js';
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const phases=new Set(['HUNT','PRESSURE','FEINT','ATTACK','SWITCHBACK','RESET','DEFEND']);
@@ -6,7 +7,7 @@ const phases=new Set(['HUNT','PRESSURE','FEINT','ATTACK','SWITCHBACK','RESET','D
 export function createRace(W,statusEl,settings={}){
   const R=createStrategyRace(W,statusEl,settings),baseUpdate=R.update,total=Math.max(1,Number(W.total)||1);
   const engagements=new Map(),strategy=new Map(),perfSaved=new Map();
-  let updates=0,attackAttempts=0,feints=0,switchbacks=0,defensiveMoves=0,strategicCalls=0,blockedMoves=0,pitRequests=0,pitEntries=0;
+  let updates=0,attackAttempts=0,feints=0,switchbacks=0,defensiveMoves=0,strategicCalls=0,blockedMoves=0,pitRequests=0,pitEntries=0,multiclassPassesPrepared=0;
 
   const progress=c=>(Number(c?.lap)||0)*total+(Number(c?.s)||0);
   const gapSeconds=(a,b)=>{
@@ -52,6 +53,11 @@ export function createRace(W,statusEl,settings={}){
     const st=R.getStandings?.()||[],i=st.findIndex(x=>x.id===c.id);
     return{ahead:i>0?st[i-1]:null,behind:i>=0&&i<st.length-1?st[i+1]:null,index:i,standings:st};
   }
+  function localAhead(c){
+    const spatial=(R.spatialNeighbours||W.runtimeSpatialNeighbours)?.get?.(c.id),candidate=spatial?.aheadView||spatial?.ahead;
+    if(candidate?.car&&candidate.car!==c&&!candidate.car.retired&&candidate.car.pitState==='NONE')return{car:candidate.car,dist:Math.max(0,Number(candidate.dist)||0)};
+    let best=null,bestD=Infinity;for(const o of R.cars){if(o===c||o.retired||o.pitState!=='NONE')continue;let d=signedTrackGap(c,o);if(d<=0)d+=total;if(d<bestD){best=o;bestD=d;}}return best?{car:best,dist:bestD}:null;
+  }
   function nearbyTraffic(c,front=18,back=8){
     let n=0;for(const o of R.cars){if(o===c||o.retired||o.pitState!=='NONE')continue;const d=signedTrackGap(c,o);if(d>=-back&&d<=front)n++;}return n;
   }
@@ -83,12 +89,20 @@ export function createRace(W,statusEl,settings={}){
     c.racecraftPaceMultiplier=mult;
   }
   function prepareRacecraft(c,dt){
-    if(!c||c.retired)return;savePerf(c);const s=stateFor(c),t=s.traits,{ahead,behind}=neighbours(c),now=R.race?.t||0;
+    if(!c||c.retired)return;savePerf(c);const s=stateFor(c),t=s.traits,n=neighbours(c),behind=n.behind,local=localAhead(c),ahead=local?.car||n.ahead,now=R.race?.t||0;
     const specialState=!!(c.blueFlag||c.coolingMode||c.hydroplaning),raceActive=R.flag==='GREEN'&&R.sessionPhase==='RACE'&&c.pitState==='NONE'&&c.spinState==='NONE'&&!c.hazardAvoiding&&!specialState;
-    if(!raceActive){if(s.phase!=='HUNT'&&s.phase!=='RESET')transition(c,s,'RESET',specialState?'SPECIAL STATE PRIORITY':'RACECRAFT INACTIVE',.8);c.racecraftIntent=specialState?'SPECIAL':'RESET';c.battleState='NONE';c.racecraftBlocked=false;applyPace(c,1);return;}
-    const aheadGap=ahead?gapSeconds(ahead,c):Infinity,behindGap=behind?gapSeconds(c,behind):Infinity,closing=ahead?Math.max(-12,Math.min(12,(c.v||0)-(ahead.v||0))):0;
-    const load=brakingLoad(c),curv=cornerSignal(c),draft=Number(c.slipstream)||0,density=nearbyTraffic(c);
-    s.targetId=ahead?.id??null;s.pressure=clamp((2.0-aheadGap)/2.0,0,1);
+    if(!raceActive){if(s.phase!=='HUNT'&&s.phase!=='RESET')transition(c,s,'RESET',specialState?'SPECIAL STATE PRIORITY':'RACECRAFT INACTIVE',.8);c.racecraftIntent=specialState?'SPECIAL':'RESET';c.battleState='NONE';c.racecraftBlocked=false;c.multiclassPassIntent=false;c.multiclassPassTargetId=null;applyPace(c,1);return;}
+    const aheadDistance=local?.car===ahead?local.dist:(ahead?Math.max(0,signedTrackGap(c,ahead)):Infinity),aheadGap=ahead?(Number.isFinite(aheadDistance)&&aheadDistance<total*.5?aheadDistance/Math.max(12,Number(c.v)||12):gapSeconds(ahead,c)):Infinity,behindGap=behind?gapSeconds(c,behind):Infinity,closing=ahead?clamp((c.v||0)-(ahead.v||0),-20,35):0;
+    const load=brakingLoad(c),curv=cornerSignal(c),draft=Number(c.slipstream)||0,density=nearbyTraffic(c),halfWidth=Math.min(3.55,Math.max(2.8,(Number(W.trackHalfWidth)||7.2)-3.5)),multiclass=ahead?resolveMulticlassPassPlan({followerType:c.type,leaderType:ahead.type,gapM:aheadDistance,closingMps:closing,brakingLoad:load,leaderLane:ahead.lane||0,halfWidth}):{eligible:false};
+    s.targetId=ahead?.id??null;s.pressure=clamp((2.0-aheadGap)/2.0,0,1);c.multiclassPassIntent=!!multiclass.eligible;c.multiclassPassTargetId=multiclass.eligible?ahead?.id:null;c.multiclassPassTargetLane=multiclass.eligible?multiclass.targetLane:null;
+
+    if(multiclass.eligible&&ahead){
+      if(s.phase!=='ATTACK')transition(c,s,'ATTACK','MULTICLASS PERFORMANCE PASS',2.2);
+      c.laneTarget=moveLane(c,multiclass.targetLane,1.15,dt,ahead.id);c.battleState='ATTACK';c.racecraftIntent='MULTICLASS_PASS';
+      const pace=clamp(1.0045+Math.max(0,multiclass.paceDelta)*.010+draft*.002,.998,1.009);applyPace(c,pace);multiclassPassesPrepared++;
+      c.racecraftTelemetry={phase:s.phase,targetId:s.targetId,aheadGapSec:Number.isFinite(aheadGap)?aheadGap:null,aheadDistanceM:Number.isFinite(aheadDistance)?aheadDistance:null,behindGapSec:Number.isFinite(behindGap)?behindGap:null,closingMps:closing,pressure:s.pressure,attempts:s.attempts,style:t.style,aggression:t.aggression,patience:t.patience,composure:t.composure,overtake:t.overtake,defense:t.defense,trafficDensity:density,laneBlocked:!!c.racecraftBlocked,multiclassPass:true,multiclassTargetLane:multiclass.targetLane,paceDelta:multiclass.paceDelta,topDelta:multiclass.topDelta};
+      return;
+    }
 
     if(ahead&&aheadGap<2.0){
       if(s.phase==='HUNT'&&aheadGap<1.35)transition(c,s,'PRESSURE','CLOSE ENOUGH TO PRESSURE',2.2+t.patience*2.0);
@@ -127,7 +141,7 @@ export function createRace(W,statusEl,settings={}){
       if(next!==(c.laneTarget||0)){c.laneTarget=next;s.lastDefenseAt=now;defensiveMoves++;}c.battleState='DEFEND';c.racecraftIntent='DEFEND';
     }else{c.battleState=['ATTACK','FEINT','SWITCHBACK'].includes(s.phase)?'ATTACK':s.phase==='PRESSURE'?'PRESSURE':'NONE';c.racecraftIntent=s.phase;}
     applyPace(c,clamp(mult,.992,1.008));
-    c.racecraftTelemetry={phase:s.phase,targetId:s.targetId,aheadGapSec:Number.isFinite(aheadGap)?aheadGap:null,behindGapSec:Number.isFinite(behindGap)?behindGap:null,closingMps:closing,pressure:s.pressure,attempts:s.attempts,style:t.style,aggression:t.aggression,patience:t.patience,composure:t.composure,overtake:t.overtake,defense:t.defense,trafficDensity:density,laneBlocked:!!c.racecraftBlocked};
+    c.racecraftTelemetry={phase:s.phase,targetId:s.targetId,aheadGapSec:Number.isFinite(aheadGap)?aheadGap:null,aheadDistanceM:Number.isFinite(aheadDistance)?aheadDistance:null,behindGapSec:Number.isFinite(behindGap)?behindGap:null,closingMps:closing,pressure:s.pressure,attempts:s.attempts,style:t.style,aggression:t.aggression,patience:t.patience,composure:t.composure,overtake:t.overtake,defense:t.defense,trafficDensity:density,laneBlocked:!!c.racecraftBlocked,multiclassPass:false};
   }
 
   function estimateProjectedPosition(c,pitLossSec,standings){
@@ -187,7 +201,7 @@ export function createRace(W,statusEl,settings={}){
     if(prop==='update')return update;
     if(prop==='racecraftFor')return id=>{const s=engagements.get(Number(id));return s?{...s,traits:{...s.traits}}:null;};
     if(prop==='strategyInsightFor')return id=>{const s=strategy.get(Number(id));return s?{...s}:null;};
-    if(prop==='racecraftDynamics')return{owner:'runtime-racecraft-v2',updates,attackAttempts,feints,switchbacks,defensiveMoves,blockedMoves,cars:R.cars.map(c=>({id:c.id,...(c.racecraftTelemetry||{})}))};
+    if(prop==='racecraftDynamics')return{owner:'runtime-racecraft-v3-multiclass',updates,attackAttempts,feints,switchbacks,defensiveMoves,blockedMoves,multiclassPassesPrepared,cars:R.cars.map(c=>({id:c.id,...(c.racecraftTelemetry||{})}))};
     if(prop==='strategyIntelligence')return{owner:'runtime-strategy-intelligence-v2',strategicCalls,pitRequests,pitEntries,cars:R.cars.map(c=>({id:c.id,...(c.strategyInsight||{})}))};
     return Reflect.get(target,prop,target);
   }});
