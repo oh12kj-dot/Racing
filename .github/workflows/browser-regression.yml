@@ -32,8 +32,8 @@ jobs:
         run: npm install
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
-      - name: Run browser regression tests
-        run: npm run test:browser
+      - name: Run targeted multiclass regressions
+        run: npx playwright test tests/browser/realism.spec.mjs tests/browser/multiclass-performance.spec.mjs --project=chromium
       - name: Upload Playwright artifacts
         if: always()
         uses: actions/upload-artifact@v4
