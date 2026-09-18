@@ -1,16 +1,16 @@
+import {performanceFor} from './vehicle-performance-spec.js';
+
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const wrapAngle=a=>{const tau=Math.PI*2;return((a+Math.PI)%tau+tau)%tau-Math.PI;};
 
-const classTune={
-  formula:{latG:3.2,steer:.34,rate:2.30,wheelbase:3.6},
-  hyper:{latG:2.55,steer:.38,rate:2.00,wheelbase:3.1},lmh:{latG:2.55,steer:.38,rate:2.00,wheelbase:3.1},proto:{latG:2.60,steer:.39,rate:2.00,wheelbase:3.0},
-  gt:{latG:1.95,steer:.43,rate:1.75,wheelbase:2.85},supercar:{latG:1.80,steer:.45,rate:1.70,wheelbase:2.75},touring:{latG:1.70,steer:.46,rate:1.65,wheelbase:2.70}
-};
+export function trajectoryTuneForType(type='gt'){
+  const p=performanceFor(type);return{latG:p.laneChangeG,steer:p.steer,rate:p.steerRate,wheelbase:p.wheelbase};
+}
 
 export function createTrajectoryController(W,R,{mobile=false}={}){
   const states=new Map(),frame=[],contactLatch=new Set(),total=Math.max(1,Number(W.total)||1);
   const metrics={updates:0,arbitrations:0,safetyVetoes:0,pitApproaches:0,mergeFrames:0,legacySeparationRepairs:0,unhandledContacts:0,physicalSyncs:0,spinPhysicsFrames:0,maxLaneAccel:0,maxYawError:0};
-  const tuneFor=c=>classTune[c?.type]||classTune.gt;
+  const tuneFor=c=>trajectoryTuneForType(c?.type);
   const lineAt=(c,s=c.s)=>clamp(Number(W.racingLineFor?.(s,c.racingLineMode||'OPTIMAL')??W.racingLineAt?.(s)??0)||0,-3.35,3.35);
   const progress=c=>Number(c?._v8Progress??((c?.lap||0)*total+(c?.s||0)))||0;
   const nearLongitudinal=(a,b)=>Math.abs(progress(a)-progress(b));
@@ -35,6 +35,7 @@ export function createTrajectoryController(W,R,{mobile=false}={}){
     if((c.avoid||0)>.05)return{target:legacy,source:'COLLISION_AVOID'};
     if(launchAge>=0&&launchAge<8)return{target:legacy,source:'LAUNCH'};
     if(c.blueFlag)return{target:legacy,source:'BLUE_FLAG'};
+    if(c.multiclassPassIntent)return{target:legacy,source:'MULTICLASS_PASS'};
     if(c.battleState==='ATTACK'||c.racecraftState==='ATTACK'||c.racecraftState==='SWITCHBACK')return{target:legacy,source:'ATTACK'};
     if(c.battleState==='DEFEND'||c.racecraftState==='DEFEND')return{target:legacy,source:'DEFEND'};
     if(c.coolingMode)return{target:legacy,source:'COOLING'};

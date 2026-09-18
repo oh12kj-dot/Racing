@@ -1,4 +1,4 @@
-import {createRace as createBaseRace} from './race-pit-exit-release.js';
+import {createRace as createBaseRace} from './race-realism-calibration.js';
 import {installRuntimeOptimizations} from './performance-runtime.js';
 import {atlasRuntimeCanvasTextures} from './texture-atlas.js';
 
