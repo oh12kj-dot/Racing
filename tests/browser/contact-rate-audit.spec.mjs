@@ -19,7 +19,7 @@ test('natural seeded race does not devolve into repeated car-to-car contact',asy
     const seen=new Set(),contacts=[],incidents=[];let greenSeconds=0,greenSamples=0,maxConcurrentBattle=0;
     for(let i=0;i<3600;i++){
       tick(.05,false);
-      if(R.flag==='GREEN'&&R.sessionPhase==='RACE'&&R.formationDiagnostics?.done){greenSeconds+=.05;greenSamples++;}
+      if(R.flag==='GREEN'&&R.sessionPhase==='RACE'&&R.race.t>(R.race.green||0)){greenSeconds+=.05;greenSamples++;}
       let battles=0;for(const c of R.cars||[])if(!c.retired&&c.pitState==='NONE'&&(c.battleState==='ATTACK'||c.battleState==='DEFEND'||c.racecraftState==='ATTACK'||c.racecraftState==='DEFEND'))battles++;
       maxConcurrentBattle=Math.max(maxConcurrentBattle,battles);
       const events=R.events||[],start=Math.max(0,events.length-32);
