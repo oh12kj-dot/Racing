@@ -17,8 +17,10 @@ test('vehicle class calibration keeps 2026 mass and hierarchy targets coherent',
   expect(VEHICLE_PERFORMANCE.supercar.mass).toBe(1350);
   expect(VEHICLE_PERFORMANCE.touring.mass).toBe(1265);
   expect(VEHICLE_PERFORMANCE.formula.fuelCapacity).toBe(70);
-  expect(VEHICLE_PERFORMANCE.proto.fuelCapacity).toBe(75);
-  expect(VEHICLE_PERFORMANCE.supercar.fuelCapacity).toBe(135);
+  expect(VEHICLE_PERFORMANCE.proto.fuelTankLitres).toBe(75);
+  expect(VEHICLE_PERFORMANCE.proto.fuelCapacity).toBeCloseTo(56,0);
+  expect(VEHICLE_PERFORMANCE.supercar.fuelTankLitres).toBe(135);
+  expect(VEHICLE_PERFORMANCE.supercar.fuelCapacity).toBeCloseTo(101,0);
   expect(VEHICLE_PERFORMANCE.formula.lateralG).toBeGreaterThan(VEHICLE_PERFORMANCE.proto.lateralG);
   expect(VEHICLE_PERFORMANCE.proto.lateralG).toBeGreaterThan(VEHICLE_PERFORMANCE.gt.lateralG);
   expect(VEHICLE_PERFORMANCE.formula.brake).toBeGreaterThan(VEHICLE_PERFORMANCE.hyper.brake);
