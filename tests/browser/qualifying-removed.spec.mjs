@@ -31,15 +31,18 @@ test('qualifying session is removed from the race runtime',async({page})=>{
   expect(r.firstRows.map(c=>c.id)).toEqual([0,1,2,3,4,5]);
 });
 
-test('qualifying simulation and qualifying-derived grid code stay deleted',async()=>{
+test('qualifying simulation presentation and qualifying-derived grid code stay deleted',async()=>{
   const championship=await readFile('iphone-demo/runtime/race-championship-core.js','utf8');
   const progress=await readFile('iphone-demo/runtime/race-progress.js','utf8');
+  const director=await readFile('iphone-demo/runtime/director.js','utf8');
   expect(championship).not.toContain("sessionPhase='QUALIFYING'");
   expect(championship).not.toContain('qualifyingClock');
   expect(championship).not.toContain('POLE POSITION');
   expect(championship).not.toContain("prop==='qualifying'");
   expect(progress).not.toContain('base.qualifying');
   expect(progress).not.toContain("sessionPhase!=='QUALIFYING'");
+  expect(director).not.toContain("sessionPhase==='QUALIFYING'");
+  expect(director).not.toContain("banner='QUALIFYING'");
   expect(championship).toContain("const sessionPhase='RACE',raceStarted=true");
   expect(progress).toContain('const row=Math.floor(pos/2)');
 });
