@@ -3,7 +3,7 @@ import {createRace as createBaseRace} from './race-realism.js';
 const num=v=>Number.isFinite(Number(v))?Number(v):0;
 
 export function resolveStartGateState({sessionPhase='',flag='',raceTime=0,greenTime=NaN,launchComplete=false}={}){
-  const phase=String(sessionPhase||'').toUpperCase(),nonRace=phase==='QUALIFYING'||phase==='FORMATION';
+  const phase=String(sessionPhase||'').toUpperCase(),nonRace=phase==='FORMATION';
   const t=num(raceTime),g=Number(greenTime),timedGreen=!Number.isFinite(g)||g<=0||t>=g;
   const canLaunch=!nonRace&&String(flag||'').toUpperCase()==='GREEN'&&timedGreen;
   const preStart=!launchComplete&&!nonRace&&!canLaunch;
