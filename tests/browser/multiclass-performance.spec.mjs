@@ -85,24 +85,36 @@ test('Formula completes a clean multiclass pass on a slower Touring car',async({
       if(R.race.t>12&&R.flag==='GREEN'&&!(control?.localYellows?.length)&&!(control?.recoveries?.length)){greenReady=true;break;}
     }
     const startFlag=R.flag,startControl=R.physicalCaution;
-    const fast=R.cars[0],slow=R.cars[1];
+    const curvatureAt=s=>Math.abs(Number(W.racingCurvatureAt?.(s)??W.curvatureAt?.(s)??0));
+    let straight={s:Math.min(900,total*.2),score:Infinity,maxBrake:Infinity,maxCurvature:Infinity};
+    for(let s=300;s<total-700;s+=20){
+      let maxBrake=0,maxCurvature=0,pit=false;
+      for(let d=0;d<=460;d+=20){const p=s+d;maxBrake=Math.max(maxBrake,Number(W.braking?.(p))||0);maxCurvature=Math.max(maxCurvature,curvatureAt(p));if(W.inPitWindow?.(p))pit=true;}
+      if(pit)continue;
+      const score=maxBrake*12+maxCurvature*900;
+      if(score<straight.score)straight={s,score,maxBrake,maxCurvature};
+    }
+    const fast=R.cars[0],slow=R.cars[1],fastS=straight.s,slowS=fastS+62;
     for(let i=2;i<R.cars.length;i++){R.cars[i].retired=true;if(R.cars[i].mesh)R.cars[i].mesh.visible=false;}
-    Object.assign(fast,{type:'formula',s:180,lap:1,_v8Progress:total+180,lane:0,laneTarget:0,v:82,pitState:'NONE',spinState:'NONE',offTrack:false,retired:false,damage:0,incident:0,avoid:0,position:2});
-    Object.assign(slow,{type:'touring',s:242,lap:1,_v8Progress:total+242,lane:0,laneTarget:0,v:61,pitState:'NONE',spinState:'NONE',offTrack:false,retired:false,damage:0,incident:0,avoid:0,position:1});
+    const reset={lap:1,lane:0,laneTarget:0,pitState:'NONE',spinState:'NONE',offTrack:false,retired:false,damage:0,damageState:'NONE',incident:0,avoid:0,overtake:0,hazardAvoiding:false,localYellow:false,hydroplaning:false,blueFlag:false,coolingMode:false,predictiveSpeedCap:null,multiclassPassIntent:false,multiclassPassTargetId:null,battleState:'HUNT',racecraftBlocked:false,wear:0,fault:null};
+    Object.assign(fast,reset,{type:'formula',s:fastS,_v8Progress:total+fastS,v:82,position:2});
+    Object.assign(slow,reset,{type:'touring',s:slowS,_v8Progress:total+slowS,v:61,position:1});
     if(fast.driver){fast.driver.aggression=.92;fast.driver.racecraft=.94;}if(slow.driver){slow.driver.aggression=.55;slow.driver.racecraft=.82;}
     for(const c of[fast,slow]){const q=W.sample(c.s,c.lane);c.mesh.position.copy(q.p);c.mesh.position.y+=.12;c.mesh.rotation.y=Math.atan2(q.t.x,q.t.z);c.mesh.visible=true;}
     const progress=c=>Number(c._v8Progress??(c.lap*total+c.s)),startFast=progress(fast),startSlow=progress(slow),eventStart=R.events?.length||0;
-    let passed=false,maxSeparation=0;
-    for(let i=0;i<320;i++){
-      tick(.05,false);const fp=progress(fast),sp=progress(slow);maxSeparation=Math.max(maxSeparation,Math.abs((fast.lane||0)-(slow.lane||0)));if(fp>sp+2){passed=true;break;}
+    let passed=false,maxSeparation=0,minGap=startSlow-startFast,minFastSpeed=fast.v,maxFastSpeed=fast.v,minSlowSpeed=slow.v,maxSlowSpeed=slow.v;
+    for(let i=0;i<180;i++){
+      tick(.05,false);const fp=progress(fast),sp=progress(slow),gap=sp-fp;minGap=Math.min(minGap,gap);maxSeparation=Math.max(maxSeparation,Math.abs((fast.lane||0)-(slow.lane||0)));minFastSpeed=Math.min(minFastSpeed,fast.v);maxFastSpeed=Math.max(maxFastSpeed,fast.v);minSlowSpeed=Math.min(minSlowSpeed,slow.v);maxSlowSpeed=Math.max(maxSlowSpeed,slow.v);if(fp>sp+2){passed=true;break;}
     }
     const contacts=(R.events||[]).slice(eventStart).filter(e=>e.type==='CONTACT'&&(e.carId===fast.id||e.carId===slow.id));
-    return{greenReady,startFlag,startControl:{type:startControl?.type,localYellows:startControl?.localYellows?.length||0,recoveries:startControl?.recoveries?.length||0},passed,startGap:startSlow-startFast,finalGap:progress(fast)-progress(slow),maxSeparation,armed:R.collisionAvoidance?.multiclassPassesArmed||0,contacts:contacts.map(e=>e.data?.severity||0),fastSpeed:fast.v,slowSpeed:slow.v};
+    const dynamics=R.getDynamicsLog?.(fast.id)||[],recent=dynamics.slice(-12).map(x=>({t:x.t,speed:x.speed,raw:x.raw,target:x.target,accel:x.accel,mode:x.mode,line:x.line,latUse:x.latUse}));
+    return{greenReady,startFlag,startControl:{type:startControl?.type,localYellows:startControl?.localYellows?.length||0,recoveries:startControl?.recoveries?.length||0},straight,passed,startGap:startSlow-startFast,finalGap:progress(fast)-progress(slow),minGap,maxSeparation,armed:R.collisionAvoidance?.multiclassPassesArmed||0,contacts:contacts.map(e=>e.data?.severity||0),fastSpeed:fast.v,slowSpeed:slow.v,minFastSpeed,maxFastSpeed,minSlowSpeed,maxSlowSpeed,recent};
   });
   expect(result.greenReady,JSON.stringify(result)).toBeTruthy();
   expect(result.startFlag,JSON.stringify(result)).toBe('GREEN');
   expect(result.startControl.localYellows,JSON.stringify(result)).toBe(0);
   expect(result.startControl.recoveries,JSON.stringify(result)).toBe(0);
+  expect(result.straight.maxBrake,JSON.stringify(result)).toBeLessThan(.2);
   expect(result.startGap).toBeGreaterThan(50);
   expect(result.armed,JSON.stringify(result)).toBeGreaterThan(0);
   expect(result.maxSeparation,JSON.stringify(result)).toBeGreaterThan(1.6);
