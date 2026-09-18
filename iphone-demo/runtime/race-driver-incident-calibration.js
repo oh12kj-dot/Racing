@@ -19,63 +19,69 @@ export function createRace(W,statusEl,settings={}){
     if(t<gate[key])return false;
     gate[key]=t+sampleDelay(kind,wet);return true;
   }
-  function removeNewEvent(type,carId,start){
-    const a=R.events;if(!Array.isArray(a))return;
+  function newItemsStart(a,previousTailId){
+    if(!Array.isArray(a)||!a.length)return 0;
+    if(previousTailId==null)return 0;
+    for(let i=a.length-1;i>=0;i--)if(a[i]?.id===previousTailId)return i+1;
+    return Math.max(0,a.length-8);
+  }
+  function removeNewEvent(type,carId,previousTailId){
+    const a=R.events;if(!Array.isArray(a))return;const start=newItemsStart(a,previousTailId);
     for(let i=a.length-1;i>=start;i--){const e=a[i];if(e?.carId===carId&&e?.type===type)a.splice(i,1);}
   }
-  function annotateNewEvent(type,carId,start,classification){
-    const a=R.events;if(!Array.isArray(a))return;
+  function annotateNewEvent(type,carId,previousTailId,classification){
+    const a=R.events;if(!Array.isArray(a))return;const start=newItemsStart(a,previousTailId);
     for(let i=a.length-1;i>=start;i--){const e=a[i];if(e?.carId!==carId||e?.type!==type)continue;e.data={...(e.data||{}),calibrated:true,classification};return;}
   }
-  function removeSpinRadio(carId,start){
-    const a=R.radio;if(!Array.isArray(a))return;
+  function removeSpinRadio(carId,previousTailId){
+    const a=R.radio;if(!Array.isArray(a))return;const start=newItemsStart(a,previousTailId);
     for(let i=a.length-1;i>=start;i--){const m=a[i],text=String(m?.text||'').toLowerCase();if(m?.carId===carId&&text.includes('lost the rear'))a.splice(i,1);}
   }
   function record(c,kind,data={}){
     diagnostics.last.push({t:now(),carId:c.id,kind,...data});
     while(diagnostics.last.length>30)diagnostics.last.shift();
   }
-  function suppressLockup(c,eventStart){
+  function suppressLockup(c,eventTailId){
     const sev=clamp(Number(c.spinSeverity)||0,.2,1);
     c.spinState='NONE';c.spinTimer=0;c.slipAngle=(Number(c.slipAngle)||0)*.18;c.counterSteer=0;c.spinSeverity=Math.min(sev,.45);
     c.v=Math.max(0,(Number(c.v)||0)-(.04+.06*sev));
     c.driverErrorClass='MINOR_BRAKE_ERROR';c._driverMinorErrorUntil=now()+.18;diagnostics.minorErrors++;diagnostics.suppressedLockups++;
-    removeNewEvent('LOCKUP',c.id,eventStart);record(c,'MINOR_BRAKE_ERROR',{severity:sev});
+    removeNewEvent('LOCKUP',c.id,eventTailId);record(c,'MINOR_BRAKE_ERROR',{severity:sev});
   }
-  function suppressSpin(c,eventStart,radioStart){
+  function suppressSpin(c,eventTailId,radioTailId){
     const sev=clamp(Number(c.spinSeverity)||.5,.2,1),dir=Math.sign(c._spinDir||1);
     c.spinState='RECOVER';c.spinTimer=.24+.16*sev;c.slipAngle=clamp((Number(c.slipAngle)||0)*.35,-.22,.22);c.counterSteer=-Math.sign(c.slipAngle)*Math.min(.35,Math.abs(c.slipAngle));
     c.laneTarget=clamp((Number(c.laneTarget)||0)+dir*(.10+.16*sev),-4.1,4.1);c.v=Math.max(0,(Number(c.v)||0)*(.992-.006*sev));
     c.driverErrorClass='RUN_WIDE';diagnostics.suppressedSpins++;
-    removeNewEvent('SPIN',c.id,eventStart);removeSpinRadio(c.id,radioStart);record(c,'RUN_WIDE',{severity:sev});
+    removeNewEvent('SPIN',c.id,eventTailId);removeSpinRadio(c.id,radioTailId);record(c,'RUN_WIDE',{severity:sev});
   }
-  function acceptSpin(c,wet,eventStart){
+  function acceptSpin(c,wet,eventTailId){
     const sev=clamp(Number(c.spinSeverity)||.5,.2,1),baseline=fullSpinShare(wet),severityBias=(sev-.70)*.55,full=Math.random()<clamp(baseline+severityBias,.28,.82);
     if(full){
-      c.spinSeverity=Math.max(sev,DRIVER_INCIDENT_POLICY.fullSpinSeverity+.02);c.driverErrorClass='FULL_SPIN';diagnostics.fullSpins++;annotateNewEvent('SPIN',c.id,eventStart,'FULL_SPIN');record(c,'FULL_SPIN',{severity:c.spinSeverity,wet});
+      c.spinSeverity=Math.max(sev,DRIVER_INCIDENT_POLICY.fullSpinSeverity+.02);c.driverErrorClass='FULL_SPIN';diagnostics.fullSpins++;annotateNewEvent('SPIN',c.id,eventTailId,'FULL_SPIN');record(c,'FULL_SPIN',{severity:c.spinSeverity,wet});
     }else{
-      c.spinSeverity=Math.min(sev,DRIVER_INCIDENT_POLICY.halfSpinSeverityCap);c.spinTimer=Math.min(Number(c.spinTimer)||.9,.88);c.driverErrorClass='HALF_SPIN';diagnostics.halfSpins++;annotateNewEvent('SPIN',c.id,eventStart,'HALF_SPIN');record(c,'HALF_SPIN',{severity:c.spinSeverity,wet});
+      c.spinSeverity=Math.min(sev,DRIVER_INCIDENT_POLICY.halfSpinSeverityCap);c.spinTimer=Math.min(Number(c.spinTimer)||.9,.88);c.driverErrorClass='HALF_SPIN';diagnostics.halfSpins++;annotateNewEvent('SPIN',c.id,eventTailId,'HALF_SPIN');record(c,'HALF_SPIN',{severity:c.spinSeverity,wet});
     }
   }
-  function calibrate(c,before,eventStart,radioStart){
+  function calibrate(c,before,eventTailId,radioTailId){
     if(!c||c.retired||c.pitState!=='NONE')return;
     const current=c.spinState,previous=before?.spinState||'NONE',wet=wetness(),t=now();
     if(c.driverErrorClass==='MINOR_BRAKE_ERROR'&&t>=(Number(c._driverMinorErrorUntil)||0))c.driverErrorClass='NONE';
     if(current==='LOCKUP'&&previous!=='LOCKUP'){
-      if(!gateReady('LOCKUP',wet,t)){suppressLockup(c,eventStart);return;}
-      c.driverErrorClass='LOCKUP';diagnostics.lockups++;annotateNewEvent('LOCKUP',c.id,eventStart,'LOCKUP');record(c,'LOCKUP',{severity:clamp(Number(c.spinSeverity)||0,0,1),wet});
+      if(!gateReady('LOCKUP',wet,t)){suppressLockup(c,eventTailId);return;}
+      c.driverErrorClass='LOCKUP';diagnostics.lockups++;annotateNewEvent('LOCKUP',c.id,eventTailId,'LOCKUP');record(c,'LOCKUP',{severity:clamp(Number(c.spinSeverity)||0,0,1),wet});
       return;
     }
     if(current==='SLIDE'&&previous!=='SLIDE'){
-      if(!gateReady('SPIN',wet,t)){suppressSpin(c,eventStart,radioStart);return;}
-      acceptSpin(c,wet,eventStart);
+      if(!gateReady('SPIN',wet,t)){suppressSpin(c,eventTailId,radioTailId);return;}
+      acceptSpin(c,wet,eventTailId);
     }
     if(current==='NONE'&&previous!=='NONE'&&c.driverErrorClass)c.driverErrorClass='NONE';
   }
   function update(dt){
-    const before=R.cars.map(c=>({spinState:c.spinState})),eventStart=Array.isArray(R.events)?R.events.length:0,radioStart=Array.isArray(R.radio)?R.radio.length:0;
+    const before=R.cars.map(c=>({spinState:c.spinState})),eventTailId=R.events?.[R.events.length-1]?.id??null,radioTailId=R.radio?.[R.radio.length-1]?.id??null;
     baseUpdate(dt);
-    for(let i=0;i<R.cars.length;i++)calibrate(R.cars[i],before[i],eventStart,radioStart);
+    for(let i=0;i<R.cars.length;i++)calibrate(R.cars[i],before[i],eventTailId,radioTailId);
   }
 
   return new Proxy(R,{get(target,prop){
