@@ -45,17 +45,64 @@ function applyCircuitPitProfile(THREE,W,circuitName){
 
 export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
   const W=buildSceneWorld(THREE,TRACK,settings,circuitName);applyRacingLanePolicy(W,circuitName);applyCircuitPitProfile(THREE,W,circuitName);
-  if(String(circuitName||'').toUpperCase()!=='SUZUKA'){const priorAudit=W.auditCircuit?.bind(W);W.auditCircuit=()=>{const a=priorAudit?priorAudit():{};return{...a,version:'runtime-2026.09.15-r17',circuitProfile:{pit:W.realisticPitLayout,lane:W.racingLineProfile?.lanePolicy},notes:[...(a.notes||[]),'Circuit-specific pit geometry/kinematics and variable racing-lane bounds are active.']};};W.circuitAudit=W.auditCircuit();return W;}
+  if(String(circuitName||'').toUpperCase()!=='SUZUKA'){const priorAudit=W.auditCircuit?.bind(W);W.auditCircuit=()=>{const a=priorAudit?priorAudit():{};return{...a,version:'runtime-2026.09.19-r18',circuitProfile:{pit:W.realisticPitLayout,lane:W.racingLineProfile?.lanePolicy},notes:[...(a.notes||[]),'Circuit-specific pit geometry/kinematics and variable racing-lane bounds are active.']};};W.circuitAudit=W.auditCircuit();return W;}
 
-  const total=Math.max(1,Number(W.total)||1),scene=W.scene,trackPts=[];
-  for(let i=0;i<720;i++){const p=W.sample(total*i/720).p;trackPts.push(new THREE.Vector3(p.x,p.y,p.z));}
-  const allowed=/BRIDGE|START_LIGHT|START_SIGNAL|FLAG_TOWER|LEADER_TOWER|PIT|TUNNEL/i;
-  const rows=[];let suppressed=0,checked=0;
-  function intersectsTrack(box,clearance=1.5){if(!box||box.isEmpty())return false;for(const p of trackPts){if(p.x>=box.min.x-clearance&&p.x<=box.max.x+clearance&&p.z>=box.min.z-clearance&&p.z<=box.max.z+clearance)return true;}return false;}
-  function inspectObject(o,source='scene'){if(!o?.isGroup||!o.visible)return;const name=String(o.name||'');if(!name)return;const box=new THREE.Box3().setFromObject(o);if(box.isEmpty())return;const center=new THREE.Vector3();box.getCenter(center);checked++;const bad=!allowed.test(name)&&intersectsTrack(box,2.2);if(bad){o.visible=false;o.userData.clearanceSuppressed='track-corridor';suppressed++;}rows.push({name,source,visible:o.visible,bad,position:{x:o.position.x,y:o.position.y,z:o.position.z},rotationY:o.rotation.y,footprint:{minX:box.min.x,maxX:box.max.x,minZ:box.min.z,maxZ:box.max.z}});}
-  for(const o of W.suzukaFullScene?.root?.children||[])inspectObject(o,'full-scene');for(const row of W.suzukaFacilities?.facilities||[])inspectObject(row?.object,'facility');
+  const total=Math.max(1,Number(W.total)||1),scene=W.scene,trackPts=[],pitPts=[];
+  const trackHalf=Math.max(6.8,Number(W.trackHalfWidth)||7.2),trackLanes=[-trackHalf+.45,0,trackHalf-.45];
+  for(let i=0;i<900;i++){
+    const s=total*i/900;
+    for(const lane of trackLanes){const p=W.sample(s,lane).p;trackPts.push(new THREE.Vector3(p.x,p.y,p.z));}
+  }
+  const layout=W.realisticPitLayout||{},entryUF=Number(layout.entryUF??W.pitCoordinateAudit?.entryUF),exitEndUF=Number(layout.exitEndUF??W.pitCoordinateAudit?.exitEndUF),poseUF=W.runtimePit?.poseUF;
+  if(Number.isFinite(entryUF)&&Number.isFinite(exitEndUF)&&exitEndUF>entryUF){
+    const n=Math.max(60,Math.min(260,Math.ceil((exitEndUF-entryUF)*total/3.5))),half=Math.max(2.2,Number(layout.laneHalfWidth)||3.2);
+    for(let i=0;i<=n;i++){
+      const uf=entryUF+(exitEndUF-entryUF)*i/n,s=((uf%1)+1)%1*total,q=typeof poseUF==='function'?poseUF(uf):(typeof W.pitFastPose==='function'?W.pitFastPose(s):W.pitPose?.(s,0,'ENTRY'));
+      if(!q?.p)continue;const side=q.side||W.sample(s).side;
+      for(const off of[-half+.25,0,half-.25]){const p=q.p.clone().addScaledVector(side,off);pitPts.push(new THREE.Vector3(p.x,p.y,p.z));}
+    }
+  }
+
+  const overheadAllowed=/BRIDGE|START_LIGHT|START_SIGNAL|FLAG_TOWER|LEADER_TOWER|TUNNEL/i;
+  const rows=[];let suppressed=0,suppressedTrack=0,suppressedPit=0,checked=0;
+  function boxHitsPoints(box,points,clearance=.8,headroom=2.65){
+    if(!box||box.isEmpty())return false;
+    for(const p of points){
+      if(p.x<box.min.x-clearance||p.x>box.max.x+clearance||p.z<box.min.z-clearance||p.z>box.max.z+clearance)continue;
+      if(box.max.y<p.y-.45||box.min.y>p.y+headroom)continue;
+      return true;
+    }
+    return false;
+  }
+  function objectHitsPoints(o,points,clearance){
+    if(!o||!points.length)return false;let hit=false;
+    o.traverse?.(x=>{
+      if(hit||!x?.isMesh||x.visible===false||!x.geometry)return;
+      const b=new THREE.Box3().setFromObject(x);if(boxHitsPoints(b,points,clearance))hit=true;
+    });
+    return hit;
+  }
+  function inspectObject(o,source='scene'){
+    if(!o||o.visible===false)return;const name=String(o.name||'');if(!name)return;
+    checked++;const trackHit=objectHitsPoints(o,trackPts,.85),pitHit=objectHitsPoints(o,pitPts,.65),protectedSpan=overheadAllowed.test(name),bad=!protectedSpan&&(trackHit||pitHit);
+    if(bad){o.visible=false;o.userData.clearanceSuppressed=trackHit&&pitHit?'track+pit-corridor':trackHit?'track-corridor':'pit-corridor';suppressed++;if(trackHit)suppressedTrack++;if(pitHit)suppressedPit++;}
+    const box=new THREE.Box3().setFromObject(o),center=new THREE.Vector3();if(!box.isEmpty())box.getCenter(center);
+    rows.push({name,source,visible:o.visible,bad,trackHit,pitHit,protectedSpan,position:{x:o.position?.x||0,y:o.position?.y||0,z:o.position?.z||0},rotationY:o.rotation?.y||0,footprint:box.isEmpty()?null:{minX:box.min.x,maxX:box.max.x,minZ:box.min.z,maxZ:box.max.z}});
+  }
+  for(const o of W.suzukaFullScene?.root?.children||[])inspectObject(o,'full-scene');
+  for(const row of W.suzukaFacilities?.facilities||[])inspectObject(row?.object,'facility');
+  const legacyHome=scene.getObjectByName?.('SUZUKA_HOME_COMPLEX_V42');
+  for(const o of legacyHome?.children||[])inspectObject(o,'legacy-home');
+  scene.updateMatrixWorld(true);
+
+  let remainingTrack=0,remainingPit=0;
+  function refreshRemaining(){remainingTrack=0;remainingPit=0;for(const r of rows){if(r.visible===false||r.protectedSpan)continue;if(r.trackHit)remainingTrack++;if(r.pitHit)remainingPit++;}}
+  refreshRemaining();
+  W.enforceSceneryClearance=(objects,source='late-scene')=>{for(const o of(Array.isArray(objects)?objects:[objects]))inspectObject(o,source);scene.updateMatrixWorld(true);refreshRemaining();return{suppressed,suppressedTrack,suppressedPit,remainingTrack,remainingPit,valid:remainingTrack===0&&remainingPit===0};};
+
   W.tvCameraAnchors=[{name:'T1/T2',fraction:.035,side:-1,lateral:48,height:14,fov:42},{name:'S CURVES',fraction:.115,side:1,lateral:42,height:12,fov:46},{name:'DUNLOP',fraction:.215,side:1,lateral:46,height:13,fov:44},{name:'DEGNER',fraction:.315,side:-1,lateral:42,height:11,fov:45},{name:'HAIRPIN',fraction:.425,side:1,lateral:38,height:10,fov:43},{name:'SPOON',fraction:.615,side:-1,lateral:48,height:12,fov:46},{name:'130R',fraction:.845,side:-1,lateral:44,height:13,fov:44},{name:'CHICANE',fraction:.925,side:1,lateral:40,height:12,fov:42},{name:'MAIN STRAIGHT',fraction:.992,side:-1,lateral:55,height:15,fov:40}].map(x=>{const q=W.sample(total*x.fraction),p=q.p.clone().addScaledVector(q.side,x.side*x.lateral);p.y+=(x.height||12);return{...x,s:total*x.fraction,position:p};});
   const absoluteLandmarks={};for(const r of rows){if(!/FERRIS|HOTEL|GRANDSTAND|CONTROL_TOWER|POND|MAIN_GATE|GP_SQUARE|CENTER|PADDOCK/i.test(r.name))continue;absoluteLandmarks[r.name]={...r.position,rotationY:r.rotationY,source:r.source};}
-  W.validateSceneryClearance=()=>({owner:'runtime-placement-validator-v1',checked,suppressed,valid:suppressed===0,rows:rows.map(x=>({...x}))});W.suzukaPlacement={owner:'runtime-absolute-layout-registry-v1',absoluteLandmarks,tvCameras:W.tvCameraAnchors.map(({position,...x})=>({...x,x:position.x,y:position.y,z:position.z})),clearance:W.validateSceneryClearance()};
-  const priorAudit=W.auditCircuit?.bind(W);W.auditCircuit=()=>{const a=priorAudit?priorAudit():{};return{...a,version:'runtime-2026.09.15-r17',placement:{owner:W.suzukaPlacement.owner,landmarkCount:Object.keys(absoluteLandmarks).length,tvCameraCount:W.tvCameraAnchors.length,clearance:{checked,suppressed,valid:suppressed===0}},circuitProfile:{pit:W.realisticPitLayout,lane:W.racingLineProfile?.lanePolicy},notes:[...(a.notes||[]),'Major Suzuka landmarks are registered in absolute world coordinates; track-corridor validation suppresses accidental scenery intrusions and fixed TV cameras are sector-named.','Variable racing-lane bounds are active.']};};W.circuitAudit=W.auditCircuit();scene.updateMatrixWorld(true);return W;
+  W.validateSceneryClearance=()=>({owner:'runtime-placement-validator-v2',checked,suppressed,suppressedTrack,suppressedPit,remainingTrack,remainingPit,valid:remainingTrack===0&&remainingPit===0,trackSamples:trackPts.length,pitSamples:pitPts.length,rows:rows.map(x=>({...x}))});
+  W.suzukaPlacement={owner:'runtime-absolute-layout-registry-v2',absoluteLandmarks,tvCameras:W.tvCameraAnchors.map(({position,...x})=>({...x,x:position.x,y:position.y,z:position.z})),clearance:W.validateSceneryClearance()};
+  const priorAudit=W.auditCircuit?.bind(W);W.auditCircuit=()=>{const a=priorAudit?priorAudit():{};return{...a,version:'runtime-2026.09.19-r18',placement:{owner:W.suzukaPlacement.owner,landmarkCount:Object.keys(absoluteLandmarks).length,tvCameraCount:W.tvCameraAnchors.length,clearance:{checked,suppressed,suppressedTrack,suppressedPit,remainingTrack,remainingPit,valid:remainingTrack===0&&remainingPit===0}},circuitProfile:{pit:W.realisticPitLayout,lane:W.racingLineProfile?.lanePolicy},notes:[...(a.notes||[]),'Major Suzuka landmarks are registered in absolute world coordinates; mesh-level main-track and pit-lane corridor validation suppresses accidental scenery intrusions while preserving overhead bridge/tunnel structures.','Variable racing-lane bounds are active.']};};W.circuitAudit=W.auditCircuit();scene.updateMatrixWorld(true);return W;
 }
