@@ -47,7 +47,7 @@ test('pit release safety uses time-to-collision for a fast car arriving from beh
 test('contact layers no longer erase physical contact outcomes after the fact',()=>{
   const contact=readFileSync(new URL('../../iphone-demo/runtime/race-contact-avoidance.js',import.meta.url),'utf8');
   const side=readFileSync(new URL('../../iphone-demo/runtime/race-side-by-side.js',import.meta.url),'utf8');
-  expect(contact).toContain("mode:'predictive-only-physical-obb-authoritative'");
+  expect(contact).toContain("mode:'predictive-cap-physical-obb-authoritative'");
   expect(contact).not.toContain('suppressedFalseContacts');expect(contact).not.toContain('damage=b.damage');
   expect(side).toContain("contactPolicy:'physical-contact-authoritative'");
   expect(side).not.toContain('puncture=false');expect(side).not.toContain('events.push=function');
@@ -64,4 +64,43 @@ test('race-control uses VSC delta tracking instead of a universal fixed-speed ca
   const source=readFileSync(new URL('../../iphone-demo/runtime/race-control.js',import.meta.url),'utf8');
   expect(source).toContain('s.allowed+=referenceVscSpeed(c)*dt');expect(source).toContain('s.delta=s.allowed-s.actual');
   expect(source).not.toContain('135/3.6');expect(source).not.toContain('37.5');
+});
+
+test('normal green longitudinal control yields to local safety speed authorities',()=>{
+  const source=readFileSync(new URL('../../iphone-demo/runtime/race-base.js',import.meta.url),'utf8');
+  const clear=source.match(/const clearState=c=>([^;]+);/)?.[1]||'';
+  expect(clear).toContain('!c.localYellow');
+  expect(clear).toContain('!c.hydroplaning');
+  expect(clear).toContain('!punctured(c)');
+  expect(source).toContain("const punctured=c=>c?.fault==='PUNCTURE'");
+});
+
+test('predictive collision braking requests a cap that the final longitudinal owner enforces',()=>{
+  const contact=readFileSync(new URL('../../iphone-demo/runtime/race-contact-avoidance.js',import.meta.url),'utf8');
+  const base=readFileSync(new URL('../../iphone-demo/runtime/race-base.js',import.meta.url),'utf8');
+  expect(contact).toContain('c.predictiveSpeedCap=launch!=null&&Number.isFinite(Number(launch))&&Number(launch)>=0?Number(launch):null');
+  expect(contact).toContain('requestSpeedCap(c,cap)');
+  expect(contact).toContain('requestSpeedCap(c,front.v+');
+  expect(contact).not.toContain('c.v=Math.max(target');
+  expect(base).toContain('const safetyCap=Number(c.predictiveSpeedCap)');
+  expect(base).toContain('safetyActive=c.predictiveSpeedCap!=null&&Number.isFinite(safetyCap)');
+  expect(base).toContain('if(safetyActive&&c.v>safetyCap)');
+  expect(base).toContain('physicalSafetyLimit=Math.max(safetyCap,before-brakeAvail*dt)');
+  expect(base).toContain('safetyCap:c.racingSafetyCap??null');
+});
+
+test('deferred pit strategy does not overwrite racecraft lane intent',()=>{
+  const source=readFileSync(new URL('../../iphone-demo/runtime/race-pit-strategy.js',import.meta.url),'utf8');
+  const start=source.indexOf('function defer('),end=source.indexOf('\n  function admit',start),body=source.slice(start,end),writes=body.match(/c\.laneTarget\*=\.82/g)||[];
+  expect(start).toBeGreaterThanOrEqual(0);expect(end).toBeGreaterThan(start);
+  expect(body).toContain("if(W.runtimeRacecraftAuthority!=='runtime-racecraft-v2')c.laneTarget*=.82");
+  expect(writes).toHaveLength(1);
+});
+
+test('physical contact owns velocity through the contact frame',()=>{
+  const source=readFileSync(new URL('../../iphone-demo/runtime/race-physical.js',import.meta.url),'utf8');
+  expect(source).toContain('c._physicalVelocityAuthorityAt=Number(R.race?.t)||0');
+  expect(source).toContain('c.incident=Math.max(Number(c.incident)||0,.02)');
+  expect(source).toContain('markVelocityAuthority(c);c.v*=speedMul');
+  expect(source).toContain('markVelocityAuthority(a);markVelocityAuthority(b)');
 });

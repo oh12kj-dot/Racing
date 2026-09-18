@@ -3,6 +3,8 @@ import {createRace as createV7Race} from './v7-race.js';
 export function createRace(W,statusEl){
   const base=createV7Race(W,statusEl);
   const T=W.THREE,total=W.total,wrap=v=>((v%total)+total)%total;
+  const laneIntentOwnedElsewhere=()=>W.runtimeRacecraftAuthority==='runtime-racecraft-v2';
+  const frameRateAlpha=(per60,dt)=>{const a=Math.max(0,Math.min(.999,Number(per60)||0)),frames=Math.max(0,Number(dt)||0)*60;return 1-Math.pow(1-a,frames);};
   const events=base.events;
   const extraRadio=[];
   const pointsTable=[25,18,15,12,10,8,6,4,2,1];
@@ -84,7 +86,7 @@ export function createRace(W,statusEl){
   const drsZones=[[.955,1],[0,.075],[.555,.635]];
   function inDRSZone(c){const f=c.s/total;return drsZones.some(([a,b])=>f>=a&&f<=b);}
   function nearestAhead(c){let car=null,dist=Infinity;for(const o of base.cars){if(o===c||o.retired)continue;const d=wrap(o.s-c.s);if(d>0&&d<dist){dist=d;car=o;}}return{car,dist};}
-  function prepareDRSAndBattle(){
+  function prepareDRSAndBattle(dt){
     const green=base.flag==='GREEN';
     for(const c of base.cars){
       if(c.retired)continue;
@@ -96,16 +98,17 @@ export function createRace(W,statusEl){
       c.baseMax=c.baseMaxNominal*(c.drsActive?1.055:1)*c.faultFactor;
       c.accel=c.accelNominal*(c.fault==='ENGINE'?.92:1);
       c.brake=c.brakeNominal*(c.fault==='BRAKE'?.82:1);
+      if(laneIntentOwnedElsewhere())continue;
 
-      // 10) Battle AI: defend the inside, attack the opposite line, preserve side-by-side racing.
+      // Legacy battle AI remains available only without the runtime racecraft owner.
       c.battleState='CLEAR';
       if(!green||c.pitState!=='NONE'||c.incident>0)continue;
       let behind=null,behindDist=Infinity;
       for(const o of base.cars){if(o===c||o.retired)continue;const d=wrap(c.s-o.s);if(d>0&&d<behindDist){behindDist=d;behind=o;}}
       const q0=W.sample(c.s),q1=W.sample(c.s+34),cross=q0.t.x*q1.t.z-q0.t.z*q1.t.x,inside=(cross>=0?1:-1)*1.65;
-      if(behind&&behindDist<17&&behind.v>c.v-1.5&&c.avoid<=0){c.laneTarget=T.MathUtils.lerp(c.laneTarget,inside,.22);c.battleState='DEFEND';}
-      if(a.car&&a.dist<19&&c.v>a.car.v-.8&&c.avoid<=0){const attack=-inside*1.35;c.laneTarget=T.MathUtils.lerp(c.laneTarget,attack,.18+.10*c.driver.aggression);c.battleState='ATTACK';}
-      if(a.car&&a.dist<9&&Math.abs(a.car.lane-c.lane)>1.7){c.laneTarget=T.MathUtils.lerp(c.laneTarget,c.lane,.32);c.battleState='SIDE-BY-SIDE';}
+      if(behind&&behindDist<17&&behind.v>c.v-1.5&&c.avoid<=0){c.laneTarget=T.MathUtils.lerp(c.laneTarget,inside,frameRateAlpha(.22,dt));c.battleState='DEFEND';}
+      if(a.car&&a.dist<19&&c.v>a.car.v-.8&&c.avoid<=0){const attack=-inside*1.35;c.laneTarget=T.MathUtils.lerp(c.laneTarget,attack,frameRateAlpha(.18+.10*c.driver.aggression,dt));c.battleState='ATTACK';}
+      if(a.car&&a.dist<9&&Math.abs(a.car.lane-c.lane)>1.7){c.laneTarget=T.MathUtils.lerp(c.laneTarget,c.lane,frameRateAlpha(.32,dt));c.battleState='SIDE-BY-SIDE';}
     }
   }
 
@@ -186,7 +189,7 @@ export function createRace(W,statusEl){
       if(qualifyingClock>=3.4){sessionPhase='RACE';raceStarted=true;base.cars.forEach(c=>{c.sectorIndex=sectorOf(c);c.sectorStart=0;});pushRadio(null,'GRID SET · PREPARE FOR START','CONTROL');}
       return;
     }
-    prepareDRSAndBattle();
+    prepareDRSAndBattle(dt);
     base.update(dt);
     for(const c of base.cars)maybeMechanical(c,dt);
     updateSectors();ingestEvents();maybeAwardChampionship();

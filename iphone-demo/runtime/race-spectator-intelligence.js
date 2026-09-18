@@ -84,8 +84,8 @@ export function createRace(W,statusEl,settings={}){
   }
   function prepareRacecraft(c,dt){
     if(!c||c.retired)return;savePerf(c);const s=stateFor(c),t=s.traits,{ahead,behind}=neighbours(c),now=R.race?.t||0;
-    const raceActive=R.flag==='GREEN'&&R.sessionPhase==='RACE'&&c.pitState==='NONE'&&c.spinState==='NONE'&&!c.hazardAvoiding;
-    if(!raceActive){c.racecraftIntent='RESET';c.battleState='NONE';c.racecraftBlocked=false;applyPace(c,1);return;}
+    const specialState=!!(c.blueFlag||c.coolingMode||c.hydroplaning),raceActive=R.flag==='GREEN'&&R.sessionPhase==='RACE'&&c.pitState==='NONE'&&c.spinState==='NONE'&&!c.hazardAvoiding&&!specialState;
+    if(!raceActive){if(s.phase!=='HUNT'&&s.phase!=='RESET')transition(c,s,'RESET',specialState?'SPECIAL STATE PRIORITY':'RACECRAFT INACTIVE',.8);c.racecraftIntent=specialState?'SPECIAL':'RESET';c.battleState='NONE';c.racecraftBlocked=false;applyPace(c,1);return;}
     const aheadGap=ahead?gapSeconds(ahead,c):Infinity,behindGap=behind?gapSeconds(c,behind):Infinity,closing=ahead?Math.max(-12,Math.min(12,(c.v||0)-(ahead.v||0))):0;
     const load=brakingLoad(c),curv=cornerSignal(c),draft=Number(c.slipstream)||0,density=nearbyTraffic(c);
     s.targetId=ahead?.id??null;s.pressure=clamp((2.0-aheadGap)/2.0,0,1);

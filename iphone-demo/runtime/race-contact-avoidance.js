@@ -6,33 +6,44 @@ export function createRace(W,statusEl,settings={}){
   function forwardGap(a,b){return wrap((b?.s||0)-(a?.s||0));}
   function signedGap(a,b){let d=(b?.s||0)-(a?.s||0);if(d>total*.5)d-=total;if(d<-total*.5)d+=total;return d;}
   function spatialFor(c){return(R.spatialNeighbours||W.runtimeSpatialNeighbours)?.get?.(c.id);}
-  function nearestAhead(c){const n=spatialFor(c),candidate=n?.aheadView||n?.ahead;if(candidate?.car&&candidate.car!==c&&!candidate.car.retired&&candidate.car.pitState==='NONE')return{car:candidate.car,dist:Number(candidate.dist)||Infinity};let car=null,dist=Infinity;for(const o of R.cars){if(o===c||o.retired||o.pitState!=='NONE')continue;const d=forwardGap(c,o);if(d>0&&d<dist){dist=d;car=o;}}return{car,dist};}
+  function laneConflict(a,b){const a0=Number(a?.lane)||0,b0=Number(b?.lane)||0,a1=Number.isFinite(Number(a?.laneTarget))?Number(a.laneTarget):a0,b1=Number.isFinite(Number(b?.laneTarget))?Number(b.laneTarget):b0,safe=((a?.width||2)+(b?.width||2))*.5+.48,d0=a0-b0,d1=a1-b1,now=Math.abs(d0)<safe,future=Math.abs(d1)<safe,crosses=d0===0||d1===0||Math.sign(d0)!==Math.sign(d1),converges=Math.abs(d1)<Math.abs(d0)&&Math.abs(d1)<safe*1.45;return now||future||crosses||converges;}
+  function nearestAhead(c){let car=null,dist=Infinity;for(const o of R.cars){if(o===c||o.retired||o.pitState!=='NONE'||!laneConflict(c,o))continue;const d=forwardGap(c,o);if(d>0&&d<dist){dist=d;car=o;}}return{car,dist};}
+  function conflictingAhead(c,maxDist=90){const out=[];for(const o of R.cars){if(o===c||o.retired||o.pitState!=='NONE'||!laneConflict(c,o))continue;const d=forwardGap(c,o);if(d>0&&d<maxDist)out.push({car:o,dist:d});}out.sort((a,b)=>a.dist-b.dist);return out;}
+  function requestSpeedCap(c,cap){const x=Math.max(0,Number(cap)||0),old=c.predictiveSpeedCap;c.predictiveSpeedCap=old!=null&&Number.isFinite(Number(old))?Math.min(Number(old),x):x;}
+  function frameRateAlpha(per60,dt){const a=clamp(Number(per60)||0,0,.999),frames=Math.max(0,Number(dt)||0)*60;return 1-Math.pow(1-a,frames);}
   function lateralSafety(c){
     if(c.retired||c.pitState!=='NONE')return;
-    const current=Number(c.lane)||0;let desired=Number.isFinite(Number(c.laneTarget))?Number(c.laneTarget):current;
-    if(Math.abs(desired-current)<.08)return;
-    const nearby=spatialFor(c)?.near||R.cars;
+    const current=Number(c.lane)||0,requested=Number.isFinite(Number(c.laneTarget))?Number(c.laneTarget):current;
+    if(Math.abs(requested-current)<.08)return;
+    const nearby=spatialFor(c)?.near||R.cars;let lower=-3.55,upper=3.55,blocked=false;
     for(const o of nearby){
       if(o===c||o.retired||o.pitState!=='NONE')continue;
       const d=signedGap(c,o),body=((c.length||5)+(o.length||5))*.5;if(Math.abs(d)>body+6.5)continue;
-      const other=Number(o.lane)||0,safeLat=((c.width||2)+(o.width||2))*.5+.52,currentDelta=current-other,desiredDelta=desired-other;
+      const other=Number(o.lane)||0,safeLat=((c.width||2)+(o.width||2))*.5+.52,currentDelta=current-other,desiredDelta=requested-other;
       const crosses=currentDelta===0||desiredDelta===0||Math.sign(currentDelta)!==Math.sign(desiredDelta),narrows=Math.abs(desiredDelta)<Math.abs(currentDelta);
       if(!(crosses||narrows)||Math.abs(desiredDelta)>=safeLat)continue;
-      const dir=currentDelta===0?(c.id<o.id?-1:1):Math.sign(currentDelta),safeTarget=clamp(other+dir*safeLat,-3.55,3.55);
-      if(Math.abs(safeTarget-desired)>.02){desired=safeTarget;c.avoid=Math.max(c.avoid||0,.82);c.racecraftBlocked=true;lateralVetoes++;}
+      const dir=currentDelta===0?(c.id<o.id?-1:1):Math.sign(currentDelta);if(dir<0)upper=Math.min(upper,other-safeLat);else lower=Math.max(lower,other+safeLat);blocked=true;
     }
-    c.laneTarget=desired;
+    if(!blocked){c.laneTarget=requested;return;}
+    c.avoid=Math.max(c.avoid||0,.82);c.racecraftBlocked=true;let desired;
+    if(lower<=upper)desired=clamp(requested,lower,upper);else desired=current;
+    if(Math.abs(desired-requested)>.02)lateralVetoes++;c.laneTarget=clamp(desired,-3.55,3.55);
   }
   function predictiveAvoidance(dt){
-    const phase=R.sessionPhase,green=R.flag==='GREEN';if(phase==='QUALIFYING'||phase==='FORMATION'||!green)return;if(raceStartAt===null)raceStartAt=R.race.t;const launchAge=R.race.t-raceStartAt;
-    for(const c of R.cars){if(c.retired||c.pitState!=='NONE')continue;const a=nearestAhead(c);if(!a.car)continue;const front=a.car,lat=Math.abs((front.lane||0)-(c.lane||0)),overlapLane=lat<((front.width||2)+(c.width||2))*.58,closing=Math.max(0,c.v-front.v),bodyGap=((front.length||5)+(c.length||5))*.5,reaction=launchAge<11?.42:.26,desired=bodyGap+2+c.v*reaction*.10+closing*.42,usable=Math.max(.05,a.dist-bodyGap),ttc=closing>.15?usable/closing:99;
-      if(overlapLane&&a.dist<desired){const urgency=clamp((desired-a.dist)/Math.max(1,desired-bodyGap),0,1),target=Math.max(0,front.v+(1-urgency)*1.8),decel=(c.brakeNominal||c.brake||15)*(launchAge<8?.72:.58);c.v=Math.max(target,c.v-decel*dt*(.55+urgency*.65));c.overtake=Math.min(c.overtake||0,.35);interventions++;}
-      if(overlapLane&&ttc<1.45){c.v=Math.min(c.v,front.v+Math.max(0,(ttc-.45)*1.5));c.avoid=Math.max(c.avoid||0,.65);}
-      if(launchAge<9&&a.dist<38){const keep=clamp(.16+(9-launchAge)*.018,.16,.32);c.laneTarget+=(c.lane-c.laneTarget)*keep;c.avoid=Math.max(c.avoid||0,.30);}
-      if(a.dist<bodyGap+1.2){const safeLat=((front.width||2)+(c.width||2))*.53+.20,delta=(c.lane||0)-(front.lane||0);if(Math.abs(delta)<safeLat){const dir=delta===0?(c.id%2?1:-1):Math.sign(delta),respect=1-clamp((c.driver?.aggression||.6)-.45,0,.45)*.35;c.laneTarget=clamp(c.laneTarget+dir*(safeLat-Math.abs(delta))*.20*respect,-3.75,3.75);}}
+    for(const c of R.cars){const launch=c.launchSpeedCap;c.predictiveSpeedCap=launch!=null&&Number.isFinite(Number(launch))&&Number(launch)>=0?Number(launch):null;}
+    const phase=R.sessionPhase,flag=String(R.flag||'GREEN'),caution=flag==='VSC'||flag==='SC',active=flag==='GREEN'||caution;if(phase==='QUALIFYING'||phase==='FORMATION'||!active)return;if(raceStartAt===null)raceStartAt=R.race.t;const launchAge=R.race.t-raceStartAt;
+    for(const c of R.cars){
+      if(c.retired||c.pitState!=='NONE')continue;const threats=conflictingAhead(c);if(!threats.length)continue;const multiThreat=threats.length>1;
+      for(const a of threats){const front=a.car,conflict=laneConflict(c,front),closing=Math.max(0,c.v-front.v),bodyGap=((front.length||5)+(c.length||5))*.5,reaction=caution?.24:launchAge<11?.18:.12,compression=multiThreat?Math.min(2.2,.8+closing*.10):0,desired=bodyGap+(caution?3.2:2)+c.v*reaction+closing*(caution?.60:launchAge<11?.52:.42)+compression,usable=Math.max(.05,a.dist-bodyGap),ttc=closing>.15?usable/closing:99,ttcLimit=caution?1.9:launchAge<11?1.7:1.45;
+        if(conflict&&a.dist<desired){const urgency=clamp((desired-a.dist)/Math.max(1,desired-bodyGap),0,1),target=Math.max(0,front.v+(1-urgency)*(caution?.9:1.8)),decel=(c.brakeNominal||c.brake||15)*(caution?.78:launchAge<8?.72:.58),cap=Math.max(target,c.v-decel*dt*(.55+urgency*.65));requestSpeedCap(c,cap);c.overtake=Math.min(c.overtake||0,.35);interventions++;}
+        if(conflict&&ttc<ttcLimit){requestSpeedCap(c,front.v+Math.max(0,(ttc-.45)*(caution?.9:1.5)));c.avoid=Math.max(c.avoid||0,.65);}
+      }
+      const a=threats[0],front=a.car,bodyGap=((front.length||5)+(c.length||5))*.5;
+      if(!caution&&launchAge<9&&a.dist<38){const keepPer60=clamp(.16+(9-launchAge)*.018,.16,.32),keep=frameRateAlpha(keepPer60,dt);c.laneTarget+=(c.lane-c.laneTarget)*keep;c.avoid=Math.max(c.avoid||0,.30);}
+      if(a.dist<bodyGap+1.2){const safeLat=((front.width||2)+(c.width||2))*.53+.20,delta=(c.lane||0)-(front.lane||0);if(Math.abs(delta)<safeLat){const dir=delta===0?(c.id%2?1:-1):Math.sign(delta),respect=caution?1:1-clamp((c.driver?.aggression||.6)-.45,0,.45)*.35,step=frameRateAlpha(.20*respect,dt);c.laneTarget=clamp(c.laneTarget+dir*(safeLat-Math.abs(delta))*step,-3.75,3.75);}}
     }
     for(const c of R.cars)lateralSafety(c);
   }
   function update(dt){predictiveAvoidance(dt);baseUpdate(dt);}
-  return new Proxy(R,{get(target,prop){if(prop==='update')return update;if(prop==='collisionAvoidance')return{raceStartAt,interventions,lateralVetoes,mode:'predictive-only-physical-obb-authoritative',spatialGrid:!!(R.spatialNeighbours||W.runtimeSpatialNeighbours)};return Reflect.get(target,prop,target);}});
+  return new Proxy(R,{get(target,prop){if(prop==='update')return update;if(prop==='collisionAvoidance')return{raceStartAt,interventions,lateralVetoes,mode:'predictive-cap-physical-obb-authoritative',spatialGrid:!!(R.spatialNeighbours||W.runtimeSpatialNeighbours),frameRateInvariant:true,cautionAware:true,projectedLaneConflict:true};return Reflect.get(target,prop,target);}});
 }

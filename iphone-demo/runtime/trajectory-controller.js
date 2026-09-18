@@ -27,12 +27,13 @@ export function createTrajectoryController(W,R,{mobile=false}={}){
   }
   function legacyIntent(c){return clamp(Number.isFinite(Number(c.laneTarget))?Number(c.laneTarget):Number(c.lane)||0,-3.65,3.65);}
   function intent(c){
-    const legacy=legacyIntent(c),ideal=lineAt(c),phase=String(c._runtimePitPhase||'');
+    const legacy=legacyIntent(c),ideal=lineAt(c),phase=String(c._runtimePitPhase||''),launchAge=(Number(R.race?.t)||0)-(Number(R.race?.green)||0);
     if(String(R.flag||'GREEN')!=='GREEN')return{target:legacy,source:'CAUTION'};
     if(c.pitState==='ENTRY'&&!W.inPitWindow?.(c.s)){metrics.pitApproaches++;return{target:legacy,source:'PIT_APPROACH'};}
     if(phase==='MERGE'){metrics.mergeFrames++;return{target:ideal,source:'PIT_MERGE'};}
     if(c.hazardAvoiding)return{target:legacy,source:'HAZARD'};
     if((c.avoid||0)>.05)return{target:legacy,source:'COLLISION_AVOID'};
+    if(launchAge>=0&&launchAge<8)return{target:legacy,source:'LAUNCH'};
     if(c.blueFlag)return{target:legacy,source:'BLUE_FLAG'};
     if(c.battleState==='ATTACK'||c.racecraftState==='ATTACK'||c.racecraftState==='SWITCHBACK')return{target:legacy,source:'ATTACK'};
     if(c.battleState==='DEFEND'||c.racecraftState==='DEFEND')return{target:legacy,source:'DEFEND'};
@@ -114,6 +115,7 @@ export function createTrajectoryController(W,R,{mobile=false}={}){
     for(let i=0;i<cars.length;i++)for(let j=i+1;j<cars.length;j++){
       const a=cars[i],b=cars[j],code=i*64+j;if(a.retired||b.retired||a.pitState!=='NONE'||b.pitState!=='NONE'||!a.mesh||!b.mesh){contactLatch.delete(code);continue;}
       if(!overlapOBB(a,b)){contactLatch.delete(code);continue;}
+      if(R.resolvePhysicalPair?.(a,b)){contactLatch.add(code);continue;}
       if(recentPhysical(a,b)||recentEventContact(a,b,now)){contactLatch.add(code);continue;}
       if(contactLatch.has(code))continue;contactLatch.add(code);
       const rel=Math.hypot(((a.v||0)-(b.v||0))*3.6,((a.lateralVelocity||0)-(b.lateralVelocity||0))*3.6),sev=clamp((rel-6)/95,0,1),dmg=.004+sev*.075;a.damage=clamp((a.damage||0)+dmg,0,1);b.damage=clamp((b.damage||0)+dmg,0,1);
@@ -121,7 +123,7 @@ export function createTrajectoryController(W,R,{mobile=false}={}){
       R.events?.push({id:`traj-contact-${Date.now()}-${i}-${j}`,type:'CONTACT',t:now,carId:a.id,data:{otherId:b.id,physical:true,trajectoryAudit:true,impactKmh:Math.round(rel),severity:sev}});metrics.unhandledContacts++;
     }
   }
-  function update(dt,snapshot){const step=clamp(Number(dt)||.016,.001,.05);for(const c of R.cars||[])updateCar(c,step,snapshot?.[c.id]);auditContacts();metrics.updates++;}
+  function update(dt,snapshot){const step=clamp(Number(dt)||.016,.001,.05);for(const c of R.cars||[])updateCar(c,step,snapshot?.[c.id]);R.resolvePhysicalContacts?.(false);auditContacts();metrics.updates++;}
   function diagnostics(){return{owner:'runtime-trajectory-controller-v4-physical-sync',...metrics,snapshotAllocations:1,contactLatches:contactLatch.size,cars:[...states.entries()].map(([id,s])=>({id,lane:s.lane,laneV:s.laneV,laneA:s.laneA,yawError:s.yawError,steer:s.steer,target:s.target,contactLong:s.contactLong,source:s.source}))};}
   return{capture,update,diagnostics};
 }
