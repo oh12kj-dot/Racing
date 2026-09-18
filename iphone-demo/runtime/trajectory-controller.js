@@ -1,16 +1,12 @@
+import {performanceFor} from './vehicle-performance-spec.js';
+
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const wrapAngle=a=>{const tau=Math.PI*2;return((a+Math.PI)%tau+tau)%tau-Math.PI;};
-
-const classTune={
-  formula:{latG:3.2,steer:.34,rate:2.30,wheelbase:3.6},
-  hyper:{latG:2.55,steer:.38,rate:2.00,wheelbase:3.1},lmh:{latG:2.55,steer:.38,rate:2.00,wheelbase:3.1},proto:{latG:2.60,steer:.39,rate:2.00,wheelbase:3.0},
-  gt:{latG:1.95,steer:.43,rate:1.75,wheelbase:2.85},supercar:{latG:1.80,steer:.45,rate:1.70,wheelbase:2.75},touring:{latG:1.70,steer:.46,rate:1.65,wheelbase:2.70}
-};
+const tuneFor=c=>{const p=performanceFor(c?.type);return{latG:p.laneChangeG,steer:p.steer,rate:p.steerRate,wheelbase:p.wheelbase};};
 
 export function createTrajectoryController(W,R,{mobile=false}={}){
   const states=new Map(),frame=[],contactLatch=new Set(),total=Math.max(1,Number(W.total)||1);
   const metrics={updates:0,arbitrations:0,safetyVetoes:0,pitApproaches:0,mergeFrames:0,legacySeparationRepairs:0,unhandledContacts:0,physicalSyncs:0,spinPhysicsFrames:0,maxLaneAccel:0,maxYawError:0};
-  const tuneFor=c=>classTune[c?.type]||classTune.gt;
   const lineAt=(c,s=c.s)=>clamp(Number(W.racingLineFor?.(s,c.racingLineMode||'OPTIMAL')??W.racingLineAt?.(s)??0)||0,-3.35,3.35);
   const progress=c=>Number(c?._v8Progress??((c?.lap||0)*total+(c?.s||0)))||0;
   const nearLongitudinal=(a,b)=>Math.abs(progress(a)-progress(b));
@@ -35,6 +31,7 @@ export function createTrajectoryController(W,R,{mobile=false}={}){
     if((c.avoid||0)>.05)return{target:legacy,source:'COLLISION_AVOID'};
     if(launchAge>=0&&launchAge<8)return{target:legacy,source:'LAUNCH'};
     if(c.blueFlag)return{target:legacy,source:'BLUE_FLAG'};
+    if(c.multiclassPassIntent)return{target:legacy,source:'MULTICLASS_PASS'};
     if(c.battleState==='ATTACK'||c.racecraftState==='ATTACK'||c.racecraftState==='SWITCHBACK')return{target:legacy,source:'ATTACK'};
     if(c.battleState==='DEFEND'||c.racecraftState==='DEFEND')return{target:legacy,source:'DEFEND'};
     if(c.coolingMode)return{target:legacy,source:'COOLING'};
@@ -46,7 +43,9 @@ export function createTrajectoryController(W,R,{mobile=false}={}){
       if(o===c||o.retired||o.pitState!=='NONE'||c.pitState!=='NONE')continue;
       const longitudinal=nearLongitudinal(c,o),body=((c.length||5)+(o.length||5))*.5;if(longitudinal>body+8.5)continue;
       const safe=((c.width||2)+(o.width||2))*.5+.46,other=Number(o.lane)||0,current=(Number(c.lane)||0)-other,desired=out-other;
+      const passTarget=!!c.multiclassPassIntent&&Number(c.multiclassPassTargetId)===Number(o.id)&&longitudinal>body+1.0;
       const crosses=current===0||desired===0||Math.sign(current)!==Math.sign(desired),narrows=Math.abs(desired)<Math.abs(current);
+      if(passTarget&&Math.abs(desired)>=safe*.88)continue;
       if((crosses||narrows)&&Math.abs(desired)<safe){const dir=current===0?(c.id<o.id?-1:1):Math.sign(current);out=clamp(other+dir*safe,-3.65,3.65);metrics.safetyVetoes++;}
     }
     return out;
@@ -124,6 +123,6 @@ export function createTrajectoryController(W,R,{mobile=false}={}){
     }
   }
   function update(dt,snapshot){const step=clamp(Number(dt)||.016,.001,.05);for(const c of R.cars||[])updateCar(c,step,snapshot?.[c.id]);R.resolvePhysicalContacts?.(false);auditContacts();metrics.updates++;}
-  function diagnostics(){return{owner:'runtime-trajectory-controller-v4-physical-sync',...metrics,snapshotAllocations:1,contactLatches:contactLatch.size,cars:[...states.entries()].map(([id,s])=>({id,lane:s.lane,laneV:s.laneV,laneA:s.laneA,yawError:s.yawError,steer:s.steer,target:s.target,contactLong:s.contactLong,source:s.source}))};}
+  function diagnostics(){return{owner:'runtime-trajectory-controller-v5-class-calibrated',...metrics,snapshotAllocations:1,contactLatches:contactLatch.size,cars:[...states.entries()].map(([id,s])=>({id,lane:s.lane,laneV:s.laneV,laneA:s.laneA,yawError:s.yawError,steer:s.steer,target:s.target,contactLong:s.contactLong,source:s.source}))};}
   return{capture,update,diagnostics};
 }

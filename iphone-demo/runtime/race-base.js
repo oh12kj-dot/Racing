@@ -1,8 +1,9 @@
 import {createRace as createV38Race} from './v38-race.js';
+import {performanceFor,trafficFollowPolicy} from './vehicle-performance-spec.js';
 
 export function createRace(W,statusEl,settings={}){
   const R=createV38Race(W,statusEl,settings),baseUpdate=R.update,total=W.total,clamp=(v,a,b)=>Math.max(a,Math.min(b,v)),wrap=s=>((s%total)+total)%total;
-  const latG={formula:3.75,hyper:2.85,lmh:2.85,proto:2.95,gt:2.05,supercar:1.82,touring:1.72},look=[0,18,38,62,92,128,170,215],controllers=new Map(),preSpeed=[],preS=[],prePit=[],telemetry=[];
+  const look=[0,18,38,62,92,128,170,215],controllers=new Map(),preSpeed=[],preS=[],prePit=[],telemetry=[];
   const serviceTime={formula:2.6,proto:3.1,hyper:3.3,lmh:3.2,gt:4.1,supercar:4.3,touring:4.7};
   let telemetryAcc=0;
   const punctured=c=>c?.fault==='PUNCTURE'||(c?.wheelState||[]).some(w=>w?.puncture);
@@ -13,7 +14,7 @@ export function createRace(W,statusEl,settings={}){
   function chooseLine(c){
     const wet=W.env?.wetness||0;if(wet>.42)return'WET';
     if(c.battleState==='DEFEND')return'DEFEND';
-    if(c.battleState==='ATTACK'){
+    if(c.battleState==='ATTACK'||c.multiclassPassIntent){
       const a=aheadOf(c)?.car;if(a)return(a.lane||0)>=(c.lane||0)?'ATTACK_LEFT':'ATTACK_RIGHT';
       return c.id%2?'ATTACK_LEFT':'ATTACK_RIGHT';
     }
@@ -26,7 +27,7 @@ export function createRace(W,statusEl,settings={}){
     const st=controllers.get(c.id),mode=chooseLine(c),ideal=lineValue(c,mode),traffic=(c.avoid||0)>0||c.blueFlag||c.coolingMode;
     st.line=mode;c.racingLineMode=mode;c.racingLineTarget=ideal;
     // Existing pass/avoid logic owns the lane during close traffic; otherwise use the planned line.
-    if(traffic||c.battleState==='ATTACK'||c.battleState==='DEFEND')return;
+    if(traffic||c.multiclassPassIntent||c.battleState==='ATTACK'||c.battleState==='DEFEND')return;
     const strength=clamp(Math.abs(lineCurv(mode,c.s+55))*55+Math.abs(lineCurv(mode,c.s))*25,0,1),rate=1.25+strength*1.75,f=1-Math.exp(-rate*dt);
     c.laneTarget+=(ideal-c.laneTarget)*f;
   }
@@ -36,9 +37,9 @@ export function createRace(W,statusEl,settings={}){
     c.trackEvolutionGrip=1+(e.dryLine||0)*.018*(1-off)-(e.marbles||0)*.055*off;c.racingLineDeviation=deviation;
   }
   function speedEnvelope(c,mode){
-    const baseTop=c.baseMax||c.classPerformance?.top||c.baseMaxNominal||c.max||72,top=Math.max(24,baseTop)*(1+(c.slipstream||0)*.020),wet=clamp(Number(W.env?.wetness)||0,0,1),wear=clamp(c.wear||0,0,1),tempGrip=clamp(c.tempGrip||1,.75,1.08),surface=clamp(c.surfaceGrip||1,.80,1.08),evolution=clamp(c.trackEvolutionGrip||1,.88,1.04),aero=clamp(Math.min(c.aeroFront??1,c.aeroRear??1),.55,1),tyreGrip=clamp(tempGrip*surface*evolution*(1-wear*.13)*(1-wet*.20),.56,1.06),ideal=lineValue(c,mode),deviation=Math.abs((c.lane||0)-ideal),cornerDemand=clamp(Math.abs(lineCurv(mode,c.s+28))*70,0,1),lineEfficiency=1-cornerDemand*clamp(deviation/3,0,1)*.10,gCap=(latG[c.type]||2.0)*9.81*tyreGrip*(.82+.18*aero)*lineEfficiency,brakeBase=Math.max(7,c._v18BaseBrake||c.brake||15.5)*clamp(.74+.26*tyreGrip,.62,1.04)*(1-wet*.20);let target=top;
+    const spec=performanceFor(c.type),baseTop=c._v18BaseMax||c.classPerformance?.top||c.baseMax||c.baseMaxNominal||c.max||spec.top,top=Math.max(24,baseTop)*(1+(c.slipstream||0)*spec.draftGain),wet=clamp(Number(W.env?.wetness)||0,0,1),wear=clamp(c.wear||0,0,1),tempGrip=clamp(c.tempGrip||1,.75,1.08),surface=clamp(c.surfaceGrip||1,.80,1.08),evolution=clamp(c.trackEvolutionGrip||1,.88,1.04),damageAero=clamp(Math.min(c.aeroFront??1,c.aeroRear??1),.45,1),aero=clamp(spec.aero*damageAero,.45,1),classGrip=clamp(c.classPerformance?.tyre??spec.tyre,.88,1.12),wetRetention=clamp(1-wet*(1-(c.classPerformance?.wet??spec.wet)),.68,1),tyreGrip=clamp(tempGrip*surface*evolution*classGrip*(1-wear*.13)*wetRetention,.50,1.12),ideal=lineValue(c,mode),deviation=Math.abs((c.lane||0)-ideal),cornerDemand=clamp(Math.abs(lineCurv(mode,c.s+28))*70,0,1),lineEfficiency=1-cornerDemand*clamp(deviation/3,0,1)*.10,dirtyAirScale=clamp(1-(c.dirtyAir||0)*spec.dirtyAirLoss,.78,1),gCap=spec.lateralG*9.81*tyreGrip*(.82+.18*aero)*lineEfficiency*dirtyAirScale,brakeBase=Math.max(7,c._v18BaseBrake||c.brake||spec.brake)*clamp(.74+.26*tyreGrip,.62,1.04)*(1-wet*.20);let target=top;
     for(const d of look){const k=Math.abs(lineCurv(mode,c.s+d));if(k<.00105)continue;const corner=Math.min(top,Math.sqrt(Math.max(1,gCap/k))),allowed=Math.sqrt(corner*corner+2*brakeBase*d);if(allowed<target)target=allowed;}
-    const a=aheadOf(c);if(a?.car&&a.dist<90){const other=a.car,lat=Math.abs((other.lane||0)-(c.lane||0)),overlap=lat<(c.width+other.width)*.48+.35;if(overlap){const safe=(c.length+other.length)*.5+4.5+Math.max(0,c.v||0)*.18,closing=Math.max(0,(c.v||0)-(other.v||0)),ttc=closing>.3?(a.dist-safe)/closing:99;if(a.dist<safe+26||ttc<3.2){const margin=clamp((a.dist-safe)/24,0,1);target=Math.min(target,(other.v||0)+margin*5.5);}}}
+    const a=aheadOf(c);if(a?.car&&a.dist<120){const other=a.car,lat=Math.abs((other.lane||0)-(c.lane||0)),safeLat=(c.width+other.width)*.48+.35,overlap=lat<safeLat,plannedLat=Math.abs((Number.isFinite(Number(c.laneTarget))?Number(c.laneTarget):(c.lane||0))-(Number.isFinite(Number(other.laneTarget))?Number(other.laneTarget):(other.lane||0))),bodyGap=(c.length+other.length)*.5,passIntent=!!c.multiclassPassIntent&&(!Number.isFinite(Number(c.multiclassPassTargetId))||Number(c.multiclassPassTargetId)===Number(other.id)),follow=trafficFollowPolicy({followerType:c.type,leaderType:other.type,gapM:a.dist,speedMps:c.v||0,leaderSpeedMps:other.v||0,bodyGapM:bodyGap,currentLateralM:lat,plannedLateralM:plannedLat,safeLateralM:safeLat,passIntent});if(overlap&&follow.shouldCap)target=Math.min(target,follow.allowedSpeed);c.racingTrafficPolicy={leaderId:other.id,...follow};}
     if(c.damageState==='HEAVY'||(c.damage||0)>.68)target=Math.min(target,18);else if((c.damage||0)>.38)target=Math.min(target,32);
     c.racingLineDeviation=deviation;return{target:Math.max(8,target),brakeBase,gCap};
   }
@@ -53,7 +54,7 @@ export function createRace(W,statusEl,settings={}){
     const safetyCap=Number(c.predictiveSpeedCap),safetyActive=c.predictiveSpeedCap!=null&&Number.isFinite(safetyCap)&&safetyCap>=0;
     if(safetyActive){st.target=Math.min(st.target,safetyCap);st.raw=Math.min(st.raw,safetyCap);}
     const error=st.target-before;st.hold=Math.max(0,st.hold-dt);const wanted=error<-1.40?'BRAKE':error>1.80?'THROTTLE':'COAST';if(wanted!==st.mode&&(st.hold<=0||error<-4.8)){st.mode=wanted;st.hold=wanted==='COAST'?.20:.30;}
-    const k=Math.abs(lineCurv(mode,c.s)),latDemand=before*before*k,latUse=clamp(latDemand/Math.max(1,x.gCap),0,.985),longAvail=Math.sqrt(Math.max(.03,1-latUse*latUse)),accelBase=Math.max(2.5,c._v18BaseAccel||c.accel||6)*(1+(c.energyMode==='PUSH'?.07:0))*(.45+.55*longAvail),brakeAvail=x.brakeBase*(.30+.70*longAvail);
+    const spec=performanceFor(c.type),k=Math.abs(lineCurv(mode,c.s)),latDemand=before*before*k,latUse=clamp(latDemand/Math.max(1,x.gCap),0,.985),longAvail=Math.sqrt(Math.max(.03,1-latUse*latUse)),accelBase=Math.max(2.5,c._v18BaseAccel||c.accel||spec.accel)*(1+(c.energyMode==='PUSH'?.07:0))*(.45+.55*longAvail),brakeAvail=x.brakeBase*(.30+.70*longAvail);
     let desiredA=0;if(st.mode==='BRAKE'){const demand=clamp((-error-.45)/7.8,.08,1);desiredA=-brakeAvail*demand;}else if(st.mode==='THROTTLE'){const demand=clamp((error-.50)/8.8,0,1);desiredA=accelBase*demand;}else desiredA=-clamp(.14+before*.0035,.14,.48);
     st.prevAccel=st.accel;const jerkLimit=desiredA<st.accel?22:7.5,maxDelta=jerkLimit*dt;st.accel+=clamp(desiredA-st.accel,-maxDelta,maxDelta);st.jerk=(st.accel-st.prevAccel)/Math.max(.001,dt);
     // This is the single normal-green longitudinal output. Legacy core speed changes are
@@ -108,5 +109,5 @@ export function createRace(W,statusEl,settings={}){
     for(const c of R.cars){surfaceLine(c);longitudinal(c,dt,preSpeed[c.id]??c.v??0);managePit(c,dt,prePit[c.id],preSpeed[c.id]||0,eventStart);}pileupContacts();telemetryAcc+=dt;if(telemetryAcc>=.10){telemetryAcc%=.10;sampleTelemetry();}
   }
 
-  return new Proxy(R,{get(target,prop){if(prop==='update')return update;if(prop==='racingDynamics')return R.cars.map(c=>({carId:c.id,line:c.racingLineTarget??0,lineMode:c.racingLineMode||'OPTIMAL',lineDeviation:c.racingLineDeviation??0,rawTarget:c.racingSpeedRaw??0,targetSpeed:c.racingSpeedTarget??0,longAccel:c.racingLongAccel??0,jerk:c.racingJerk??0,latUse:c.racingLatUse??0,mode:c.racingMode||'COAST',brake:c.racingBrake??0,throttle:c.racingThrottle??0,safetyCap:c.racingSafetyCap??null}));if(prop==='dynamicsTelemetry')return telemetry;if(prop==='getDynamicsLog')return carId=>telemetry.map(x=>({t:x.t,...x.cars.find(c=>c.id===Number(carId))}));return Reflect.get(target,prop,target);}});
+  return new Proxy(R,{get(target,prop){if(prop==='update')return update;if(prop==='racingDynamics')return R.cars.map(c=>({carId:c.id,line:c.racingLineTarget??0,lineMode:c.racingLineMode||'OPTIMAL',lineDeviation:c.racingLineDeviation??0,rawTarget:c.racingSpeedRaw??0,targetSpeed:c.racingSpeedTarget??0,longAccel:c.racingLongAccel??0,jerk:c.racingJerk??0,latUse:c.racingLatUse??0,mode:c.racingMode||'COAST',brake:c.racingBrake??0,throttle:c.racingThrottle??0,safetyCap:c.racingSafetyCap??null,traffic:c.racingTrafficPolicy??null}));if(prop==='dynamicsTelemetry')return telemetry;if(prop==='getDynamicsLog')return carId=>telemetry.map(x=>({t:x.t,...x.cars.find(c=>c.id===Number(carId))}));return Reflect.get(target,prop,target);}});
 }
