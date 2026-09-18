@@ -3,7 +3,7 @@ import {performanceFor,resolveMulticlassPassPlan,trafficFollowPolicy} from './ve
 
 export function createRace(W,statusEl,settings={}){
   const R=createV26Race(W,statusEl,settings),baseUpdate=R.update,total=Math.max(1,W.total||1),clamp=(v,a,b)=>Math.max(a,Math.min(b,v)),wrap=v=>((v%total)+total)%total;
-  let raceStartAt=null,interventions=0,lateralVetoes=0,multiclassPassesArmed=0,multiclassPassesCompleted=0;
+  let raceStartAt=null,interventions=0,lateralVetoes=0,multiclassPassesArmed=0,multiclassPassesCompleted=0,parallelPassFrames=0;
   function forwardGap(a,b){return wrap((b?.s||0)-(a?.s||0));}
   function signedGap(a,b){let d=(b?.s||0)-(a?.s||0);if(d>total*.5)d-=total;if(d<-total*.5)d+=total;return d;}
   function spatialFor(c){return(R.spatialNeighbours||W.runtimeSpatialNeighbours)?.get?.(c.id);}
@@ -62,9 +62,11 @@ export function createRace(W,statusEl,settings={}){
       if(c.retired||c.pitState!=='NONE')continue;const threats=conflictingAhead(c);if(!threats.length)continue;const multiThreat=threats.length>1;
       for(const a of threats){
         const front=a.car,closing=Math.max(0,(c.v||0)-(front.v||0)),samePassTarget=c.multiclassPassIntent&&Number(c.multiclassPassTargetId)===Number(front.id),passIntent=!caution&&launchAge>=8&&(samePassTarget||(!c.multiclassPassIntent&&armMulticlassPass(c,front,a.dist,closing,dt))),bodyGap=((front.length||5)+(c.length||5))*.5,currentLat=Math.abs((front.lane||0)-(c.lane||0)),plannedLat=Math.abs((Number.isFinite(Number(c.laneTarget))?Number(c.laneTarget):(c.lane||0))-(Number.isFinite(Number(front.laneTarget))?Number(front.laneTarget):(front.lane||0))),safeLat=((c.width||2)+(front.width||2))*.5+.48,follow=trafficFollowPolicy({followerType:c.type,leaderType:front.type,gapM:a.dist,speedMps:c.v||0,leaderSpeedMps:front.v||0,bodyGapM:bodyGap,currentLateralM:currentLat,plannedLateralM:plannedLat,safeLateralM:safeLat,passIntent});
+        const bodyClear=((c.width||2)+(front.width||2))*.5+.08,stableParallel=!!c.sideBySideReserved&&a.dist<=bodyGap+3&&currentLat>=bodyClear&&plannedLat>=currentLat-.12;
+        if(stableParallel)parallelPassFrames++;
         const reaction=caution?.24:launchAge<11?.18:(passIntent?.07:.12),compression=multiThreat&&!passIntent?Math.min(2.2,.8+closing*.10):0,desired=bodyGap+(caution?3.2:passIntent?1.5:2)+(c.v||0)*reaction+closing*(caution?.60:launchAge<11?.52:passIntent?.18:.42)+compression,usable=Math.max(.05,a.dist-bodyGap),ttc=closing>.15?usable/closing:99,ttcLimit=caution?1.9:launchAge<11?1.7:passIntent?1.02:follow.ttcLimit;
-        if(a.dist<desired&&follow.shouldCap){const urgency=clamp((desired-a.dist)/Math.max(1,desired-bodyGap),0,1),target=Math.max(0,follow.allowedSpeed),decel=(c.brakeNominal||c.brake||performanceFor(c.type).brake)*(caution?.78:launchAge<8?.72:passIntent?.42:.58),cap=Math.max(target,(c.v||0)-decel*dt*(.55+urgency*.65));requestSpeedCap(c,cap);if(!passIntent)c.overtake=Math.min(c.overtake||0,.35);interventions++;}
-        if(ttc<ttcLimit&&follow.shouldCap){requestSpeedCap(c,Math.max(follow.allowedSpeed,(front.v||0)+Math.max(0,(ttc-.45)*(caution?.9:passIntent?2.2:1.5))));if(!passIntent||ttc<.72)c.avoid=Math.max(c.avoid||0,.65);}
+        if(!stableParallel&&a.dist<desired&&follow.shouldCap){const urgency=clamp((desired-a.dist)/Math.max(1,desired-bodyGap),0,1),target=Math.max(0,follow.allowedSpeed),decel=(c.brakeNominal||c.brake||performanceFor(c.type).brake)*(caution?.78:launchAge<8?.72:passIntent?.42:.58),cap=Math.max(target,(c.v||0)-decel*dt*(.55+urgency*.65));requestSpeedCap(c,cap);if(!passIntent)c.overtake=Math.min(c.overtake||0,.35);interventions++;}
+        if(!stableParallel&&ttc<ttcLimit&&follow.shouldCap){requestSpeedCap(c,Math.max(follow.allowedSpeed,(front.v||0)+Math.max(0,(ttc-.45)*(caution?.9:passIntent?2.2:1.5))));if(!passIntent||ttc<.72)c.avoid=Math.max(c.avoid||0,.65);}
       }
       const a=threats[0],front=a.car,bodyGap=((front.length||5)+(c.length||5))*.5;
       if(!caution&&launchAge<9&&a.dist<38){const keepPer60=clamp(.16+(9-launchAge)*.018,.16,.32),keep=frameRateAlpha(keepPer60,dt);c.laneTarget+=(c.lane-c.laneTarget)*keep;c.avoid=Math.max(c.avoid||0,.30);}
@@ -73,5 +75,5 @@ export function createRace(W,statusEl,settings={}){
     for(const c of R.cars)lateralSafety(c);
   }
   function update(dt){predictiveAvoidance(dt);baseUpdate(dt);}
-  return new Proxy(R,{get(target,prop){if(prop==='update')return update;if(prop==='collisionAvoidance')return{raceStartAt,interventions,lateralVetoes,multiclassPassesArmed,multiclassPassesCompleted,mode:'predictive-cap-multiclass-pass-aware-physical-obb-authoritative',spatialGrid:!!(R.spatialNeighbours||W.runtimeSpatialNeighbours),frameRateInvariant:true,cautionAware:true,projectedLaneConflict:true,passIntentLatched:true};return Reflect.get(target,prop,target);}});
+  return new Proxy(R,{get(target,prop){if(prop==='update')return update;if(prop==='collisionAvoidance')return{raceStartAt,interventions,lateralVetoes,multiclassPassesArmed,multiclassPassesCompleted,parallelPassFrames,mode:'predictive-cap-parallel-pass-aware-physical-obb-authoritative',spatialGrid:!!(R.spatialNeighbours||W.runtimeSpatialNeighbours),frameRateInvariant:true,cautionAware:true,projectedLaneConflict:true,passIntentLatched:true};return Reflect.get(target,prop,target);}});
 }
