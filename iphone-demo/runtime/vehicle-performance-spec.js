@@ -10,6 +10,7 @@
 
 const freeze=Object.freeze;
 const band=(low,mid,high)=>freeze({low,mid,high});
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 
 export const VEHICLE_PERFORMANCE=freeze({
   formula:freeze({
@@ -60,14 +61,38 @@ export function legacyPerformanceTuple(type='gt'){
 }
 
 function interpBand(bandDef,ratio){
-  const r=Math.max(0,Math.min(1,Number(ratio)||0));
+  const r=clamp(Number(ratio)||0,0,1);
   if(r<=.45){const t=r/.45;return bandDef.low+(bandDef.mid-bandDef.low)*t;}
   const t=(r-.45)/.55;return bandDef.mid+(bandDef.high-bandDef.mid)*t;
 }
 
 export function longitudinalPerformance(type='gt',speedMps=0){
-  const p=performanceFor(type),ratio=Math.max(0,Math.min(1,(Number(speedMps)||0)/Math.max(1,p.top)));
+  const p=performanceFor(type),ratio=clamp((Number(speedMps)||0)/Math.max(1,p.top),0,1);
   return{speedRatio:ratio,accel:interpBand(p.accelBand,ratio)*p.traction,brake:interpBand(p.brakeBand,ratio),top:p.top};
+}
+
+// Crash damage changes what the car can physically do; it must not teleport the
+// speed to a canned value. These continuous factors are consumed by the normal
+// longitudinal/cornering envelope, so the car slows through braking/drag and its
+// class performance still matters. Suspension damage has the strongest effect.
+export function damagePerformanceFactors(car={}){
+  const damage=clamp(Number(car.damage)||0,0,1),suspension=clamp(Number(car.damageZones?.suspension)||0,0,1),body=Math.max(0,damage-.18),susp=Math.max(0,suspension-.10);
+  return{
+    damage,suspension,
+    top:clamp(1-body*.18-susp*.55,.42,1),
+    accel:clamp(1-body*.22-susp*.58,.38,1),
+    brake:clamp(1-susp*.30,.70,1),
+    lateral:clamp(1-susp*.72,.40,1)
+  };
+}
+
+export function damageFaultState({damage=0,suspension=0,forced=false}={}){
+  const d=clamp(Number(damage)||0,0,1),s=clamp(Number(suspension)||0,0,1);
+  if(forced||d>=.90)return{retire:true,pit:false,fault:'CRASH',state:'DESTROYED'};
+  if(s>=.72)return{retire:false,pit:true,fault:'SUSPENSION DAMAGE',state:'HEAVY'};
+  if(d>=.68)return{retire:false,pit:true,fault:'HEAVY BODY DAMAGE',state:'HEAVY'};
+  if(d>=.38)return{retire:false,pit:false,fault:'CRASH DAMAGE',state:'MODERATE'};
+  return{retire:false,pit:false,fault:null,state:'NONE'};
 }
 
 export function performanceAdvantage(followerType,leaderType){
@@ -76,7 +101,7 @@ export function performanceAdvantage(followerType,leaderType){
 }
 
 export function resolveMulticlassPassPlan({followerType='gt',leaderType='gt',gapM=999,closingMps=0,brakingLoad=0,leaderLane=0,halfWidth=3.55}={}){
-  const p=performanceFor(followerType),adv=performanceAdvantage(followerType,leaderType),gap=Math.max(0,Number(gapM)||0),closing=Math.max(0,Number(closingMps)||0),load=Math.max(0,Math.min(1,Number(brakingLoad)||0)),limit=Math.max(2.2,Math.min(2.75,Number(halfWidth)||3.55));
+  const p=performanceFor(followerType),adv=performanceAdvantage(followerType,leaderType),gap=Math.max(0,Number(gapM)||0),closing=Math.max(0,Number(closingMps)||0),load=clamp(Number(brakingLoad)||0,0,1),limit=clamp(Number(halfWidth)||3.55,2.2,2.75);
   const eligible=adv.faster&&gap>5.5&&gap<=p.multiclassPassRangeM&&closing>=p.minPassClosingMps&&load<.52;
   const targetLane=(Number(leaderLane)||0)>=0?-limit:limit;
   return{eligible,targetLane,paceDelta:adv.paceDelta,topDelta:adv.topDelta,rangeM:p.multiclassPassRangeM,minClosingMps:p.minPassClosingMps};
@@ -95,6 +120,6 @@ export function trafficFollowPolicy({followerType='gt',leaderType='gt',gapM=999,
   const usable=Math.max(.05,gap-safeDistance),ttc=closing>.3?usable/closing:99;
   const ttcLimit=lateralEscape?1.05:adv.faster?2.15:3.20,nearBuffer=lateralEscape?8:adv.faster?18:26;
   const shouldCap=!parallelEscape&&current<safeLat&&(gap<safeDistance+nearBuffer||ttc<ttcLimit);
-  const margin=Math.max(0,Math.min(1,(gap-safeDistance)/(lateralEscape?9:adv.faster?17:24))),allowance=lateralEscape?11:adv.faster?7:5.5;
+  const margin=clamp((gap-safeDistance)/(lateralEscape?9:adv.faster?17:24),0,1),allowance=lateralEscape?11:adv.faster?7:5.5;
   return{...adv,passEscape,parallelEscape,lateralEscape,safeDistance,ttc,ttcLimit,nearBuffer,shouldCap,allowedSpeed:leader+margin*allowance};
 }
