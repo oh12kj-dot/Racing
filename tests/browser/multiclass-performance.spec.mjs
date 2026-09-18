@@ -26,11 +26,11 @@ test('large multiclass performance delta prepares an early pass instead of queue
   expect(Math.abs(plan.targetLane)).toBeGreaterThan(2.1);
 });
 
-test('planned separated pass does not trigger long-range follow braking',()=>{
-  const pass=trafficFollowPolicy({followerType:'formula',leaderType:'touring',gapM:72,speedMps:88,leaderSpeedMps:68,bodyGapM:5,currentLateralM:0,plannedLateralM:2.75,safeLateralM:2.35,passIntent:true});
+test('planned separated pass does not trigger follow braking that an unplanned queue needs',()=>{
+  const pass=trafficFollowPolicy({followerType:'formula',leaderType:'touring',gapM:60,speedMps:88,leaderSpeedMps:68,bodyGapM:5,currentLateralM:0,plannedLateralM:2.75,safeLateralM:2.35,passIntent:true});
   expect(pass.passEscape).toBeTruthy();
   expect(pass.shouldCap).toBeFalsy();
-  const queue=trafficFollowPolicy({followerType:'formula',leaderType:'touring',gapM:72,speedMps:88,leaderSpeedMps:68,bodyGapM:5,currentLateralM:0,plannedLateralM:0,safeLateralM:2.35,passIntent:false});
+  const queue=trafficFollowPolicy({followerType:'formula',leaderType:'touring',gapM:60,speedMps:88,leaderSpeedMps:68,bodyGapM:5,currentLateralM:0,plannedLateralM:0,safeLateralM:2.35,passIntent:false});
   expect(queue.shouldCap).toBeTruthy();
 });
 
