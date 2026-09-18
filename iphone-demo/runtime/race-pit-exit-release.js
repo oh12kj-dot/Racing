@@ -145,13 +145,13 @@ export function createRace(W,statusEl,settings={}){
   }
   function preparePitEntry(c,dt,speedPhase='post',frameStartV=null){
     if(!approachRequested(c)||c._runtimePitQueued){c._runtimePitApproachLaneActive=false;c._runtimePitEntryFrameSpeedCap=null;c._runtimePitEntryBrakeGuardFrame=false;return false;}
-    const entryDist=distanceToEntry(c),limitDist=distanceToLimiter(c),outsideLimiter=Number.isFinite(limitDist)&&!W.inPitSpeedZone?.(c.s);
-    if(speedPhase==='pre')c._runtimePitEntryBrakeGuardFrame=outsideLimiter;
+    const entryDist=distanceToEntry(c),limitDist=distanceToLimiter(c),pitLimit=Number(W.pitSpeedLimit)||22.22,insideLimiter=!!W.inPitSpeedZone?.(c.s),outsideLimiter=Number.isFinite(limitDist)&&!insideLimiter,limiterGuard=outsideLimiter||(c.pitState==='ENTRY'&&insideLimiter&&finite(frameStartV)&&Number(frameStartV)>pitLimit+.15);
+    if(speedPhase==='pre')c._runtimePitEntryBrakeGuardFrame=limiterGuard;
     if(entryDist<=PIT_APPROACH_LANE_START_METERS){
       const target=laneApproachTarget(c,entryDist);c.laneTarget=target;c._runtimePitApproachLaneActive=true;c._runtimePitApproachLaneTarget=target;approachFrames++;
     }else c._runtimePitApproachLaneActive=false;
     if(outsideLimiter){
-      const limit=Number(W.pitSpeedLimit)||22.22,baseBrake=Number(c._v18BaseBrake)||Number(c.brake)||15,decel=clamp(baseBrake*.62,8.8,10.5),usable=Math.max(0,limitDist-PIT_LIMIT_BRAKE_BUFFER_METERS),target=Math.sqrt(Math.max(limit*limit,limit*limit+2*decel*usable)),start=finite(frameStartV)?Number(frameStartV):Math.max(0,Number(c.v)||0),cap=boundedBrakeCap(start,target,decel,dt);
+      const baseBrake=Number(c._v18BaseBrake)||Number(c.brake)||15,decel=clamp(baseBrake*.62,8.8,10.5),usable=Math.max(0,limitDist-PIT_LIMIT_BRAKE_BUFFER_METERS),target=Math.sqrt(Math.max(pitLimit*pitLimit,pitLimit*pitLimit+2*decel*usable)),start=finite(frameStartV)?Number(frameStartV):Math.max(0,Number(c.v)||0),cap=boundedBrakeCap(start,target,decel,dt);
       c.pitEntryTargetSpeed=target;c.pitEntryDistanceToLimiter=limitDist;c.pitEntryPlannedDecel=decel;
       if(speedPhase==='pre'){
         c._runtimePitEntryFrameSpeedCap=cap;const v=Math.max(0,Number(c.v)||0);if(v>cap+.001){c.v=cap;approachBrakeFrames++;}
