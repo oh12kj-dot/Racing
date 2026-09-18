@@ -78,7 +78,13 @@ test('Formula completes a clean multiclass pass on a slower Touring car',async({
   await boot(page);
   const result=await page.evaluate(()=>{
     const R=window.__RACING_RACE__,W=window.__RACING_WORLD__,tick=window.__RACING_TEST_TICK__,total=W.total;
-    for(let i=0;i<260;i++)tick(.05,false);
+    let greenReady=false;
+    for(let i=0;i<1200;i++){
+      tick(.05,false);
+      const control=R.physicalCaution;
+      if(R.race.t>12&&R.flag==='GREEN'&&!(control?.localYellows?.length)&&!(control?.recoveries?.length)){greenReady=true;break;}
+    }
+    const startFlag=R.flag,startControl=R.physicalCaution;
     const fast=R.cars[0],slow=R.cars[1];
     for(let i=2;i<R.cars.length;i++){R.cars[i].retired=true;if(R.cars[i].mesh)R.cars[i].mesh.visible=false;}
     Object.assign(fast,{type:'formula',s:180,lap:1,_v8Progress:total+180,lane:0,laneTarget:0,v:82,pitState:'NONE',spinState:'NONE',offTrack:false,retired:false,damage:0,incident:0,avoid:0,position:2});
@@ -91,8 +97,12 @@ test('Formula completes a clean multiclass pass on a slower Touring car',async({
       tick(.05,false);const fp=progress(fast),sp=progress(slow);maxSeparation=Math.max(maxSeparation,Math.abs((fast.lane||0)-(slow.lane||0)));if(fp>sp+2){passed=true;break;}
     }
     const contacts=(R.events||[]).slice(eventStart).filter(e=>e.type==='CONTACT'&&(e.carId===fast.id||e.carId===slow.id));
-    return{passed,startGap:startSlow-startFast,finalGap:progress(fast)-progress(slow),maxSeparation,armed:R.collisionAvoidance?.multiclassPassesArmed||0,contacts:contacts.map(e=>e.data?.severity||0),fastSpeed:fast.v,slowSpeed:slow.v};
+    return{greenReady,startFlag,startControl:{type:startControl?.type,localYellows:startControl?.localYellows?.length||0,recoveries:startControl?.recoveries?.length||0},passed,startGap:startSlow-startFast,finalGap:progress(fast)-progress(slow),maxSeparation,armed:R.collisionAvoidance?.multiclassPassesArmed||0,contacts:contacts.map(e=>e.data?.severity||0),fastSpeed:fast.v,slowSpeed:slow.v};
   });
+  expect(result.greenReady,JSON.stringify(result)).toBeTruthy();
+  expect(result.startFlag,JSON.stringify(result)).toBe('GREEN');
+  expect(result.startControl.localYellows,JSON.stringify(result)).toBe(0);
+  expect(result.startControl.recoveries,JSON.stringify(result)).toBe(0);
   expect(result.startGap).toBeGreaterThan(50);
   expect(result.armed,JSON.stringify(result)).toBeGreaterThan(0);
   expect(result.maxSeparation,JSON.stringify(result)).toBeGreaterThan(1.6);
