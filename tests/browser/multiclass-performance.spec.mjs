@@ -1,9 +1,9 @@
 import {test,expect} from '@playwright/test';
-import {VEHICLE_PERFORMANCE,performanceAdvantage,resolveMulticlassPassPlan,trafficFollowPolicy} from '../../iphone-demo/runtime/vehicle-performance-spec.js';
+import {VEHICLE_PERFORMANCE,longitudinalPerformance,performanceAdvantage,resolveMulticlassPassPlan,trafficFollowPolicy} from '../../iphone-demo/runtime/vehicle-performance-spec.js';
 
 test('2026 class calibration preserves real-world performance hierarchy',()=>{
   const p=VEHICLE_PERFORMANCE;
-  expect(p.formula.mass).toBe(770);
+  expect(p.formula.mass).toBe(768);
   expect(p.formula.fuelCapacity).toBe(70);
   expect(p.formula.top*3.6).toBeCloseTo(353.9,0);
   expect(p.formula.brake).toBeGreaterThan(p.hyper.brake);
@@ -13,9 +13,18 @@ test('2026 class calibration preserves real-world performance hierarchy',()=>{
   expect(p.supercar.mass).toBe(1350);
   expect(p.supercar.top*3.6).toBeCloseTo(300,0);
   expect(p.touring.mass).toBe(1265);
+  expect(p.touring.top*3.6).toBeCloseTo(253,0);
   expect(p.formula.paceIndex).toBeGreaterThan(p.hyper.paceIndex);
   expect(p.hyper.paceIndex).toBeGreaterThan(p.gt.paceIndex);
   expect(p.gt.paceIndex).toBeGreaterThan(p.touring.paceIndex);
+});
+
+test('acceleration falls with speed while aero braking grows for formula',()=>{
+  const low=longitudinalPerformance('formula',15),mid=longitudinalPerformance('formula',55),high=longitudinalPerformance('formula',90);
+  expect(low.accel).toBeGreaterThan(mid.accel);
+  expect(mid.accel).toBeGreaterThan(high.accel);
+  expect(high.brake).toBeGreaterThan(mid.brake);
+  expect(mid.brake).toBeGreaterThan(low.brake);
 });
 
 test('large multiclass performance delta prepares an early pass instead of queueing',()=>{
