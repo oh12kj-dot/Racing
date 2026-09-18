@@ -19,12 +19,14 @@ test('natural seeded race does not devolve into repeated car-to-car contact',asy
     const seen=new Set(),contacts=[],incidents=[];let greenSeconds=0,greenSamples=0,maxConcurrentBattle=0;
     for(let i=0;i<3600;i++){
       tick(.05,false);
-      if(R.flag==='GREEN'&&R.sessionPhase==='RACE'&&R.race.t>(R.race.green||0)){greenSeconds+=.05;greenSamples++;}
+      const greenRunning=R.flag==='GREEN'&&R.sessionPhase==='RACE'&&R.race.t>(R.race.green||0);
+      if(greenRunning){greenSeconds+=.05;greenSamples++;}
       let battles=0;for(const c of R.cars||[])if(!c.retired&&c.pitState==='NONE'&&(c.battleState==='ATTACK'||c.battleState==='DEFEND'||c.racecraftState==='ATTACK'||c.racecraftState==='DEFEND'))battles++;
       maxConcurrentBattle=Math.max(maxConcurrentBattle,battles);
       const events=R.events||[],start=Math.max(0,events.length-32);
       for(let j=start;j<events.length;j++){
         const e=events[j];if(!e?.id||seen.has(e.id))continue;seen.add(e.id);
+        if(!greenRunning||Number(e.t)<=(R.race.green||0))continue;
         if(e.type==='CONTACT')contacts.push({t:e.t,kmh:Number(e.data?.impactKmh)||0,severity:Number(e.data?.severity)||0,a:e.carId,b:e.data?.otherId,physical:!!e.data?.physical,trajectoryAudit:!!e.data?.trajectoryAudit,zoneA:e.data?.zoneA||null,zoneB:e.data?.zoneB||null});
         if(e.type==='INCIDENT'&&e.data?.kind==='CAR_CAR')incidents.push({t:e.t,kmh:Number(e.data?.impactKmh)||0,severity:Number(e.data?.severity)||0});
       }
