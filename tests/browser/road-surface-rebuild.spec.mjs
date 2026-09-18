@@ -8,7 +8,7 @@ async function boot(page){
   expect(state.ready,state.error||'runtime globals were not created').toBeTruthy();
 }
 
-test('rebuilt main road is a continuous visible ribbon over the sampled circuit',async({page},testInfo)=>{
+test('rebuilt main road is continuous, near the physical datum, and has no floating translucent racing-line sheet',async({page},testInfo)=>{
   await boot(page);
   const result=await page.evaluate(async()=>{
     const THREE=await import('/node_modules/three/build/three.module.min.js'),W=window.__RACING_WORLD__,R=W?.rebuiltRoadSurface;
@@ -21,20 +21,31 @@ test('rebuilt main road is a continuous visible ribbon over the sampled circuit'
         widths.push(Math.hypot(dx,dy,dz));
       }
     }
+    const floating=[];
+    W.scene.traverse(o=>{
+      if(!o?.visible||!o?.isMesh||!o.material||Array.isArray(o.material))return;
+      const p=o.geometry?.getAttribute?.('position'),m=o.material;
+      if(o.renderOrder===3&&m.transparent===true&&m.depthWrite===false&&p?.count===840)floating.push({name:o.name||'',opacity:m.opacity});
+    });
     const ray=new THREE.Raycaster(),down=new THREE.Vector3(0,-1,0);let hits=0;
     for(const f of[.03,.17,.31,.46,.61,.76,.89]){
       const q=W.sample(W.total*f,0);ray.set(q.p.clone().add(new THREE.Vector3(0,12,0)),down);if(ray.intersectObject(R.road,false).length)hits++;
     }
-    const q=W.sample(W.total*.31,0);W.camera.position.set(q.p.x,q.p.y+58,q.p.z);W.camera.up.set(0,0,-1);W.camera.lookAt(q.p);W.camera.updateProjectionMatrix();W.renderer.render(W.scene,W.camera);
-    return{supported:true,owner:R.owner,width:R.width,segments:R.segments,visible:R.root.visible&&R.road.visible,widths,hits,roadName:R.road.name,lineCount:[R.leftLine,R.rightLine].filter(Boolean).length};
+    const s=W.total*.31,q=W.sample(s),ahead=W.sample(s+80),cam=q.p.clone().addScaledVector(q.side,-13).add(new THREE.Vector3(0,2.7,0));
+    W.camera.position.copy(cam);W.camera.up.set(0,1,0);W.camera.lookAt(ahead.p.clone().add(new THREE.Vector3(0,.5,0)));W.camera.updateProjectionMatrix();W.renderer.render(W.scene,W.camera);
+    return{supported:true,owner:R.owner,width:R.width,segments:R.segments,visible:R.root.visible&&R.road.visible,widths,hits,roadName:R.road.name,lineCount:[R.leftLine,R.rightLine].filter(Boolean).length,lift:R.lift,lineLift:R.lineLift,floatingLegacyRacingLinesRemoved:R.floatingLegacyRacingLinesRemoved,floating};
   });
-  const shot=await page.screenshot({type:'png'});await testInfo.attach('rebuilt-road-topdown',{body:shot,contentType:'image/png'});
+  const shot=await page.screenshot({type:'png'});await testInfo.attach('rebuilt-road-low-angle',{body:shot,contentType:'image/png'});
   expect(result.supported,JSON.stringify(result)).toBeTruthy();
-  expect(result.owner).toBe('runtime-road-surface-rebuild-v1');
+  expect(result.owner).toBe('runtime-road-surface-rebuild-v2');
   expect(result.visible).toBeTruthy();
   expect(result.segments).toBeGreaterThanOrEqual(1200);
   expect(result.lineCount).toBe(2);
   expect(result.hits,JSON.stringify(result)).toBe(7);
   expect(Math.min(...result.widths),JSON.stringify(result)).toBeGreaterThan(12);
   expect(Math.max(...result.widths),JSON.stringify(result)).toBeLessThan(17);
+  expect(result.lift,JSON.stringify(result)).toBeLessThanOrEqual(.01);
+  expect(result.lineLift,JSON.stringify(result)).toBeLessThanOrEqual(.012);
+  expect(result.floatingLegacyRacingLinesRemoved,JSON.stringify(result)).toBeGreaterThanOrEqual(1);
+  expect(result.floating,JSON.stringify(result)).toEqual([]);
 });
