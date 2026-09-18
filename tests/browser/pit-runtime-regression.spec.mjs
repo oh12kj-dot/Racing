@@ -46,10 +46,12 @@ test('different teams can enter service concurrently without snapping to the pit
     const R=window.__RACING_RACE__,W=window.__RACING_WORLD__,cars=R.cars.filter(c=>!c.retired);const a=cars[0],b=cars.find(c=>c!==a&&c.teamId!==a.teamId);if(!a||!b)return{supported:false};
     for(const c of cars){c.pitState='NONE';c._runtimePitPhase='TRACK';c._runtimePitQueued=false;c._runtimeReleaseWait=false;c._runtimePitArrival=null;c._runtimePitServiceS=null;c._runtimePitStopCaptureDistance=0;c.pitTimer=0;}
     const total=W.total||1;
-    for(const c of[a,b]){const box=W.pitBoxS(c.teamId);c.s=((box-.30)%total+total)%total;c.v=7;c.pitState='ENTRY';c._runtimePitPhase='WORKING_APPROACH';c._runtimePitQueued=false;c._runtimeReleaseWait=false;}
+    // Enter the working lane from a physically achievable approach instead of
+    // asking the runtime to stop 7 m/s of speed in the final 0.30 m.
+    for(const c of[a,b]){const box=W.pitBoxS(c.teamId);c.s=((box-4.0)%total+total)%total;c.v=3.0;c.pitState='ENTRY';c._runtimePitPhase='WORKING_APPROACH';c._runtimePitQueued=false;c._runtimeReleaseWait=false;}
     R.update(.05);
     const first={a:a.pitState,b:b.pitState};
-    let ticks=1;while(ticks<20&&(a.pitState!=='STOP'||b.pitState!=='STOP')){R.update(.05);ticks++;}
+    let ticks=1;while(ticks<60&&(a.pitState!=='STOP'||b.pitState!=='STOP')){R.update(.05);ticks++;}
     return{supported:true,first,ticks,a:{team:a.teamId,state:a.pitState,phase:a._runtimePitPhase,timer:a.pitTimer,capture:a._runtimePitStopCaptureDistance,serviceS:a._runtimePitServiceS,box:W.pitBoxS(a.teamId)},b:{team:b.teamId,state:b.pitState,phase:b._runtimePitPhase,timer:b.pitTimer,capture:b._runtimePitStopCaptureDistance,serviceS:b._runtimePitServiceS,box:W.pitBoxS(b.teamId)},diag:R.pitStateDiagnostics};
   });
   expect(r.supported).toBeTruthy();expect(r.a.team).not.toBe(r.b.team);
