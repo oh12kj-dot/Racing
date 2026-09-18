@@ -8,7 +8,15 @@ async function boot(page){
   },null,{timeout:30000});
   const state=await page.evaluate(()=>({ready:!!(window.__RACING_RACE__&&window.__RACING_WORLD__),status:document.querySelector('#status')?.textContent||'',error:document.querySelector('#error')?.textContent||''}));
   expect(state.status,state.error||'runtime boot status').not.toBe('ERROR');expect(state.ready,state.error||'runtime globals were not created').toBeTruthy();
-  await page.evaluate(()=>window.__RACING_RACE__?.update?.(.001));
+  const gate=await page.evaluate(()=>{
+    const R=window.__RACING_RACE__;
+    for(let i=0;i<400;i++){
+      if(R?.flag==='GREEN'&&R?.sessionPhase==='RACE'&&!R?.startGate?.preStart)break;
+      R?.update?.(.05);
+    }
+    return{flag:R?.flag||'',phase:R?.sessionPhase||'',preStart:!!R?.startGate?.preStart};
+  });
+  expect(gate,JSON.stringify(gate)).toMatchObject({flag:'GREEN',phase:'RACE',preStart:false});
 }
 
 test('pit entry blends from the current track lane instead of snapping to pit geometry',async({page})=>{
