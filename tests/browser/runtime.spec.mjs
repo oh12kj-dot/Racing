@@ -11,7 +11,15 @@ async function boot(page){
     status:document.querySelector('#status')?.textContent||'',error:document.querySelector('#error')?.textContent||'',three:window.__RACING_THREE_SOURCE__||null
   }));
   expect(state.status,state.error||'runtime boot status').not.toBe('ERROR');expect(state.ready,state.error||'runtime globals were not created').toBeTruthy();
-  await page.evaluate(()=>window.__RACING_RACE__?.update?.(.001));
+  const gate=await page.evaluate(()=>{
+    const R=window.__RACING_RACE__;
+    for(let i=0;i<400;i++){
+      if(R?.flag==='GREEN'&&R?.sessionPhase==='RACE'&&!R?.startGate?.preStart)break;
+      R?.update?.(.05);
+    }
+    return{flag:R?.flag||'',phase:R?.sessionPhase||'',preStart:!!R?.startGate?.preStart};
+  });
+  expect(gate,JSON.stringify(gate)).toMatchObject({flag:'GREEN',phase:'RACE',preStart:false});
   return state;
 }
 
