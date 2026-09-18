@@ -159,6 +159,7 @@ export function createPitStateMachine(W,R){
       if(blocker&&Number.isFinite(dist)&&dist<=spec.queueTriggerMeters&&dist>-2.5){queue(c,false,eventStart);continue;}
       c._runtimePitPhase=Number.isFinite(dist)&&dist<24?'WORKING_APPROACH':(W.inPitSpeedZone?.(c.s)?'FAST_LANE':'PIT_ENTRY');c.pitLaneStatus=c._runtimePitPhase==='WORKING_APPROACH'?'WORKING':c._runtimePitPhase==='PIT_ENTRY'?'PIT ENTRY':'FAST LANE';
     }
+    for(const c of R.cars){if(maybeStartService(c,dt,occupied))occupied.set(c.teamId??0,c);}
     for(const c of R.cars){if(c.pitState==='ENTRY'&&!c._driveThroughServing&&!c._runtimePitQueued)advanceWorkingApproach(c,snapshot[c.id],dt);}
     occupied=serviceOccupants();for(const c of R.cars){if(maybeStartService(c,dt,occupied))occupied.set(c.teamId??0,c);}
     for(const c of R.cars){
