@@ -54,12 +54,12 @@ export function createPitStateMachine(W,R){
   function serviceOccupants(){
     const m=new Map();for(const c of R.cars){if(c.retired||c.pitState!=='STOP')continue;ensureArrival(c);const team=c.teamId??0,prior=m.get(team);if(!prior||(c._runtimePitArrival??Infinity)<(prior._runtimePitArrival??Infinity))m.set(team,c);}return m;
   }
-  function fastLaneTraffic(c){
+  function fastLaneTraffic(c,countTtc=true){
     const u=pitMeters(c.s),near=[];for(const o of R.cars){
       if(o===c||o.retired||o._runtimePitQueued||o.pitState==='STOP'||o.pitState==='NONE')continue;
       const phase=o._runtimePitPhase||'',fast=phase==='FAST_LANE'||phase==='FAST_LANE_EXIT'||phase==='PIT_ENTRY'||(o.pitState==='EXIT'&&!['WORKING_EXIT','RELEASE_WAIT'].includes(phase));if(!fast)continue;
       const delta=pitMeters(o.s)-u,behind=delta<0,closing=behind?Math.max(.1,(o.v||0)-(c.v||0)):0,ttc=behind?(-delta)/closing:Infinity,block=(behind&&(-delta<Math.max(spec.releaseBehindMeters,28)||ttc<1.8))||(!behind&&delta<Math.max(spec.releaseAheadMeters,10));
-      if(block){if(ttc<1.8)metrics.ttcBlocks++;near.push({car:o,delta,ttc});}
+      if(block){if(countTtc&&ttc<1.8)metrics.ttcBlocks++;near.push({car:o,delta,ttc});}
     }
     return near.sort((a,b)=>Math.abs(a.delta)-Math.abs(b.delta));
   }
@@ -112,8 +112,10 @@ export function createPitStateMachine(W,R){
   }
   function ensurePitMotion(c,b,dt){
     if(c.retired||c._runtimePitQueued||c._runtimeReleaseWait||c._driveThroughServing||!b||!['ENTRY','EXIT'].includes(c.pitState))return false;if(c.pitState==='ENTRY'&&!inPitWindow(c))return false;
-    const step=Math.max(0,Number(dt)||0);if(step<=0)return false;const beforeS=Number.isFinite(Number(b.s))?b.s:c.s,progress=forwardDelta(beforeS,c.s),expected=Math.max(0,Number(b.v)||0,Number(c.v)||0)*step;if(progress>=Math.max(.015,expected*.08))return false;
-    const floor=c.pitState==='ENTRY'&&c._runtimePitPhase==='WORKING_APPROACH'?.7:(c.pitState==='ENTRY'?7:(c._runtimePitPhase==='WORKING_EXIT'?8:10)),limit=W.pitSpeedLimit||22.22;c.v=Math.min(limit,Math.max(Number(c.v)||0,Number(b.v)||0,floor));c.s=wrapS(beforeS+c.v*step);metrics.stallRecoveries++;return true;
+    const step=Math.max(0,Number(dt)||0);if(step<=0)return false;const beforeS=Number.isFinite(Number(b.s))?b.s:c.s,progress=forwardDelta(beforeS,c.s),limit=W.pitSpeedLimit||22.22,dist=Number(W.pitDistanceToBox?.(c.s,c.teamId)),fastLane=c.pitState==='ENTRY'&&c._runtimePitPhase==='FAST_LANE'&&b.phase==='FAST_LANE';
+    if(fastLane&&Number.isFinite(dist)&&dist>=24&&!fastLaneTraffic(c,false).length)c.v=Math.min(limit,Math.max(Number(c.v)||0,Number(b.v)||0));
+    const expected=Math.max(0,Number(b.v)||0,Number(c.v)||0)*step;if(progress>=Math.max(.015,expected*.08))return false;
+    const floor=c.pitState==='ENTRY'&&c._runtimePitPhase==='WORKING_APPROACH'?.7:(c.pitState==='ENTRY'?7:(c._runtimePitPhase==='WORKING_EXIT'?8:10));c.v=Math.min(limit,Math.max(Number(c.v)||0,Number(b.v)||0,floor));c.s=wrapS(beforeS+c.v*step);metrics.stallRecoveries++;return true;
   }
   function repairInvariant(c){
     if(c.retired)return;let repaired=false;
