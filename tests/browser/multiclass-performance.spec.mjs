@@ -53,6 +53,13 @@ test('faster class arms a multiclass pass before collision braking traps it behi
   expect(plan.paceDelta).toBeGreaterThan(.25);
 });
 
+test('faster class can still arm a multiclass pass after closing inside nine metres',()=>{
+  const late=resolveMulticlassPassPlan({followerType:'formula',leaderType:'touring',gapM:7.5,closingMps:9,brakingLoad:.06,leaderLane:0,halfWidth:3.55});
+  const overlap=resolveMulticlassPassPlan({followerType:'formula',leaderType:'touring',gapM:5.2,closingMps:9,brakingLoad:.06,leaderLane:0,halfWidth:3.55});
+  expect(late.eligible).toBeTruthy();
+  expect(overlap.eligible).toBeFalsy();
+});
+
 test('same-class traffic does not receive the multiclass early-pass exemption',()=>{
   const plan=resolveMulticlassPassPlan({followerType:'gt',leaderType:'gt',gapM:60,closingMps:8,brakingLoad:.05,leaderLane:0,halfWidth:3.55});
   expect(plan.eligible).toBeFalsy();
