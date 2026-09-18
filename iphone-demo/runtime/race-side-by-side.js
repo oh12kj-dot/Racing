@@ -9,11 +9,9 @@ export function createRace(W,statusEl,settings={}){
     if(R.sessionPhase==='QUALIFYING'||R.sessionPhase==='FORMATION'||R.flag!=='GREEN')return;const now=R.race.t;for(const c of R.cars)c.sideBySideReserved=false;for(const [k,x] of [...reservations])if(x.until<now)reservations.delete(k);
     for(let i=0;i<R.cars.length;i++)for(let j=i+1;j<R.cars.length;j++){
       const a=R.cars[i],b=R.cars[j];if(a.retired||b.retired||a.pitState!=='NONE'||b.pitState!=='NONE'||a.hazardAvoiding||b.hazardAvoiding)continue;const body=((a.length||5)+(b.length||5))*.5,lg=longGap(a,b);if(lg>body+5.5)continue;
-      // Real cars do not wait for a large artificial lateral buffer before passing.
-      // Once their headings are stable, the reservation only prevents body overlap
-      // and preserves the separation they already have; it never squeezes them toward
-      // a fixed racing-game lane spacing.
-      const minSep=((a.width||2)+(b.width||2))*.5+.16,lat=Math.abs((a.lane||0)-(b.lane||0));if(lat>minSep+1.8)continue;const key=pairKey(a,b),existing=reservations.get(key);let low,high;if(existing){low=existing.low;high=existing.high;}else{const aLow=(a.lane||0)<(b.lane||0)||((a.lane||0)===(b.lane||0)&&a.id<b.id);low=aLow?a.id:b.id;high=aLow?b.id:a.id;}reservations.set(key,{low,high,until:now+.75});
+      // Preserve close real-world parallel running. The reservation is only a
+      // body-clearance corridor, not a requirement for a large empty lane.
+      const minSep=((a.width||2)+(b.width||2))*.5+.32,lat=Math.abs((a.lane||0)-(b.lane||0));if(lat>minSep+1.8)continue;const key=pairKey(a,b),existing=reservations.get(key);let low,high;if(existing){low=existing.low;high=existing.high;}else{const aLow=(a.lane||0)<(b.lane||0)||((a.lane||0)===(b.lane||0)&&a.id<b.id);low=aLow?a.id:b.id;high=aLow?b.id:a.id;}reservations.set(key,{low,high,until:now+.75});
       const heldSep=Math.max(minSep,lat),mid=clamp(((a.lane||0)+(b.lane||0))*.5,-3.72+heldSep*.5,3.72-heldSep*.5),lo=byId.get(low),hi=byId.get(high);if(lo&&hi){const blendPer60=clamp(.14+Math.max(0,minSep-lat)*.18,.14,.30),blend=frameRateAlpha(blendPer60,dt);lo.laneTarget+=(mid-heldSep*.5-lo.laneTarget)*blend;hi.laneTarget+=(mid+heldSep*.5-hi.laneTarget)*blend;lo.sideBySideReserved=true;hi.sideBySideReserved=true;}
     }
   }
