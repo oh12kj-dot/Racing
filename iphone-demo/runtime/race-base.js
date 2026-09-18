@@ -40,10 +40,13 @@ export function createRace(W,statusEl,settings={}){
     c.trackEvolutionGrip=1+(e.dryLine||0)*.018*(1-off)-(e.marbles||0)*.055*off;c.racingLineDeviation=deviation;
   }
   function speedEnvelope(c,mode){
-    const spec=performanceFor(c.type),damage=damagePerformanceFactors(c),baseTop=c._v18BaseMax||c.classPerformance?.top||c.baseMax||c.baseMaxNominal||c.max||spec.top,top=Math.max(24,baseTop)*(1+(c.slipstream||0)*spec.draftGain)*damage.top,wet=clamp(Number(W.env?.wetness)||0,0,1),wear=clamp(c.wear||0,0,1),tempGrip=clamp(c.tempGrip||1,.75,1.08),surface=clamp(c.surfaceGrip||1,.80,1.08),evolution=clamp(c.trackEvolutionGrip||1,.88,1.04),damageAero=clamp(Math.min(c.aeroFront??1,c.aeroRear??1),.45,1),aero=clamp(spec.aero*damageAero,.45,1),classGrip=clamp(c.classPerformance?.tyre??spec.tyre,.88,1.12),wetRetention=clamp(1-wet*(1-(c.classPerformance?.wet??spec.wet)),.68,1),tyreGrip=clamp(tempGrip*surface*evolution*classGrip*(1-wear*.13)*wetRetention,.50,1.12),ideal=lineValue(c,mode),deviation=Math.abs((c.lane||0)-ideal),cornerDemand=clamp(Math.abs(lineCurv(mode,c.s+28))*70,0,1),lineEfficiency=1-cornerDemand*clamp(deviation/3,0,1)*.10,dirtyAirScale=clamp(1-(c.dirtyAir||0)*spec.dirtyAirLoss,.78,1),gCap=spec.lateralG*9.81*tyreGrip*(.82+.18*aero)*lineEfficiency*dirtyAirScale*damage.lateral,brakeBase=Math.max(7,c._v18BaseBrake||c.brake||spec.brake)*clamp(.74+.26*tyreGrip,.62,1.04)*(1-wet*.20)*damage.brake;let target=top;
-    for(const d of look){const k=Math.abs(lineCurv(mode,c.s+d));if(k<.00105)continue;const corner=Math.min(top,Math.sqrt(Math.max(1,gCap/k))),allowed=Math.sqrt(corner*corner+2*brakeBase*d);if(allowed<target)target=allowed;}
+    const spec=performanceFor(c.type),damage=damagePerformanceFactors(c),baseTop=c._v18BaseMax||c.classPerformance?.top||c.baseMax||c.baseMaxNominal||c.max||spec.top,top=Math.max(24,baseTop)*(1+(c.slipstream||0)*spec.draftGain)*damage.top,wet=clamp(Number(W.env?.wetness)||0,0,1),wear=clamp(c.wear||0,0,1),tempGrip=clamp(c.tempGrip||1,.75,1.08),surface=clamp(c.surfaceGrip||1,.80,1.08),evolution=clamp(c.trackEvolutionGrip||1,.88,1.04),damageAero=clamp(Math.min(c.aeroFront??1,c.aeroRear??1),.45,1),aero=clamp(spec.aero*damageAero,.45,1),classGrip=clamp(c.classPerformance?.tyre??spec.tyre,.88,1.12),wetRetention=clamp(1-wet*(1-(c.classPerformance?.wet??spec.wet)),.68,1),tyreGrip=clamp(tempGrip*surface*evolution*classGrip*(1-wear*.13)*wetRetention,.50,1.12),ideal=lineValue(c,mode),deviation=Math.abs((c.lane||0)-ideal),cornerDemand=clamp(Math.abs(lineCurv(mode,c.s+28))*70,0,1),lineEfficiency=1-cornerDemand*clamp(deviation/3,0,1)*.10,dirtyAirScale=clamp(1-(c.dirtyAir||0)*spec.dirtyAirLoss,.78,1),gCap=spec.lateralG*9.81*tyreGrip*(.82+.18*aero)*lineEfficiency*dirtyAirScale*damage.lateral,brakeBase=Math.max(7,c._v18BaseBrake||c.brake||spec.brake)*clamp(.74+.26*tyreGrip,.62,1.04)*(1-wet*.20)*damage.brake,brakePlanUtil=.72,planBrake=brakeBase*brakePlanUtil;let target=top;
+    // The planning deceleration and the actual controller use the same brake
+    // utilisation. This starts braking earlier than a max-brake stopping-distance
+    // calculation and avoids asking a slowly-ramping controller to do the impossible.
+    for(const d of look){const k=Math.abs(lineCurv(mode,c.s+d));if(k<.00105)continue;const corner=Math.min(top,Math.sqrt(Math.max(1,gCap/k))),allowed=Math.sqrt(corner*corner+2*planBrake*d);if(allowed<target)target=allowed;}
     const a=aheadOf(c);if(a?.car&&a.dist<120){const other=a.car,lat=Math.abs((other.lane||0)-(c.lane||0)),safeLat=(c.width+other.width)*.48+.35,overlap=lat<safeLat,plannedLat=Math.abs((Number.isFinite(Number(c.laneTarget))?Number(c.laneTarget):(c.lane||0))-(Number.isFinite(Number(other.laneTarget))?Number(other.laneTarget):(other.lane||0))),bodyGap=(c.length+other.length)*.5,passIntent=!!c.multiclassPassIntent&&(!Number.isFinite(Number(c.multiclassPassTargetId))||Number(c.multiclassPassTargetId)===Number(other.id)),follow=trafficFollowPolicy({followerType:c.type,leaderType:other.type,gapM:a.dist,speedMps:c.v||0,leaderSpeedMps:other.v||0,bodyGapM:bodyGap,currentLateralM:lat,plannedLateralM:plannedLat,safeLateralM:safeLat,passIntent});if(overlap&&follow.shouldCap)target=Math.min(target,follow.allowedSpeed);c.racingTrafficPolicy={leaderId:other.id,...follow};}
-    c.racingDamagePerformance=damage;c.racingLineDeviation=deviation;return{target:Math.max(8,target),brakeBase,gCap,accelScale:damage.accel};
+    c.racingDamagePerformance=damage;c.racingLineDeviation=deviation;return{target:Math.max(8,target),brakeBase,gCap,accelScale:damage.accel,brakePlanUtil};
   }
   function longitudinal(c,dt,before){
     const st=controllers.get(c.id);if(!st)return;
@@ -52,16 +55,18 @@ export function createRace(W,statusEl,settings={}){
     }
     const mode=st.line||chooseLine(c),x=speedEnvelope(c,mode);st.raw=x.target;
     if(!Number.isFinite(st.target)||Math.abs(st.target-before)>35)st.target=x.target;
-    const tau=x.target<st.target?.24:.78,blend=1-Math.exp(-dt/tau);st.target+=(x.target-st.target)*blend;
+    // A known braking point may move the requested target immediately; vehicle
+    // speed still changes only through integrated acceleration below. Upward
+    // targets remain smoothed so throttle application stays progressive.
+    if(x.target<st.target)st.target=x.target;else{const blend=1-Math.exp(-dt/.78);st.target+=(x.target-st.target)*blend;}
     const safetyCap=Number(c.predictiveSpeedCap),safetyActive=c.predictiveSpeedCap!=null&&Number.isFinite(safetyCap)&&safetyCap>=0;
     if(safetyActive){st.target=Math.min(st.target,safetyCap);st.raw=Math.min(st.raw,safetyCap);}
-    const error=st.target-before;st.hold=Math.max(0,st.hold-dt);const wanted=error<-1.40?'BRAKE':error>1.80?'THROTTLE':'COAST';if(wanted!==st.mode&&(st.hold<=0||error<-4.8)){st.mode=wanted;st.hold=wanted==='COAST'?.20:.30;}
+    const error=st.target-before;st.hold=Math.max(0,st.hold-dt);const wanted=error<-.35?'BRAKE':error>1.80?'THROTTLE':'COAST';if(wanted!==st.mode&&(wanted==='BRAKE'||st.hold<=0||error<-4.8)){st.mode=wanted;st.hold=wanted==='COAST'?.20:.30;}
     const spec=performanceFor(c.type),k=Math.abs(lineCurv(mode,c.s)),latDemand=before*before*k,latUse=clamp(latDemand/Math.max(1,x.gCap),0,.985),longAvail=Math.sqrt(Math.max(.03,1-latUse*latUse)),accelBase=Math.max(2.5,c._v18BaseAccel||c.accel||spec.accel)*x.accelScale*(1+(c.energyMode==='PUSH'?.07:0))*(.45+.55*longAvail),brakeAvail=x.brakeBase*(.30+.70*longAvail);
-    let desiredA=0;if(st.mode==='BRAKE'){const demand=clamp((-error-.45)/7.8,.08,1);desiredA=-brakeAvail*demand;}else if(st.mode==='THROTTLE'){const demand=clamp((error-.50)/8.8,0,1);desiredA=accelBase*demand;}else desiredA=-clamp(.14+before*.0035,.14,.48);
-    st.prevAccel=st.accel;const releasingBrake=st.mode!=='BRAKE'&&st.accel<-1&&desiredA>st.accel,jerkLimit=desiredA<st.accel?22:releasingBrake?Math.max(32,brakeAvail*1.65):7.5,maxDelta=jerkLimit*dt;st.accel+=clamp(desiredA-st.accel,-maxDelta,maxDelta);st.jerk=(st.accel-st.prevAccel)/Math.max(.001,dt);
-    // Brake release is much faster than positive throttle buildup. Keeping the
-    // normal acceleration jerk limit here can preserve a safety-braking impulse
-    // for several seconds after the cap clears and stop a car that is on throttle.
+    let desiredA=0;if(st.mode==='BRAKE'){const tracking=clamp((-error-.10)/6,0,1),demand=clamp(Math.max(x.brakePlanUtil,tracking),.12,1);desiredA=-brakeAvail*demand;}else if(st.mode==='THROTTLE'){const demand=clamp((error-.50)/8.8,0,1);desiredA=accelBase*demand;}else desiredA=-clamp(.14+before*.0035,.14,.48);
+    st.prevAccel=st.accel;const releasingBrake=st.mode!=='BRAKE'&&st.accel<-1&&desiredA>st.accel,applyingBrake=desiredA<st.accel&&st.mode==='BRAKE',jerkLimit=applyingBrake?Math.max(90,brakeAvail*7):releasingBrake?Math.max(70,brakeAvail*3):desiredA<st.accel?22:7.5,maxDelta=jerkLimit*dt;st.accel+=clamp(desiredA-st.accel,-maxDelta,maxDelta);st.jerk=(st.accel-st.prevAccel)/Math.max(.001,dt);
+    // Hydraulic brake pressure can rise rapidly in a racing car, but velocity is
+    // never snapped: all deceleration remains bounded by brake capability and dt.
     // This is the single normal-green longitudinal output. Legacy core speed changes are
     // deliberately overwritten here; explicit safety caps are applied by this same owner.
     c.v=Math.max(0,before+st.accel*dt);
