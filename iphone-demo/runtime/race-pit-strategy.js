@@ -6,19 +6,38 @@ export function createRace(W,statusEl,settings={}){
   const PIT_CAPACITY=4,ADMIT_WINDOW=3,ADMIT_MAX=2,TEAM_GAP=7;
   const shortRace=(R.race?.lapsTarget||0)<=10;
 
-  function hardEmergency(c){
-    const puncture=c.fault==='PUNCTURE'||(c.wheelState||[]).some(w=>w.puncture);
-    return puncture||(c.wear||0)>.94||(c.fuel??1)<.055||(c.damage||0)>.82;
+  const faultText=c=>String(c?.fault||'').toUpperCase();
+  function hasPuncture(c){return faultText(c)==='PUNCTURE'||(c.wheelState||[]).some(w=>w?.puncture);}
+  function hasIncidentDamage(c){
+    const f=faultText(c),zones=c.damageZones||{};
+    return (c.damage||0)>=.28||(zones.suspension||0)>=.38||f.includes('CRASH DAMAGE')||f.includes('SUSPENSION DAMAGE')||f==='CRASH';
+  }
+  function hasServiceableMechanicalFault(c){
+    const f=faultText(c);if(!f||hasPuncture(c)||f.includes('CRASH')||f.includes('SUSPENSION'))return false;
+    return ['ENGINE','BRAKE','ELECTRICAL','GEARBOX','HYDRAULIC','POWER','COOLING','MECHANICAL'].some(x=>f.includes(x));
   }
   function urgentWeather(c){
-    const wet=W.env?.wetness||0;
-    return (wet>.68&&c.compound!=='WET')||(wet<.06&&c.compound==='WET');
+    const wet=Number(W.env?.wetness)||0,compound=String(c.compound||c.tyreCompound||'').toUpperCase();
+    return (wet>.68&&compound!=='WET')||(wet<.06&&compound==='WET');
+  }
+  function firstLapCause(c){
+    if(c._driveThroughServing)return'DRIVE THROUGH';
+    if(hasPuncture(c))return'PUNCTURE';
+    if(hasIncidentDamage(c))return'DAMAGE';
+    if(hasServiceableMechanicalFault(c))return'MECHANICAL';
+    if(urgentWeather(c))return'WEATHER';
+    return'';
+  }
+  function hardEmergency(c){
+    return !!firstLapCause(c)||(c.wear||0)>.94||(c.fuel??1)<.055||(c.damage||0)>.82;
   }
   function activePitCars(exceptId=-1){return R.cars.filter(c=>c.id!==exceptId&&!c.retired&&c.pitState!=='NONE');}
   function teamBusy(c){return R.cars.some(o=>o!==c&&!o.retired&&o.teamId===c.teamId&&o.pitState!=='NONE');}
   function cleanAdmissions(){while(admissions.length&&R.race.t-admissions[0]>ADMIT_WINDOW)admissions.shift();}
   function reasonFor(c){
-    const wet=W.env?.wetness||0;if(c.fault==='PUNCTURE'||(c.wheelState||[]).some(w=>w.puncture))return'PUNCTURE';
+    const first=firstLapCause(c);if(first)return first;
+    const wet=W.env?.wetness||0;if(hasPuncture(c))return'PUNCTURE';
+    if(hasIncidentDamage(c))return'DAMAGE';if(hasServiceableMechanicalFault(c))return'MECHANICAL';
     if(wet>.45&&c.compound!=='WET')return'RAIN';if(wet<.18&&c.compound==='WET')return'DRY';
     if((c.wear||0)>.70)return'TYRE LIFE';if(['SC','VSC'].includes(R.flag))return'SAFETY CAR WINDOW';
     return c.strategy?.reason||'STRATEGY';
@@ -55,7 +74,15 @@ export function createRace(W,statusEl,settings={}){
     if(c.strategy)c.strategy.reason=p.reason;
   }
   function canAdmit(c){
-    cleanAdmissions();const p=planFor(c),hard=hardEmergency(c),weather=urgentWeather(c),runtimeTraffic=!!W.runtimePitStateMachineOwner,clustered=weather||['SC','VSC'].includes(R.flag);
+    cleanAdmissions();const p=planFor(c),first=firstLapCause(c),hard=hardEmergency(c),weather=urgentWeather(c),runtimeTraffic=!!W.runtimePitStateMachineOwner,clustered=weather||['SC','VSC'].includes(R.flag);
+    // Real-race rule: a lap-one/launch stop is legal only when an actual event
+    // justifies it. Do not use a blanket time ban: contact damage, punctures,
+    // serviceable mechanical faults, drive-throughs and genuine weather mismatch
+    // can all require an immediate stop in real motorsport.
+    if((c.lap||0)<1){
+      if(!first)return{ok:false,why:'NO FIRST-LAP PIT CAUSE'};
+      return{ok:true,why:`FIRST-LAP ${first}`};
+    }
     if(hard)return{ok:true,why:'EMERGENCY'};
     if(!routineStopMakesSense(c))return{ok:false,why:'STAY OUT · SHORT RACE'};
     if(!clustered&&R.race.t<p.earliest)return{ok:false,why:'PIT WINDOW STAGGER'};
