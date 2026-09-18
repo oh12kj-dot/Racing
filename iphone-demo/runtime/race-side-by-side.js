@@ -9,7 +9,11 @@ export function createRace(W,statusEl,settings={}){
     if(R.sessionPhase==='QUALIFYING'||R.sessionPhase==='FORMATION'||R.flag!=='GREEN')return;const now=R.race.t;for(const [k,x] of [...reservations])if(x.until<now)reservations.delete(k);
     for(let i=0;i<R.cars.length;i++)for(let j=i+1;j<R.cars.length;j++){
       const a=R.cars[i],b=R.cars[j];if(a.retired||b.retired||a.pitState!=='NONE'||b.pitState!=='NONE'||a.hazardAvoiding||b.hazardAvoiding)continue;const body=((a.length||5)+(b.length||5))*.5,lg=longGap(a,b);if(lg>body+5.5)continue;
-      const desired=((a.width||2)+(b.width||2))*.5+.42,lat=Math.abs((a.lane||0)-(b.lane||0));if(lat>desired+1.4)continue;const key=pairKey(a,b),existing=reservations.get(key);let low,high;if(existing){low=existing.low;high=existing.high;}else{const aLow=(a.lane||0)<(b.lane||0)||((a.lane||0)===(b.lane||0)&&a.id<b.id);low=aLow?a.id:b.id;high=aLow?b.id:a.id;}reservations.set(key,{low,high,until:now+.75});
+      // Keep established side-by-side cars outside the predictive follow envelope.
+      // The previous .42 m body clearance sat inside the .48-.52 m safety margins,
+      // so a car that already had a valid lane could still be treated as following
+      // traffic and lift instead of simply completing the pass.
+      const desired=((a.width||2)+(b.width||2))*.5+.62,lat=Math.abs((a.lane||0)-(b.lane||0));if(lat>desired+1.4)continue;const key=pairKey(a,b),existing=reservations.get(key);let low,high;if(existing){low=existing.low;high=existing.high;}else{const aLow=(a.lane||0)<(b.lane||0)||((a.lane||0)===(b.lane||0)&&a.id<b.id);low=aLow?a.id:b.id;high=aLow?b.id:a.id;}reservations.set(key,{low,high,until:now+.75});
       const mid=clamp(((a.lane||0)+(b.lane||0))*.5,-3.72+desired*.5,3.72-desired*.5),lo=byId.get(low),hi=byId.get(high);if(lo&&hi){const blendPer60=clamp(.18+Math.max(0,desired-lat)*.10,.18,.34),blend=frameRateAlpha(blendPer60,dt);lo.laneTarget+=(mid-desired*.5-lo.laneTarget)*blend;hi.laneTarget+=(mid+desired*.5-hi.laneTarget)*blend;lo.avoid=Math.max(lo.avoid||0,.55);hi.avoid=Math.max(hi.avoid||0,.55);}
     }
   }
