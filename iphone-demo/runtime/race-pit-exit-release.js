@@ -7,6 +7,12 @@ const finite=v=>v!=null&&v!==''&&Number.isFinite(Number(v));
 const smooth01=t=>{t=clamp(Number(t)||0,0,1);return t*t*(3-2*t);};
 const PIT_ENTRY_CAPTURE_METERS=18;
 
+export function pitApproachVelocityStep(speed,target,decel,dt=.016){
+  const v=Math.max(0,Number(speed)||0),goal=Math.max(0,Number(target)||0),a=Math.max(.1,Number(decel)||.1),step=clamp(Number(dt)||.016,.001,.05);
+  if(v<=goal)return v;
+  return Math.max(goal,v-a*step);
+}
+
 function validExitCar(c){
   if(!c||c.retired||c._runtimeReleaseWait)return false;
   const phase=String(c._runtimePitPhase||'');
@@ -106,21 +112,19 @@ export function createRace(W,statusEl,settings={}){
   const mobile=!!globalThis.matchMedia?.('(pointer:coarse)')?.matches,trajectory=createTrajectoryController(W,R,{mobile});
   let limiterReleases=0,mergeReleases=0,updates=0,entrySurfaceFrames=0;
 
-  function preparePitApproach(){
-    const limit=Number(W.pitSpeedLimit)||22.22;
+  function preparePitApproach(dt){
+    const limit=Number(W.pitSpeedLimit)||22.22,step=clamp(Number(dt)||.016,.001,.05);
     for(const c of R.cars||[]){
       if(c.retired||c.pitState!=='ENTRY'||!W.inPitWindow?.(c.s)||c._runtimePitQueued)continue;
       const dist=Number(W.pitDistanceToBox?.(c.s,c.teamId));if(!Number.isFinite(dist)||dist<-.5)continue;
-      const decel=clamp((Number(c._v18BaseBrake)||Number(c.brake)||15)*.52,5.5,9.5),target=Math.min(limit,Math.sqrt(Math.max(.35,2*decel*Math.max(.12,dist))));
-      if(dist<34)c.v=Math.min(Number(c.v)||0,target);
-      if(dist<8)c.v=Math.min(c.v,Math.max(1.8,target*.72));
-      if(dist<2.2)c.v=Math.min(c.v,Math.max(.7,dist*1.15));
-      c.pitApproachTargetSpeed=target;c.pitApproachDistance=dist;
+      const decel=clamp((Number(c._v18BaseBrake)||Number(c.brake)||15)*.52,5.5,9.5),stopMargin=.18,remaining=Math.max(0,dist-stopMargin),target=Math.min(limit,Math.sqrt(Math.max(0,2*decel*remaining))),current=Math.max(0,Number(c.v)||0),brakingDistance=current*current/(2*decel)+stopMargin;
+      if(dist<=brakingDistance)c.v=pitApproachVelocityStep(current,target,decel,step);
+      c.pitApproachTargetSpeed=target;c.pitApproachDistance=dist;c.pitApproachBrakeDemand=current>target?clamp((current-target)/Math.max(.1,current),0,1):0;
     }
   }
 
   function update(dt){
-    const cars=R.cars||[],trajectoryFrame=trajectory.capture();preparePitApproach();
+    const cars=R.cars||[],trajectoryFrame=trajectory.capture();preparePitApproach(dt);
     for(let i=0;i<cars.length;i++)beforeSpeed[i]=Number(cars[i].v)||0;
     baseUpdate(dt);
     for(let i=0;i<cars.length;i++){
@@ -135,7 +139,7 @@ export function createRace(W,statusEl,settings={}){
   return new Proxy(R,{get(target,prop){
     if(prop==='update')return update;
     if(prop==='trajectoryDiagnostics')return trajectory.diagnostics();
-    if(prop==='pitExitLimiterDiagnostics')return{owner:'runtime-pit-exit-release-v4-continuous-path',limiterReleases,mergeReleases,entrySurfaceFrames,updates,snapshotAllocations:1,cars:(R.cars||[]).filter(c=>c._runtimePitExitLimiterReleased).map(c=>({id:c.id,phase:c._runtimePitPhase,pitState:c.pitState,releasedAt:c._runtimePitExitReleasedAt,v:c.v,mergeDistance:c._runtimePitMergeDistance||0}))};
+    if(prop==='pitExitLimiterDiagnostics')return{owner:'runtime-pit-exit-release-v5-physical-approach',limiterReleases,mergeReleases,entrySurfaceFrames,updates,snapshotAllocations:1,cars:(R.cars||[]).filter(c=>c._runtimePitExitLimiterReleased).map(c=>({id:c.id,phase:c._runtimePitPhase,pitState:c.pitState,releasedAt:c._runtimePitExitReleasedAt,v:c.v,mergeDistance:c._runtimePitMergeDistance||0}))};
     return Reflect.get(target,prop,target);
   }});
 }
