@@ -9,7 +9,7 @@ const freeze=Object.freeze;
 export const VEHICLE_PERFORMANCE=freeze({
   formula:freeze({
     category:'FIA Formula 1 2026',top:98.3,accel:10.3,brake:31.5,tyre:1.08,wet:.86,mass:768,paceIndex:1.000,
-    lateralG:4.35,laneChangeG:3.30,aero:1.00,traction:1.00,tyreWear:1.15,fuelCapacity:110,fuelBurnPerMeter:.000260,refuelKgPerSec:0,
+    lateralG:4.35,laneChangeG:3.30,aero:1.00,traction:1.00,tyreWear:1.15,fuelCapacity:70,fuelBurnPerMeter:.000200,refuelKgPerSec:0,
     wheelbase:3.40,steer:.34,steerRate:2.35,draftGain:.016,dirtyAirLoss:.12,multiclassPassRangeM:118,minPassClosingMps:4.0
   }),
   hyper:freeze({
