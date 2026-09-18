@@ -1,5 +1,6 @@
 import {test,expect} from '@playwright/test';
 import {projectedSideBySideRisk} from '../../iphone-demo/runtime/race-contact-avoidance.js';
+import {trafficFollowPolicy} from '../../iphone-demo/runtime/vehicle-performance-spec.js';
 
 test('narrow but parallel straight-line overlap does not request avoidance',()=>{
   const a={width:2.0,lane:-1.03,laneTarget:-1.08,lateralVelocity:-.05};
@@ -30,6 +31,16 @@ test('corner load increases the clearance required for a projected parallel pass
   expect(corner.projectedContact).toBeTruthy();
 });
 
+test('follow policy does not brake a physically clear parallel pass but still caps convergence',()=>{
+  const common={followerType:'formula',leaderType:'touring',gapM:8,speedMps:78,leaderSpeedMps:69,bodyGapM:5,currentLateralM:2.06,safeLateralM:2.27,passIntent:false};
+  const parallel=trafficFollowPolicy({...common,plannedLateralM:2.16});
+  const converging=trafficFollowPolicy({...common,plannedLateralM:1.88});
+  expect(parallel.parallelEscape).toBeTruthy();
+  expect(parallel.shouldCap).toBeFalsy();
+  expect(converging.parallelEscape).toBeFalsy();
+  expect(converging.shouldCap).toBeTruthy();
+});
+
 test('runtime does not cap a faster car that is already safely parallel on a straight',async({page})=>{
   await page.goto('/iphone-demo/index.html?runtimeTest=1',{waitUntil:'domcontentloaded'});
   await page.waitForFunction(()=>!!(window.__RACING_RACE__&&window.__RACING_WORLD__)||document.querySelector('#status')?.textContent==='ERROR',null,{timeout:30000});
@@ -43,12 +54,12 @@ test('runtime does not cap a faster car that is already safely parallel on a str
     }
     const active=R.cars.filter(c=>!c.retired),fast=active[0],slow=active[1];
     for(let i=2;i<active.length;i++){active[i].retired=true;if(active[i].mesh)active[i].mesh.visible=false;}
-    const reset=c=>Object.assign(c,{pitState:'NONE',_runtimePitPhase:'TRACK',spinState:'NONE',offTrack:false,hazardAvoiding:false,localYellow:false,incident:0,damage:0,damageState:'NONE',avoid:0,blueFlag:false,coolingMode:false,predictiveSpeedCap:null,multiclassPassIntent:false,multiclassPassTargetId:null,multiclassPassLane:null,racecraftBlocked:false});
-    reset(fast);reset(slow);
+    const reset=c=>Object.assign(c,{pitState:'NONE',_runtimePitPhase:'TRACK',spinState:'NONE',offTrack:false,hazardAvoiding:false,localYellow:false,hydroplaning:false,incident:0,damage:0,damageState:'NONE',fault:null,wear:0,avoid:0,blueFlag:false,coolingMode:false,predictiveSpeedCap:null,multiclassPassIntent:false,multiclassPassTargetId:null,multiclassPassLane:null,racecraftBlocked:false});
+    reset(fast);reset(slow);fast.type='formula';slow.type='touring';
     fast.s=straight;slow.s=straight+1.0;fast.v=78;slow.v=69;fast.lane=-1.03;slow.lane=1.03;fast.laneTarget=-1.08;slow.laneTarget=1.08;fast.lateralVelocity=-.05;slow.lateralVelocity=.05;
     for(const c of[fast,slow]){const q=W.sample(c.s,c.lane);c.mesh.position.copy(q.p);c.mesh.position.y+=.12;c.mesh.rotation.y=Math.atan2(q.t.x,q.t.z);c.mesh.visible=true;}
-    const before=R.collisionAvoidance?.parallelPassFrames||0;R.update(.016);
-    return{best,reservedFast:!!fast.sideBySideReserved,reservedSlow:!!slow.sideBySideReserved,cap:fast.predictiveSpeedCap,safetyCap:fast.racingSafetyCap,frames:(R.collisionAvoidance?.parallelPassFrames||0)-before,risk:fast.projectedSideBySideRisk||null};
+    const before=R.collisionAvoidance?.parallelPassFrames||0,speedBefore=fast.v;R.update(.016);
+    return{best,reservedFast:!!fast.sideBySideReserved,reservedSlow:!!slow.sideBySideReserved,cap:fast.predictiveSpeedCap,safetyCap:fast.racingSafetyCap,frames:(R.collisionAvoidance?.parallelPassFrames||0)-before,risk:fast.projectedSideBySideRisk||null,speedBefore,speedAfter:fast.v,brake:fast.racingBrake||0,mode:fast.racingMode||'',target:fast.racingSpeedTarget??null,traffic:fast.racingTrafficPolicy||null};
   });
   expect(result.best,JSON.stringify(result)).toBeLessThan(.25);
   expect(result.reservedFast,JSON.stringify(result)).toBeTruthy();
@@ -57,4 +68,8 @@ test('runtime does not cap a faster car that is already safely parallel on a str
   expect(result.risk?.parallelClear,JSON.stringify(result)).toBeTruthy();
   expect(result.cap,JSON.stringify(result)).toBeNull();
   expect(result.safetyCap,JSON.stringify(result)).toBeNull();
+  expect(result.traffic?.parallelEscape,JSON.stringify(result)).toBeTruthy();
+  expect(result.traffic?.shouldCap,JSON.stringify(result)).toBeFalsy();
+  expect(result.brake,JSON.stringify(result)).toBeLessThan(.08);
+  expect(result.speedAfter,JSON.stringify(result)).toBeGreaterThan(result.speedBefore-.08);
 });
