@@ -5,7 +5,10 @@ import {createTrajectoryController} from './trajectory-controller.js';
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const finite=v=>v!=null&&v!==''&&Number.isFinite(Number(v));
 const smooth01=t=>{t=clamp(Number(t)||0,0,1);return t*t*(3-2*t);};
-const PIT_ENTRY_CAPTURE_METERS=18;
+const PIT_ENTRY_CAPTURE_METERS=96;
+const PIT_APPROACH_LANE_START_METERS=240;
+const PIT_APPROACH_LANE_READY_METERS=42;
+const PIT_LIMIT_BRAKE_BUFFER_METERS=8;
 
 function validExitCar(c){
   if(!c||c.retired||c._runtimeReleaseWait)return false;
@@ -87,7 +90,7 @@ export function advancePitExitAfterLimiter(W,c,dt=.016,beforeV=null,raceTime=0){
 
 function enforcePitEntrySurface(W,c){
   if(!c||c.retired||c.pitState!=='ENTRY'||!c.mesh||!W.inPitWindow?.(c.s)||typeof W.pitPose!=='function'||typeof W.sample!=='function')return false;
-  const total=Math.max(1,Number(W.total)||1),entryUF=Number(W.pitCoordinateAudit?.entryUF),uf=Number(W.pitUnwrappedFraction?.(c.s));
+  const total=Math.max(1,Number(W.total)||1),entryUF=Number(W.pitCoordinateAudit?.entryUF??W.realisticPitLayout?.entryUF),uf=Number(W.pitUnwrappedFraction?.(c.s));
   if(!Number.isFinite(entryUF)||!Number.isFinite(uf))return false;
   const meters=(uf-entryUF)*total;if(!Number.isFinite(meters)||meters<0)return false;
   const pit=W.pitPose(c.s,c.teamId,'ENTRY');if(!pit?.p)return false;
@@ -104,38 +107,72 @@ export function createRace(W,statusEl,settings={}){
   W.runtimeRacecraftAuthority='runtime-racecraft-v2';
   const R=createSpectatorRace(W,statusEl,settings),baseUpdate=R.update,beforeSpeed=new Float64Array(Math.max(1,R.cars?.length||20));
   const mobile=!!globalThis.matchMedia?.('(pointer:coarse)')?.matches,trajectory=createTrajectoryController(W,R,{mobile});
-  let limiterReleases=0,mergeReleases=0,updates=0,entrySurfaceFrames=0;
+  const total=Math.max(1,Number(W.total)||1),pitSide=Math.sign(Number(W.pitLaneOffset)||Number(W.realisticPitLayout?.laneOffset)||1)||1,pitApproachLane=pitSide*3.35;
+  let limiterReleases=0,mergeReleases=0,updates=0,entrySurfaceFrames=0,approachFrames=0,approachBrakeFrames=0;
 
-  function preparePitApproach(){
-    const limit=Number(W.pitSpeedLimit)||22.22;
-    for(const c of R.cars||[]){
-      if(c.retired||c.pitState!=='ENTRY'||!W.inPitWindow?.(c.s)||c._runtimePitQueued)continue;
-      const dist=Number(W.pitDistanceToBox?.(c.s,c.teamId));if(!Number.isFinite(dist)||dist<-.5)continue;
-      const decel=clamp((Number(c._v18BaseBrake)||Number(c.brake)||15)*.52,5.5,9.5),target=Math.min(limit,Math.sqrt(Math.max(.35,2*decel*Math.max(.12,dist))));
-      if(dist<34)c.v=Math.min(Number(c.v)||0,target);
-      if(dist<8)c.v=Math.min(c.v,Math.max(1.8,target*.72));
-      if(dist<2.2)c.v=Math.min(c.v,Math.max(.7,dist*1.15));
-      c.pitApproachTargetSpeed=target;c.pitApproachDistance=dist;
+  function markerDistance(c,uf){
+    if(!Number.isFinite(Number(uf)))return Infinity;
+    const s=((Number(c.s)||0)%total+total)%total,target=(((Number(uf)%1)+1)%1)*total;let d=target-s;if(d<0)d+=total;return d;
+  }
+  function approachRequested(c){return !!c&&!c.retired&&(!!c._spectatorPitRequest||!!c._runtimePitPending||c.pitState==='ENTRY');}
+  function distanceToEntry(c){
+    if(W.inPitWindow?.(c.s))return 0;
+    const entry=Number(W.realisticPitLayout?.entryUF??W.pitEntryFraction);return markerDistance(c,entry);
+  }
+  function distanceToLimiter(c){
+    if(W.inPitSpeedZone?.(c.s))return 0;
+    const full=Number(W.realisticPitLayout?.fullUF);if(!Number.isFinite(full))return distanceToEntry(c);
+    if(W.inPitWindow?.(c.s)&&typeof W.pitUnwrappedFraction==='function'){
+      const uf=Number(W.pitUnwrappedFraction(c.s));if(Number.isFinite(uf))return Math.max(0,(full-uf)*total);
     }
+    return markerDistance(c,full);
+  }
+  function preparePitApproach(c,dt,speedPhase='post'){
+    if(!approachRequested(c)||c._runtimePitQueued)return false;
+    const entryDist=distanceToEntry(c),limitDist=distanceToLimiter(c),currentTarget=finite(c.laneTarget)?Number(c.laneTarget):(Number(c.lane)||0);
+    if(entryDist<=PIT_APPROACH_LANE_START_METERS){
+      const span=Math.max(1,PIT_APPROACH_LANE_START_METERS-PIT_APPROACH_LANE_READY_METERS),alpha=smooth01((PIT_APPROACH_LANE_START_METERS-entryDist)/span);
+      c.laneTarget=currentTarget+(pitApproachLane-currentTarget)*alpha;c._runtimePitApproachLaneActive=true;c._runtimePitApproachLaneTarget=pitApproachLane;approachFrames++;
+    }else{c._runtimePitApproachLaneActive=false;}
+    if(Number.isFinite(limitDist)&&!W.inPitSpeedZone?.(c.s)){
+      const step=clamp(Number(dt)||.016,.001,.05),limit=Number(W.pitSpeedLimit)||22.22,decel=clamp((Number(c._v18BaseBrake)||Number(c.brake)||15)*.58,6.5,10.5),usable=Math.max(0,limitDist-PIT_LIMIT_BRAKE_BUFFER_METERS),target=Math.sqrt(Math.max(limit*limit,limit*limit+2*decel*usable)),v=Math.max(0,Number(c.v)||0);
+      c.pitEntryTargetSpeed=target;c.pitEntryDistanceToLimiter=limitDist;c.pitEntryPlannedDecel=decel;
+      if(speedPhase==='pre'){const next=v>target+.05?Math.max(target,v-decel*step):v;c._runtimePitEntryFrameSpeedCap=next;if(next<v-.001){c.v=next;approachBrakeFrames++;}}
+      else{const cap=finite(c._runtimePitEntryFrameSpeedCap)?Number(c._runtimePitEntryFrameSpeedCap):v>target+.05?Math.max(target,v-decel*step):v;if(v>cap)c.v=cap;c._runtimePitEntryFrameSpeedCap=null;}
+    }else c._runtimePitEntryFrameSpeedCap=null;
+    if(c.pitState==='ENTRY'&&W.inPitWindow?.(c.s)){
+      const dist=Number(W.pitDistanceToBox?.(c.s,c.teamId));if(Number.isFinite(dist)&&dist>=-.5){
+        const limit=Number(W.pitSpeedLimit)||22.22,decel=clamp((Number(c._v18BaseBrake)||Number(c.brake)||15)*.52,5.5,9.5),target=Math.min(limit,Math.sqrt(Math.max(.35,2*decel*Math.max(.12,dist))));
+        if(dist<34)c.v=Math.min(Number(c.v)||0,target);if(dist<8)c.v=Math.min(c.v,Math.max(1.8,target*.72));if(dist<2.2)c.v=Math.min(c.v,Math.max(.7,dist*1.15));c.pitApproachTargetSpeed=target;c.pitApproachDistance=dist;
+      }
+    }
+    return true;
+  }
+  function updateTrajectoryWithPitApproach(dt,trajectoryFrame){
+    const savedModes=[],savedRacingLineFor=W.racingLineFor,baseLineFor=typeof savedRacingLineFor==='function'?savedRacingLineFor.bind(W):null;
+    for(const c of R.cars||[]){if(!c._runtimePitApproachLaneActive||c.pitState==='STOP'||c.pitState==='EXIT')continue;savedModes.push([c,c.racingLineMode]);c.racingLineMode='PIT_APPROACH';}
+    if(savedModes.length)W.racingLineFor=(s,mode)=>String(mode)==='PIT_APPROACH'?pitApproachLane:(baseLineFor?baseLineFor(s,mode):(W.racingLineAt?.(s)??0));
+    try{trajectory.update(dt,trajectoryFrame);}finally{if(savedModes.length)W.racingLineFor=savedRacingLineFor;for(const [c,mode] of savedModes)c.racingLineMode=mode;}
   }
 
   function update(dt){
-    const cars=R.cars||[],trajectoryFrame=trajectory.capture();preparePitApproach();
+    const cars=R.cars||[],trajectoryFrame=trajectory.capture();for(const c of cars)preparePitApproach(c,dt,'pre');
     for(let i=0;i<cars.length;i++)beforeSpeed[i]=Number(cars[i].v)||0;
     baseUpdate(dt);
     for(let i=0;i<cars.length;i++){
-      const c=cars[i],wasReleased=!!c._runtimePitExitLimiterReleased,wasMerging=finite(c._runtimePitMergeStartS)||String(c._runtimePitPhase||'')==='MERGE',stage=advancePitExitAfterLimiter(W,c,dt,beforeSpeed[i],R.race?.t||0);
+      const c=cars[i];preparePitApproach(c,dt,'post');
+      const wasReleased=!!c._runtimePitExitLimiterReleased,wasMerging=finite(c._runtimePitMergeStartS)||String(c._runtimePitPhase||'')==='MERGE',stage=advancePitExitAfterLimiter(W,c,dt,beforeSpeed[i],R.race?.t||0);
       if(!wasReleased&&c._runtimePitExitLimiterReleased)limiterReleases++;
       if(stage==='MERGE'&&!wasMerging)mergeReleases++;
       if(enforcePitEntrySurface(W,c))entrySurfaceFrames++;
     }
-    trajectory.update(dt,trajectoryFrame);updates++;
+    updateTrajectoryWithPitApproach(dt,trajectoryFrame);updates++;
   }
 
   return new Proxy(R,{get(target,prop){
     if(prop==='update')return update;
     if(prop==='trajectoryDiagnostics')return trajectory.diagnostics();
-    if(prop==='pitExitLimiterDiagnostics')return{owner:'runtime-pit-exit-release-v4-continuous-path',limiterReleases,mergeReleases,entrySurfaceFrames,updates,snapshotAllocations:1,cars:(R.cars||[]).filter(c=>c._runtimePitExitLimiterReleased).map(c=>({id:c.id,phase:c._runtimePitPhase,pitState:c.pitState,releasedAt:c._runtimePitExitReleasedAt,v:c.v,mergeDistance:c._runtimePitMergeDistance||0}))};
+    if(prop==='pitExitLimiterDiagnostics')return{owner:'runtime-pit-exit-release-v5-progressive-entry',limiterReleases,mergeReleases,entrySurfaceFrames,approachFrames,approachBrakeFrames,updates,snapshotAllocations:1,cars:(R.cars||[]).filter(c=>c._runtimePitExitLimiterReleased||c._runtimePitApproachLaneActive).map(c=>({id:c.id,phase:c._runtimePitPhase,pitState:c.pitState,releasedAt:c._runtimePitExitReleasedAt,v:c.v,mergeDistance:c._runtimePitMergeDistance||0,entryTargetSpeed:c.pitEntryTargetSpeed??null,entryDistanceToLimiter:c.pitEntryDistanceToLimiter??null,approachLaneTarget:c._runtimePitApproachLaneTarget??null}))};
     return Reflect.get(target,prop,target);
   }});
 }
