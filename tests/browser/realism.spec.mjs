@@ -33,7 +33,7 @@ test('final kinematic envelope prevents teleport acceleration and absurd corner 
     c.v=70;W.braking=()=>1;const cornerStart=c.v;for(let i=0;i<40;i++)R.update(.05);const cornerEnd=c.v;W.braking=orig;
     return{type:c.type,accelDelta,cornerStart,cornerEnd,policy:R.kinematicPolicy};
   });
-  expect(x.policy?.owner).toBe('runtime-kinematic-envelope-v1');const lim=x.policy.limits[x.type]||x.policy.limits.gt;
+  expect(x.policy?.owner).toBe('runtime-kinematic-envelope-v2-class-spec');const lim=x.policy.limits[x.type]||x.policy.limits.gt;
   expect(x.accelDelta).toBeLessThanOrEqual(lim.accel*.05+.03);expect(x.cornerEnd).toBeLessThan(x.cornerStart-15);expect(x.cornerEnd*3.6).toBeLessThan(190);expect(x.policy.corrections).toBeGreaterThan(0);
 });
 
