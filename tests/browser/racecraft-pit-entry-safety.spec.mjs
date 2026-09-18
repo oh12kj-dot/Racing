@@ -8,6 +8,7 @@ async function boot(page){
   },null,{timeout:30000});
   const state=await page.evaluate(()=>({ready:!!(window.__RACING_RACE__&&window.__RACING_WORLD__),status:document.querySelector('#status')?.textContent||'',error:document.querySelector('#error')?.textContent||''}));
   expect(state.status,state.error||'runtime boot status').not.toBe('ERROR');expect(state.ready,state.error||'runtime globals were not created').toBeTruthy();
+  await page.evaluate(()=>window.__RACING_RACE__?.update?.(.001));
 }
 
 test('strategy pit request stays on the racing surface until the physical pit-entry blend',async({page})=>{
