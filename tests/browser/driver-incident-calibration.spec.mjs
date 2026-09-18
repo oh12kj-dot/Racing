@@ -1,4 +1,5 @@
 import {test,expect} from '@playwright/test';
+import {readFileSync} from 'node:fs';
 import {DRIVER_INCIDENT_POLICY,allocatedIncidentProbability,expectedFullSpinCount,expectedIncidentCount,fieldIncidentRatePerSecond,fullSpinShare,incidentMeanSeconds} from '../../iphone-demo/runtime/driver-incident-policy.js';
 
 test('driver incident policy keeps dry full spins near one per 90 minute race field',()=>{
@@ -30,4 +31,14 @@ test('incident allocation requires a physically eligible risk weight and respect
   expect(allocatedIncidentProbability('SPIN',{wetness:0,dt:1,weight:0,totalWeight:1,now:1000,lastAt:-Infinity})).toBe(0);
   expect(allocatedIncidentProbability('SPIN',{wetness:0,dt:1,weight:1,totalWeight:1,now:100,lastAt:0})).toBe(0);
   expect(allocatedIncidentProbability('SPIN',{wetness:0,dt:1,weight:1,totalWeight:1,now:1000,lastAt:0})).toBeGreaterThan(0);
+});
+
+test('production driver dynamics consumes the field-wide policy instead of independent per-car magic rates',()=>{
+  const source=readFileSync(new URL('../../iphone-demo/runtime/race-driver-dynamics.js',import.meta.url),'utf8');
+  expect(source).toContain("from './driver-incident-policy.js'");
+  expect(source).toContain("owner:'field-wide-risk-weighted-v1'");
+  expect(source).toContain("allocatedIncidentProbability('LOCKUP'");
+  expect(source).toContain("allocatedIncidentProbability('SPIN'");
+  expect(source).not.toContain("dt*(.006+risk*.030)");
+  expect(source).not.toContain("dt*(.002+risk*.012)");
 });
