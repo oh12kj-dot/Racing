@@ -80,7 +80,7 @@ export function createRace(W,statusEl,settings={}){
     // This is the single normal-green longitudinal output. Legacy core speed changes are
     // deliberately overwritten here; explicit safety caps are applied by this same owner.
     c.v=Math.max(0,before+st.accel*dt);
-    if(safetyActive&&c.v>safetyCap){const physicalSafetyLimit=Math.max(safetyCap,before-Math.max(.25,brakeAvail)*dt);c.v=Math.min(c.v,physicalSafetyLimit);st.accel=(c.v-before)/Math.max(.001,dt);st.jerk=(st.accel-st.prevAccel)/Math.max(.001,dt);st.mode='BRAKE';}
+    if(safetyActive&&c.v>safetyCap){const physicalSafetyLimit=Math.max(safetyCap,before-brakeAvail*dt);c.v=Math.min(c.v,physicalSafetyLimit);st.accel=(c.v-before)/Math.max(.001,dt);st.jerk=(st.accel-st.prevAccel)/Math.max(.001,dt);st.mode='BRAKE';}
     c.racingSafetyCap=safetyActive?safetyCap:null;c.racingSpeedRaw=st.raw;c.racingSpeedTarget=st.target;c.racingLongAccel=st.accel;c.racingJerk=st.jerk;c.racingMode=st.mode;c.racingBrake=clamp(-st.accel/Math.max(.25,brakeAvail),0,1);c.racingThrottle=safetyActive?0:clamp(st.accel/Math.max(.25,accelBase),0,1);c.racingLatUse=latUse;if(c.racingBrake>.02)c.brakeVisual=Math.max(c.brakeVisual||0,c.racingBrake);
   }
 
