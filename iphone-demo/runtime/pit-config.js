@@ -23,9 +23,12 @@ function inferMergeOffset(W){
 
 export function resolvePitRuntimeSpec(W={}){
   const layout=W.realisticPitLayout||{},mergeTrackOffset=inferMergeOffset(W),exitEndUF=unwrapExitFraction(finite(layout.exitEndUF,W.pitExitEndUF,W.pitExitFraction))??1.05;
-  const mergeLaneTarget=Math.sign(mergeTrackOffset||1)*Math.min(4,Math.max(2.5,Math.abs(mergeTrackOffset)*.72));
+  // Finish the dedicated pit-exit path near the outside edge of the racing surface,
+  // then let the normal trajectory controller blend toward the racing line. Keeping
+  // this target inside its normal ±3.72 m envelope prevents a one-frame lateral snap.
+  const mergeLaneTarget=Math.sign(mergeTrackOffset||1)*Math.min(3.55,Math.max(2.5,Math.abs(mergeTrackOffset)*.62));
   return Object.freeze({
-    owner:'runtime-pit-config-v1',
+    owner:'runtime-pit-config-v2-continuous-merge',
     circuit:String(W.circuitName||'UNKNOWN'),
     layoutOwner:String(layout.owner||'world-pit-kinematics'),
     queueGapMeters:positive(8.5,layout.queueGapMeters,W.pitQueueGapMeters),
@@ -33,6 +36,7 @@ export function resolvePitRuntimeSpec(W={}){
     releaseBehindMeters:positive(18,layout.releaseBehindMeters,W.pitReleaseBehindMeters),
     releaseAheadMeters:positive(8,layout.releaseAheadMeters,W.pitReleaseAheadMeters),
     workingExitBlendMeters:positive(18,layout.workingExitBlendMeters,W.pitWorkingExitBlendMeters),
+    mergeBlendMeters:positive(42,layout.mergeBlendMeters,W.pitMergeBlendMeters),
     exitEndUF,
     mergeTrackOffset,
     mergeLaneTarget,
