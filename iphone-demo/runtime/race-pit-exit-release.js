@@ -3,7 +3,7 @@ import {resolvePitRuntimeSpec} from './pit-config.js';
 import {createTrajectoryController} from './trajectory-controller.js';
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
-const finite=v=>Number.isFinite(Number(v));
+const finite=v=>v!=null&&v!==''&&Number.isFinite(Number(v));
 const smooth01=t=>{t=clamp(Number(t)||0,0,1);return t*t*(3-2*t);};
 const PIT_ENTRY_CAPTURE_METERS=18;
 
