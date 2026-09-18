@@ -2,6 +2,8 @@
 // `top` is a maximum performance envelope used by the simulation, not a promise
 // that the car reaches that speed on every circuit. Acceleration, braking,
 // lateral grip, aero, tyres and traffic effects create the larger lap-time gaps.
+// `fuelCapacity` is always kg because the runtime stores fuel as fuelKg; when a
+// public technical rule specifies litres, `fuelTankLitres` records that separately.
 // Sources used for calibration: FIA 2026 F1 regulations/results, FIA/ACO 2026 WEC
 // LMH/LMDh/LMP2/LMGT3 regulations/results, 2026 Supercars Gen3 specifications,
 // and 2026 FIA TCR World Tour regulations.
@@ -27,7 +29,7 @@ export const VEHICLE_PERFORMANCE=freeze({
   }),
   proto:freeze({
     category:'FIA/ACO LMP2 2026',top:90.7,accel:8.0,accelBand:band(9.1,7.0,3.6),brake:22.8,brakeBand:band(16.0,21.5,25.5),tyre:1.04,wet:.89,mass:950,paceIndex:.820,
-    lateralG:2.95,laneChangeG:2.62,aero:.96,traction:.96,tyreWear:.82,fuelCapacity:75,fuelBurnPerMeter:.000420,refuelKgPerSec:2.8,
+    lateralG:2.95,laneChangeG:2.62,aero:.96,traction:.96,tyreWear:.82,fuelCapacity:56,fuelTankLitres:75,fuelDensityKgPerL:.75,fuelBurnPerMeter:.000420,refuelKgPerSec:2.8,
     wheelbase:3.00,steer:.39,steerRate:2.05,draftGain:.025,dirtyAirLoss:.075,multiclassPassRangeM:110,minPassClosingMps:3.6
   }),
   gt:freeze({
@@ -37,7 +39,7 @@ export const VEHICLE_PERFORMANCE=freeze({
   }),
   supercar:freeze({
     category:'Repco Supercars Gen3 2026',top:83.33,accel:8.15,accelBand:band(8.2,5.9,2.8),brake:17.2,brakeBand:band(12.0,15.5,18.2),tyre:.94,wet:.88,mass:1350,paceIndex:.720,
-    lateralG:1.75,laneChangeG:1.78,aero:.72,traction:.92,tyreWear:1.00,fuelCapacity:135,fuelBurnPerMeter:.000310,refuelKgPerSec:2.2,
+    lateralG:1.75,laneChangeG:1.78,aero:.72,traction:.92,tyreWear:1.00,fuelCapacity:101,fuelTankLitres:135,fuelDensityKgPerL:.75,fuelBurnPerMeter:.000310,refuelKgPerSec:2.2,
     wheelbase:2.82,steer:.45,steerRate:1.70,draftGain:.027,dirtyAirLoss:.025,multiclassPassRangeM:102,minPassClosingMps:3.2
   }),
   touring:freeze({
