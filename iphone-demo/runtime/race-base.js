@@ -3,7 +3,10 @@ import {damagePerformanceFactors,performanceFor,trafficFollowPolicy} from './veh
 
 export function createRace(W,statusEl,settings={}){
   const R=createV38Race(W,statusEl,settings),baseUpdate=R.update,total=W.total,clamp=(v,a,b)=>Math.max(a,Math.min(b,v)),wrap=s=>((s%total)+total)%total;
-  const look=[0,18,38,62,92,128,170,215],controllers=new Map(),preSpeed=[],preS=[],prePit=[],telemetry=[];
+  // Track-aware braking must resolve short high-curvature features (hairpins/chicanes),
+  // not just a handful of sparse samples. Six-metre spacing is close to the world
+  // curvature grid resolution while 300 m covers the longest wet braking approaches.
+  const look=Array.from({length:51},(_,i)=>i*6),controllers=new Map(),preSpeed=[],preS=[],prePit=[],telemetry=[];
   const serviceTime={formula:2.6,proto:3.1,hyper:3.3,lmh:3.2,gt:4.1,supercar:4.3,touring:4.7};
   let telemetryAcc=0;
   const punctured=c=>c?.fault==='PUNCTURE'||(c?.wheelState||[]).some(w=>w?.puncture);
