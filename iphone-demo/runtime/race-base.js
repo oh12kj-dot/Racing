@@ -25,6 +25,7 @@ export function createRace(W,statusEl,settings={}){
   }
   function lineValue(c,mode,s=c.s){return clamp(W.racingLineFor?.(s,mode)??W.racingLineAt?.(s)??0,-3.25,3.25);}
   function lineCurv(mode,s){return W.racingCurvatureFor?.(s,mode)??W.racingCurvatureAt?.(s)??W.curvatureAt?.(s)??0;}
+  function planningCurv(mode,s){const demand=W.racingCurvatureDemandFor?.(s,mode);return demand==null?Math.abs(lineCurv(mode,s)):Math.abs(Number(demand)||0);}
   function applyLine(c,dt){
     if(!clearState(c)||R.flag!=='GREEN'||R.sessionPhase==='FORMATION')return;
     const st=controllers.get(c.id),mode=chooseLine(c),ideal=lineValue(c,mode),traffic=(c.avoid||0)>0||c.blueFlag||c.coolingMode;
@@ -44,7 +45,9 @@ export function createRace(W,statusEl,settings={}){
     // The planning deceleration and the actual controller use the same brake
     // utilisation. This starts braking earlier than a max-brake stopping-distance
     // calculation and avoids asking a slowly-ramping controller to do the impossible.
-    for(const d of look){const k=Math.abs(lineCurv(mode,c.s+d));if(k<.00105)continue;const corner=Math.min(top,Math.sqrt(Math.max(1,gCap/k))),allowed=Math.sqrt(corner*corner+2*planBrake*d);if(allowed<target)target=allowed;}
+    // The local peak envelope is planning-only; live friction-circle demand below
+    // continues to use the exact path curvature at the car's current position.
+    for(const d of look){const k=planningCurv(mode,c.s+d);if(k<.00105)continue;const corner=Math.min(top,Math.sqrt(Math.max(1,gCap/k))),allowed=Math.sqrt(corner*corner+2*planBrake*d);if(allowed<target)target=allowed;}
     const cornerTarget=target,a=aheadOf(c);if(a?.car&&a.dist<120){const other=a.car,lat=Math.abs((other.lane||0)-(c.lane||0)),safeLat=(c.width+other.width)*.48+.35,overlap=lat<safeLat,plannedLat=Math.abs((Number.isFinite(Number(c.laneTarget))?Number(c.laneTarget):(c.lane||0))-(Number.isFinite(Number(other.laneTarget))?Number(other.laneTarget):(other.lane||0))),bodyGap=(c.length+other.length)*.5,passIntent=!!c.multiclassPassIntent&&(!Number.isFinite(Number(c.multiclassPassTargetId))||Number(c.multiclassPassTargetId)===Number(other.id)),follow=trafficFollowPolicy({followerType:c.type,leaderType:other.type,gapM:a.dist,speedMps:c.v||0,leaderSpeedMps:other.v||0,bodyGapM:bodyGap,currentLateralM:lat,plannedLateralM:plannedLat,safeLateralM:safeLat,passIntent});if(overlap&&follow.shouldCap)target=Math.min(target,follow.allowedSpeed);c.racingTrafficPolicy={leaderId:other.id,...follow};}
     c.racingDamagePerformance=damage;c.racingLineDeviation=deviation;return{target:Math.max(8,target),cornerTarget:Math.max(8,cornerTarget),brakeBase,gCap,accelScale:damage.accel,brakePlanUtil};
   }
