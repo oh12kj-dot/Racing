@@ -141,15 +141,16 @@ export function createRace(W,statusEl,settings={}){
     if(!c||c.retired||c.pitState==='STOP'||c._runtimePitQueued||c._runtimeReleaseWait)return false;
     if(c.spinState&&c.spinState!=='NONE')return false;
     if(['HEAVY','SEVERE','DESTROYED'].includes(String(c.crashState||'')))return false;
-    return c.pitState==='ENTRY'||!!W.inPitWindow?.(c.s);
+    return c.pitState==='ENTRY';
   }
   function preparePitEntry(c,dt,speedPhase='post',frameStartV=null){
-    if(!approachRequested(c)||c._runtimePitQueued){c._runtimePitApproachLaneActive=false;c._runtimePitEntryFrameSpeedCap=null;return false;}
-    const entryDist=distanceToEntry(c),limitDist=distanceToLimiter(c);
+    if(!approachRequested(c)||c._runtimePitQueued){c._runtimePitApproachLaneActive=false;c._runtimePitEntryFrameSpeedCap=null;c._runtimePitEntryBrakeGuardFrame=false;return false;}
+    const entryDist=distanceToEntry(c),limitDist=distanceToLimiter(c),outsideLimiter=Number.isFinite(limitDist)&&!W.inPitSpeedZone?.(c.s);
+    if(speedPhase==='pre')c._runtimePitEntryBrakeGuardFrame=outsideLimiter;
     if(entryDist<=PIT_APPROACH_LANE_START_METERS){
       const target=laneApproachTarget(c,entryDist);c.laneTarget=target;c._runtimePitApproachLaneActive=true;c._runtimePitApproachLaneTarget=target;approachFrames++;
     }else c._runtimePitApproachLaneActive=false;
-    if(Number.isFinite(limitDist)&&!W.inPitSpeedZone?.(c.s)){
+    if(outsideLimiter){
       const limit=Number(W.pitSpeedLimit)||22.22,baseBrake=Number(c._v18BaseBrake)||Number(c.brake)||15,decel=clamp(baseBrake*.62,8.8,10.5),usable=Math.max(0,limitDist-PIT_LIMIT_BRAKE_BUFFER_METERS),target=Math.sqrt(Math.max(limit*limit,limit*limit+2*decel*usable)),start=finite(frameStartV)?Number(frameStartV):Math.max(0,Number(c.v)||0),cap=boundedBrakeCap(start,target,decel,dt);
       c.pitEntryTargetSpeed=target;c.pitEntryDistanceToLimiter=limitDist;c.pitEntryPlannedDecel=decel;
       if(speedPhase==='pre'){
@@ -159,8 +160,11 @@ export function createRace(W,statusEl,settings={}){
         c._runtimePitEntryFrameSpeedCap=null;
       }
     }else c._runtimePitEntryFrameSpeedCap=null;
-    if(speedPhase==='post'&&canRepairPitBrake(c)&&finite(frameStartV)){
-      const step=clamp(Number(dt)||.016,.001,.05),floor=Math.max(0,Number(frameStartV)-PIT_APPROACH_MAX_BRAKE*step),v=Math.max(0,Number(c.v)||0);if(v<floor-.001){c.v=floor;physicalBrakeRepairs++;}
+    if(speedPhase==='post'){
+      if(c._runtimePitEntryBrakeGuardFrame&&canRepairPitBrake(c)&&finite(frameStartV)){
+        const step=clamp(Number(dt)||.016,.001,.05),floor=Math.max(0,Number(frameStartV)-PIT_APPROACH_MAX_BRAKE*step),v=Math.max(0,Number(c.v)||0);if(v<floor-.001){c.v=floor;physicalBrakeRepairs++;}
+      }
+      c._runtimePitEntryBrakeGuardFrame=false;
     }
     return true;
   }
