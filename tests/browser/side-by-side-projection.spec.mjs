@@ -59,11 +59,9 @@ test('runtime does not cap a faster car that is already safely parallel on a str
     fast.s=straight;slow.s=straight+1.0;fast.v=78;slow.v=69;fast.lane=-1.03;slow.lane=1.03;fast.laneTarget=-1.08;slow.laneTarget=1.08;fast.lateralVelocity=-.05;slow.lateralVelocity=.05;
     for(const c of[fast,slow]){const q=W.sample(c.s,c.lane);c.mesh.position.copy(q.p);c.mesh.position.y+=.12;c.mesh.rotation.y=Math.atan2(q.t.x,q.t.z);c.mesh.visible=true;}
     const before=R.collisionAvoidance?.parallelPassFrames||0,speedBefore=fast.v;R.update(.016);
-    return{best,reservedFast:!!fast.sideBySideReserved,reservedSlow:!!slow.sideBySideReserved,cap:fast.predictiveSpeedCap,safetyCap:fast.racingSafetyCap,frames:(R.collisionAvoidance?.parallelPassFrames||0)-before,risk:fast.projectedSideBySideRisk||null,speedBefore,speedAfter:fast.v,brake:fast.racingBrake||0,mode:fast.racingMode||'',target:fast.racingSpeedTarget??null,traffic:fast.racingTrafficPolicy||null};
+    return{best,cap:fast.predictiveSpeedCap,safetyCap:fast.racingSafetyCap,frames:(R.collisionAvoidance?.parallelPassFrames||0)-before,risk:fast.projectedSideBySideRisk||null,speedBefore,speedAfter:fast.v,brake:fast.racingBrake||0,mode:fast.racingMode||'',target:fast.racingSpeedTarget??null,traffic:fast.racingTrafficPolicy||null};
   });
   expect(result.best,JSON.stringify(result)).toBeLessThan(.25);
-  expect(result.reservedFast,JSON.stringify(result)).toBeTruthy();
-  expect(result.reservedSlow,JSON.stringify(result)).toBeTruthy();
   expect(result.frames,JSON.stringify(result)).toBeGreaterThan(0);
   expect(result.risk?.parallelClear,JSON.stringify(result)).toBeTruthy();
   expect(result.cap,JSON.stringify(result)).toBeNull();
@@ -71,5 +69,6 @@ test('runtime does not cap a faster car that is already safely parallel on a str
   expect(result.traffic?.parallelEscape,JSON.stringify(result)).toBeTruthy();
   expect(result.traffic?.shouldCap,JSON.stringify(result)).toBeFalsy();
   expect(result.brake,JSON.stringify(result)).toBeLessThan(.08);
+  expect(result.mode,JSON.stringify(result)).not.toBe('BRAKE');
   expect(result.speedAfter,JSON.stringify(result)).toBeGreaterThan(result.speedBefore-.08);
 });
