@@ -18,18 +18,17 @@ test('isolated Formula lap exposes realistic dry Suzuka pace telemetry',async({p
     Object.assign(c,{type:'formula',retired:false,recovered:false,pitState:'NONE',_runtimePitPhase:'TRACK',spinState:'NONE',hazardAvoiding:false,localYellow:false,hydroplaning:false,incident:0,damage:0,damageState:'NONE',fault:null,wear:0,avoid:0,blueFlag:false,coolingMode:false,predictiveSpeedCap:null,multiclassPassIntent:false,multiclassPassTargetId:null,multiclassPassLane:null,racecraftBlocked:false,fuelKg:5});
     R.events.length=0;R.flag='GREEN';
     const q=W.sample(c.s,c.lane);if(q?.p&&c.mesh){c.mesh.position.copy(q.p);c.mesh.position.y+=.12;c.mesh.rotation.y=Math.atan2(q.t.x,q.t.z);c.mesh.visible=true;}
-    // Let the single-car controller settle before measuring one complete flying lap.
     for(let i=0;i<160;i++)tick(dt,false);
-    const curvatures=[];for(let s=0;s<total;s+=5)curvatures.push(Math.abs(Number(W.racingCurvatureAt?.(s)??W.curvatureAt?.(s)??0)));curvatures.sort((a,b)=>a-b);
-    const quantile=p=>curvatures[Math.min(curvatures.length-1,Math.max(0,Math.floor((curvatures.length-1)*p)))]||0,q25=quantile(.25),q75=quantile(.75),q90=quantile(.90);
-    let prev=Number(c.s)||0,travel=0,start=Number(R.race.t)||0,end=null,maxSpeed=0,minSpeed=Infinity,sumSpeed=0,samples=0,maxLatUse=0,maxActualLatG=0,straightSum=0,straightN=0,curvySum=0,curvyN=0,tightSum=0,tightN=0;
+    const curvatureSamples=[];for(let s=0;s<total;s+=5)curvatureSamples.push({s,k:Math.abs(Number(W.racingCurvatureAt?.(s)??W.curvatureAt?.(s)??0))});
+    const sorted=curvatureSamples.map(x=>x.k).sort((a,b)=>a-b),quantile=p=>sorted[Math.min(sorted.length-1,Math.max(0,Math.floor((sorted.length-1)*p)))]||0,q25=quantile(.25),q75=quantile(.75),q90=quantile(.90),maxCurvature=Math.max(...sorted);
+    let prev=Number(c.s)||0,travel=0,start=Number(R.race.t)||0,end=null,maxSpeed=0,minSpeed=Infinity,minSpeedS=null,minSpeedK=null,sumSpeed=0,samples=0,maxLatUse=0,maxActualLatG=0,straightSum=0,straightN=0,curvySum=0,curvyN=0,tightSum=0,tightN=0;
     for(let i=0;i<3000&&end==null;i++){
       tick(dt,false);const now=Number(R.race.t)||0,s=Number(c.s)||0;let d=s-prev;if(d<-total*.5)d+=total;if(d>total*.5)d-=total;if(d>0)travel+=d;prev=s;
-      const v=Math.max(0,Number(c.v)||0),kmh=v*3.6,k=Math.abs(Number(W.racingCurvatureAt?.(s)??W.curvatureAt?.(s)??0)),actualLatG=v*v*k/9.81;maxSpeed=Math.max(maxSpeed,kmh);minSpeed=Math.min(minSpeed,kmh);sumSpeed+=kmh;samples++;maxLatUse=Math.max(maxLatUse,Number(c.racingLatUse)||0);maxActualLatG=Math.max(maxActualLatG,actualLatG);
+      const v=Math.max(0,Number(c.v)||0),kmh=v*3.6,k=Math.abs(Number(W.racingCurvatureAt?.(s)??W.curvatureAt?.(s)??0)),actualLatG=v*v*k/9.81;maxSpeed=Math.max(maxSpeed,kmh);if(kmh<minSpeed){minSpeed=kmh;minSpeedS=s;minSpeedK=k;}sumSpeed+=kmh;samples++;maxLatUse=Math.max(maxLatUse,Number(c.racingLatUse)||0);maxActualLatG=Math.max(maxActualLatG,actualLatG);
       if(k<=q25){straightSum+=kmh;straightN++;}if(k>=q75){curvySum+=kmh;curvyN++;}if(k>=q90){tightSum+=kmh;tightN++;}
       if(travel>=total)end=now;
     }
-    return{total,lapTime:end!=null?end-start:null,maxSpeed,minSpeed,meanSpeed:samples?sumSpeed/samples:0,straightMean:straightN?straightSum/straightN:0,curvyMean:curvyN?curvySum/curvyN:0,tightMean:tightN?tightSum/tightN:0,maxLatUse,maxActualLatG,q25,q75,q90,wetness:Number(W.env?.wetness)||0,lineMode:c.racingLineMode||null,completedLaps:travel/total,pitState:c.pitState,spinState:c.spinState,retired:c.retired,dynamics:R.racingDynamics?.find?.(x=>x.carId===c.id)||null};
+    return{total,lapTime:end!=null?end-start:null,maxSpeed,minSpeed,minSpeedS,minSpeedK,minRadius:minSpeedK>0?1/minSpeedK:null,maxCurvature,smallestRadius:maxCurvature>0?1/maxCurvature:null,meanSpeed:samples?sumSpeed/samples:0,straightMean:straightN?straightSum/straightN:0,curvyMean:curvyN?curvySum/curvyN:0,tightMean:tightN?tightSum/tightN:0,maxLatUse,maxActualLatG,q25,q75,q90,wetness:Number(W.env?.wetness)||0,lineMode:c.racingLineMode||null,completedLaps:travel/total,pitState:c.pitState,spinState:c.spinState,retired:c.retired,dynamics:R.racingDynamics?.find?.(x=>x.carId===c.id)||null};
   });
   console.log(`CORNER_PACE_AUDIT ${JSON.stringify(result)}`);
   expect(result.total,JSON.stringify(result)).toBeGreaterThan(5200);expect(result.total,JSON.stringify(result)).toBeLessThan(6400);
