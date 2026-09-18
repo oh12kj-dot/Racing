@@ -47,7 +47,7 @@ test('pit release safety uses time-to-collision for a fast car arriving from beh
 test('contact layers no longer erase physical contact outcomes after the fact',()=>{
   const contact=readFileSync(new URL('../../iphone-demo/runtime/race-contact-avoidance.js',import.meta.url),'utf8');
   const side=readFileSync(new URL('../../iphone-demo/runtime/race-side-by-side.js',import.meta.url),'utf8');
-  expect(contact).toContain("mode:'predictive-cap-physical-obb-authoritative'");
+  expect(contact).toContain("mode:'predictive-cap-multiclass-pass-aware-physical-obb-authoritative'");
   expect(contact).not.toContain('suppressedFalseContacts');expect(contact).not.toContain('damage=b.damage');
   expect(side).toContain("contactPolicy:'physical-contact-authoritative'");
   expect(side).not.toContain('puncture=false');expect(side).not.toContain('events.push=function');
@@ -80,7 +80,9 @@ test('predictive collision braking requests a cap that the final longitudinal ow
   const base=readFileSync(new URL('../../iphone-demo/runtime/race-base.js',import.meta.url),'utf8');
   expect(contact).toContain('c.predictiveSpeedCap=launch!=null&&Number.isFinite(Number(launch))&&Number(launch)>=0?Number(launch):null');
   expect(contact).toContain('requestSpeedCap(c,cap)');
-  expect(contact).toContain('requestSpeedCap(c,front.v+');
+  expect(contact).toContain('trafficFollowPolicy({followerType:c.type,leaderType:front.type');
+  expect(contact).toContain('follow.shouldCap');
+  expect(contact).toContain('passIntent?.42:.58');
   expect(contact).not.toContain('c.v=Math.max(target');
   expect(base).toContain('const safetyCap=Number(c.predictiveSpeedCap)');
   expect(base).toContain('safetyActive=c.predictiveSpeedCap!=null&&Number.isFinite(safetyCap)');
