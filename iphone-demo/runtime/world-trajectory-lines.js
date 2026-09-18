@@ -23,6 +23,19 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
       const prev=tmp[wrap(i-1)],maxDelta=clamp(step*.085,.18,.42);opt[i]=clamp(tmp[i],prev-maxDelta,prev+maxDelta);
     }
   }
+  // Limiting only lateral velocity still permits the requested lane offset to flip
+  // slope in one sample, which creates a false high-curvature kink in an otherwise
+  // smooth circuit. Bound the second derivative of the lane profile instead. This
+  // changes only how quickly the racing line bends across the track; centreline
+  // corner geometry remains authoritative and no vehicle speed/G value is clamped.
+  const laneCurvatureLimit=.0045,laneSecondDelta=Math.max(.045,laneCurvatureLimit*step*step);
+  for(let pass=0;pass<8;pass++){
+    for(let i=0;i<count;i++){
+      const mid=(opt[wrap(i-1)]+opt[wrap(i+1)])*.5,half=laneSecondDelta*.5;
+      tmp[i]=clamp(opt[i],mid-half,mid+half);
+    }
+    opt.set(tmp);
+  }
   const profiles={OPTIMAL:new Float32Array(opt),ATTACK_LEFT:new Float32Array(count),ATTACK_RIGHT:new Float32Array(count),DEFEND:new Float32Array(count),WET:new Float32Array(count)};
   let wetSideState=-1;
   for(let i=0;i<count;i++){
@@ -59,6 +72,6 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
   W.racingCurvatureAt=s=>field(curvatureProfiles.OPTIMAL,s);
   W.racingLineFor=(s,mode='OPTIMAL')=>field(profiles[modeName(mode)],s);
   W.racingCurvatureFor=(s,mode='OPTIMAL')=>field(curvatureProfiles[modeName(mode)],s);
-  W.multiCornerLineDiagnostics={owner:'runtime-multi-corner-line-v2',count,step,horizonMeters:125,passes:4,wetContinuityDelta:wetMaxDelta,modes:Object.keys(profiles)};
+  W.multiCornerLineDiagnostics={owner:'runtime-multi-corner-line-v3-curvature-continuity',count,step,horizonMeters:125,passes:4,laneCurvatureLimit,laneSecondDelta,wetContinuityDelta:wetMaxDelta,modes:Object.keys(profiles)};
   return W;
 }
