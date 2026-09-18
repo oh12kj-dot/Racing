@@ -1,37 +1,12 @@
 export function createRadioVariety(R){
-  const seen=new Set(),cursor=new Map(),recent=[],pitCallLatch=new Map();
-  const metrics={processed:0,rewritten:0,suppressedPitCalls:0,byCategory:{}};
+  const seen=new Set(),cursor=new Map(),recent=[];
+  const metrics={processed:0,rewritten:0,byCategory:{}};
   const pushRecent=(m,category,before)=>{recent.push({t:R.race?.t||0,id:m.id,carId:m.carId??null,kind:m.kind||'',category,before,after:m.text});while(recent.length>40)recent.shift();};
   function next(key,items){const i=cursor.get(key)||0;cursor.set(key,i+1);return items[i%items.length];}
   function choose(car,category,items){return next(`${car?.id??'global'}:${category}`,items);}
   const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
   const sentence=s=>{s=clean(s);return s?s[0].toUpperCase()+s.slice(1):'';};
   const stripDot=s=>clean(s).replace(/[. ]+$/,'');
-  const raceTime=()=>Number(R.race?.t)||0;
-  const isPitDirective=m=>{
-    const kind=String(m?.kind||'').toUpperCase();if(kind==='DRIVER'||kind==='CONTROL')return false;
-    const t=clean(m?.text).toLowerCase();
-    return /\bbox(?:,\s*box)?(?:\s+this lap)?\b|\bpit this lap\b|\bcome in this lap\b|\bboxing at the end of this lap\b/.test(t);
-  };
-  function cleanupPitCallLatches(){
-    const now=raceTime();
-    for(const [carId,s] of pitCallLatch){
-      const c=R.cars?.[carId];if(!c){pitCallLatch.delete(carId);continue;}
-      const active=String(c.pitState||'NONE')!=='NONE';
-      if(active){s.entered=true;s.lastActiveAt=now;continue;}
-      const lap=Number(c.lap)||0;
-      if(s.entered||now-s.firstAt>75||lap-s.firstLap>=2)pitCallLatch.delete(carId);
-    }
-  }
-  function suppressRepeatedPitCall(m){
-    if(!isPitDirective(m)||m?.carId==null)return false;
-    const carId=Number(m.carId),c=R.cars?.[carId],now=raceTime(),lap=Number(c?.lap)||0,active=String(c?.pitState||'NONE')!=='NONE';
-    let s=pitCallLatch.get(carId);
-    if(s&&s.entered&&!active){pitCallLatch.delete(carId);s=null;}
-    if(s&&!s.entered&&(now-s.firstAt>75||lap-s.firstLap>=2)){pitCallLatch.delete(carId);s=null;}
-    if(!s){pitCallLatch.set(carId,{firstId:m.id,firstAt:now,lastAt:now,firstLap:lap,entered:active,lastActiveAt:active?now:null});return false;}
-    s.lastAt=now;if(active){s.entered=true;s.lastActiveAt=now;}metrics.suppressedPitCalls++;return true;
-  }
 
   function strategy(car,text){
     const t=text.toLowerCase();
@@ -229,16 +204,13 @@ export function createRadioVariety(R){
   }
 
   function update(){
-    const a=R.radio||[];cleanupPitCallLatches();
-    for(let i=0;i<a.length;i++){
-      const m=a[i];
-      if(!m?.id||seen.has(m.id))continue;
-      if(suppressRepeatedPitCall(m)){seen.add(m.id);a.splice(i,1);i--;continue;}
-      seen.add(m.id);metrics.processed++;const before=clean(m.text),r=rewrite(m);metrics.byCategory[r.category]=(metrics.byCategory[r.category]||0)+1;
+    const a=R.radio||[];
+    for(const m of a){
+      if(!m?.id||seen.has(m.id))continue;seen.add(m.id);metrics.processed++;const before=clean(m.text),r=rewrite(m);metrics.byCategory[r.category]=(metrics.byCategory[r.category]||0)+1;
       if(r.text&&r.text!==before){m.originalText=m.originalText||before;m.text=r.text;metrics.rewritten++;pushRecent(m,r.category,before);}
     }
     if(seen.size>500){const live=new Set(a.map(x=>x?.id).filter(Boolean));for(const id of seen)if(!live.has(id))seen.delete(id);}
   }
-  function diagnostics(){return{owner:'runtime-radio-variety-v2',metrics:{...metrics,byCategory:{...metrics.byCategory}},pitCallLatches:[...pitCallLatch].map(([carId,s])=>({carId,...s})),recent:[...recent]};}
+  function diagnostics(){return{owner:'runtime-radio-variety-v1',metrics:{...metrics,byCategory:{...metrics.byCategory}},recent:[...recent]};}
   return{update,diagnostics};
 }
