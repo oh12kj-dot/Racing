@@ -1,5 +1,5 @@
 import {test,expect} from '@playwright/test';
-import {VEHICLE_PERFORMANCE,performanceFor,resolveMulticlassPassPlan,trafficFollowPolicy} from '../../iphone-demo/runtime/vehicle-performance-spec.js';
+import {VEHICLE_PERFORMANCE,longitudinalPerformance,performanceFor,resolveMulticlassPassPlan,trafficFollowPolicy} from '../../iphone-demo/runtime/vehicle-performance-spec.js';
 
 test('vehicle class calibration keeps 2026 mass and hierarchy targets coherent',()=>{
   expect(VEHICLE_PERFORMANCE.formula.mass).toBe(768);
@@ -13,13 +13,23 @@ test('vehicle class calibration keeps 2026 mass and hierarchy targets coherent',
   expect(VEHICLE_PERFORMANCE.hyper.brake).toBeGreaterThan(VEHICLE_PERFORMANCE.gt.brake);
   expect(VEHICLE_PERFORMANCE.gt.brake).toBeGreaterThan(VEHICLE_PERFORMANCE.touring.brake);
   expect(VEHICLE_PERFORMANCE.supercar.top*3.6).toBeCloseTo(300,0);
+  expect(VEHICLE_PERFORMANCE.touring.top*3.6).toBeCloseTo(253,0);
 });
 
 test('all supported classes expose a complete performance envelope',()=>{
   for(const type of ['formula','hyper','lmh','proto','gt','supercar','touring']){
     const p=performanceFor(type);
     for(const key of ['top','accel','brake','tyre','wet','mass','paceIndex','lateralG','laneChangeG','aero','traction','tyreWear','fuelCapacity','fuelBurnPerMeter','wheelbase','steer','steerRate','draftGain','dirtyAirLoss'])expect(Number.isFinite(p[key]),`${type}.${key}`).toBeTruthy();
+    for(const band of ['accelBand','brakeBand'])for(const key of ['low','mid','high'])expect(Number.isFinite(p[band][key]),`${type}.${band}.${key}`).toBeTruthy();
   }
+});
+
+test('formula acceleration falls with speed while aero braking grows',()=>{
+  const low=longitudinalPerformance('formula',15),mid=longitudinalPerformance('formula',55),high=longitudinalPerformance('formula',90);
+  expect(low.accel).toBeGreaterThan(mid.accel);
+  expect(mid.accel).toBeGreaterThan(high.accel);
+  expect(high.brake).toBeGreaterThan(mid.brake);
+  expect(mid.brake).toBeGreaterThan(low.brake);
 });
 
 test('faster class arms a multiclass pass before collision braking traps it behind traffic',()=>{
