@@ -116,7 +116,7 @@ export function createRace(W,statusEl,settings={}){
     if(!Number.isFinite(Number(uf)))return Infinity;
     const s=((Number(c.s)||0)%total+total)%total,target=(((Number(uf)%1)+1)%1)*total;let d=target-s;if(d<0)d+=total;return d;
   }
-  function approachRequested(c){return !!c&&!c.retired&&(!!c._spectatorPitRequest||!!c._runtimePitPending||c.pitState==='ENTRY'||!!c._runtimePitApproachLaneActive);}
+  function approachRequested(c){return !!c&&!c.retired&&(!!c._spectatorPitRequest||!!c._runtimePitPending||c.pitState==='ENTRY');}
   function distanceToEntry(c){
     if(W.inPitWindow?.(c.s))return 0;
     const entry=Number(W.realisticPitLayout?.entryUF??W.pitEntryFraction);return markerDistance(c,entry);
