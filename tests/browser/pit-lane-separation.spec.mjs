@@ -9,6 +9,7 @@ async function boot(page){
   const state=await page.evaluate(()=>({ready:!!(window.__RACING_RACE__&&window.__RACING_WORLD__),status:document.querySelector('#status')?.textContent||'',error:document.querySelector('#error')?.textContent||''}));
   expect(state.status,state.error||'runtime boot status').not.toBe('ERROR');
   expect(state.ready,state.error||'runtime globals were not created').toBeTruthy();
+  await page.evaluate(()=>window.__RACING_RACE__?.update?.(.001));
 }
 
 test('pit intent stays on the circuit until the physical pit entry',async({page})=>{
