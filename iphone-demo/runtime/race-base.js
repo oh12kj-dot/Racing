@@ -54,7 +54,33 @@ export function createRace(W,statusEl,settings={}){
       const ds=Math.max(.5,look[i+1]-look[i]),next=allowed[i+1],k=Math.abs(lineCurv(mode,c.s+look[i])),brake=brakeCapacity(c,state,next,k),reachable=Math.sqrt(Math.max(0,next*next+2*brake*ds));allowed[i]=Math.min(cornerLimits[i],reachable,top);
     }
     let target=allowed[0];
-    const a=aheadOf(c);if(a?.car&&a.dist<120){const other=a.car,lat=Math.abs((other.lane||0)-(c.lane||0)),safeLat=(c.width+other.width)*.48+.35,overlap=lat<safeLat,plannedLat=Math.abs((Number.isFinite(Number(c.laneTarget))?Number(c.laneTarget):(c.lane||0))-(Number.isFinite(Number(other.laneTarget))?Number(other.laneTarget):(other.lane||0))),bodyGap=(c.length+other.length)*.5,passIntent=!!c.multiclassPassIntent&&(!Number.isFinite(Number(c.multiclassPassTargetId))||Number(c.multiclassPassTargetId)===Number(other.id)),follow=trafficFollowPolicy({followerType:c.type,leaderType:other.type,gapM:a.dist,speedMps:c.v||0,leaderSpeedMps:other.v||0,bodyGapM:bodyGap,currentLateralM:lat,plannedLateralM:plannedLat,safeLateralM:safeLat,passIntent});if(overlap&&follow.shouldCap)target=Math.min(target,follow.allowedSpeed);c.racingTrafficPolicy={leaderId:other.id,...follow};}
+    const a=aheadOf(c);
+    if(a?.car&&a.dist<120){
+      const other=a.car,carLane=Number(c.lane)||0,otherLane=Number(other.lane)||0,lat=Math.abs(otherLane-carLane),safeLat=((Number(c.width)||2)+(Number(other.width)||2))*.48+.35,bodyGap=((Number(c.length)||5)+(Number(other.length)||5))*.5,closing=Math.max(0,(Number(c.v)||0)-(Number(other.v)||0));
+      let plannedLane=Number.isFinite(Number(c.laneTarget))?Number(c.laneTarget):carLane,plannedLat=Math.abs(plannedLane-(Number.isFinite(Number(other.laneTarget))?Number(other.laneTarget):otherLane));
+      const multiclassPass=!!c.multiclassPassIntent&&(!Number.isFinite(Number(c.multiclassPassTargetId))||Number(c.multiclassPassTargetId)===Number(other.id)),normalAttack=c.battleState==='ATTACK'&&!multiclassPass&&R.flag==='GREEN'&&R.sessionPhase!=='FORMATION';
+      let normalPassEscape=false,passCorridorClear=false,attackLane=null,cornerLoad=1;
+      if(normalAttack&&a.dist>bodyGap+1.8&&a.dist<58){
+        const attackMode=otherLane>=carLane?'ATTACK_LEFT':'ATTACK_RIGHT';attackLane=lineValue(c,attackMode);cornerLoad=clamp(Math.abs(lineCurv(attackMode,(Number(c.s)||0)+42))*72,0,1);
+        const attackSep=Math.abs(attackLane-otherLane);passCorridorClear=attackSep>=safeLat*.92&&cornerLoad<.72;
+        if(passCorridorClear&&(closing>.25||a.dist<28||(Number(c.slipstream)||0)>.08)){
+          c.laneTarget=attackLane;plannedLane=attackLane;plannedLat=attackSep;
+          const lateralEstablished=lat>=safeLat*.55,approachRoom=a.dist>=bodyGap+5.0,usable=Math.max(.05,a.dist-bodyGap-1.5),ttc=closing>.15?usable/closing:99;
+          normalPassEscape=(lateralEstablished||approachRoom)&&ttc>.78;
+        }
+      }
+      const passIntent=multiclassPass||normalPassEscape;
+      let follow=trafficFollowPolicy({followerType:c.type,leaderType:other.type,gapM:a.dist,speedMps:c.v||0,leaderSpeedMps:other.v||0,bodyGapM:bodyGap,currentLateralM:lat,plannedLateralM:plannedLat,safeLateralM:safeLat,passIntent});
+      if(normalPassEscape&&!follow.passEscape){
+        // The shared follow policy intentionally uses class advantage for multiclass traffic.
+        // Normal same-class racing needs a different gate: once a real lateral corridor is
+        // committed, preserve closing speed unless the car is genuinely running out of room.
+        const lateralEstablished=lat>=safeLat*.55,safeDistance=bodyGap+(lateralEstablished?1.5:3.3)+(Number(c.v)||0)*(lateralEstablished?.045:.07),usable=Math.max(.05,a.dist-safeDistance),ttc=closing>.20?usable/closing:99,emergency=a.dist<bodyGap+2.1||(!lateralEstablished&&ttc<.72),margin=clamp((a.dist-safeDistance)/10,0,1);
+        follow={...follow,passEscape:true,sameClassPassEscape:true,safeDistance,ttc,ttcLimit:.78,nearBuffer:lateralEstablished?4:7,shouldCap:emergency,allowedSpeed:emergency?(Number(other.v)||0)+Math.max(.4,margin*2.2):(Number(other.v)||0)+7.5+margin*3.5};
+      }
+      const overlap=lat<safeLat;if(overlap&&follow.shouldCap)target=Math.min(target,follow.allowedSpeed);
+      c.racingTrafficPolicy={leaderId:other.id,gapM:a.dist,bodyGapM:bodyGap,currentLateralM:lat,plannedLateralM:plannedLat,safeLateralM:safeLat,closingMps:closing,normalAttack,normalPassEscape,passCorridorClear,attackLane,cornerLoad,...follow};
+    }else c.racingTrafficPolicy=null;
     if(c.damageState==='HEAVY'||(c.damage||0)>.68)target=Math.min(target,18);else if((c.damage||0)>.38)target=Math.min(target,32);
     const currentSpeed=Math.max(0,Number(c.v)||0),currentTyre=tyreEnvelopeAtSpeed(c.type,currentSpeed,{gripScale,aeroScale}),currentBrake=longitudinalPerformance(c.type,currentSpeed).brake*state.brakeCondition;
     c.racingLineDeviation=deviation;c.racingCornerPhysics={mu:currentTyre.mu,aeroLoadG:currentTyre.aeroLoadG,normalLoadRatio:currentTyre.normalLoadRatio,lateralAccel:currentTyre.lateralAccel,geometricCornerLimit:cornerLimits[0],plannedSpeed:target,gripScale,aeroScale};
@@ -68,7 +94,7 @@ export function createRace(W,statusEl,settings={}){
     const mode=st.line||chooseLine(c),x=speedEnvelope(c,mode);st.raw=x.target;
     if(!Number.isFinite(st.target)||Math.abs(st.target-before)>35)st.target=x.target;
     const tau=x.target<st.target?.14:.62,blend=1-Math.exp(-dt/tau);st.target+=(x.target-st.target)*blend;
-    const safetyCap=Number(c.predictiveSpeedCap),safetyActive=c.predictiveSpeedCap!=null&&Number.isFinite(safetyCap)&&safetyCap>=0;
+    const safetyCap=Number(c.predictiveSpeedCap),traffic=c.racingTrafficPolicy,regularPassOverride=!!traffic?.normalPassEscape&&!!traffic?.passCorridorClear&&!traffic?.shouldCap&&Number(traffic?.ttc??0)>.95&&(Number(traffic?.gapM)||0)>(Number(traffic?.bodyGapM)||5)+4.2,safetyActive=c.predictiveSpeedCap!=null&&Number.isFinite(safetyCap)&&safetyCap>=0&&!regularPassOverride;
     if(safetyActive){st.target=Math.min(st.target,safetyCap);st.raw=Math.min(st.raw,safetyCap);}
     const error=st.target-before;st.hold=Math.max(0,st.hold-dt);const wanted=error<-1.40?'BRAKE':error>1.80?'THROTTLE':'COAST';if(wanted!==st.mode&&(st.hold<=0||error<-4.8)){st.mode=wanted;st.hold=wanted==='COAST'?.16:.24;}
     const spec=performanceFor(c.type),k=Math.abs(lineCurv(mode,c.s)),latDemand=before*before*k,latUse=clamp(latDemand/Math.max(.1,x.gCap),0,.999),longAvail=Math.sqrt(Math.max(.001,1-latUse*latUse)),accelNominal=Math.max(2.5,c._v18BaseAccel||c.accel||longitudinalPerformance(c.type,before).accel||spec.accel)*(1+(c.energyMode==='PUSH'?.07:0)),accelBase=Math.min(accelNominal,x.gCap*longAvail),brakeAvail=Math.min(x.brakeBase,x.gCap*longAvail);
@@ -81,7 +107,7 @@ export function createRace(W,statusEl,settings={}){
     // deliberately overwritten here; explicit safety caps are applied by this same owner.
     c.v=Math.max(0,before+st.accel*dt);
     if(safetyActive&&c.v>safetyCap){const physicalSafetyLimit=Math.max(safetyCap,before-brakeAvail*dt);c.v=Math.min(c.v,physicalSafetyLimit);st.accel=(c.v-before)/Math.max(.001,dt);st.jerk=(st.accel-st.prevAccel)/Math.max(.001,dt);st.mode='BRAKE';}
-    c.racingSafetyCap=safetyActive?safetyCap:null;c.racingSpeedRaw=st.raw;c.racingSpeedTarget=st.target;c.racingLongAccel=st.accel;c.racingJerk=st.jerk;c.racingMode=st.mode;c.racingBrake=clamp(-st.accel/Math.max(.25,brakeAvail),0,1);c.racingThrottle=safetyActive?0:clamp(st.accel/Math.max(.25,accelBase),0,1);c.racingLatUse=latUse;if(c.racingBrake>.02)c.brakeVisual=Math.max(c.brakeVisual||0,c.racingBrake);
+    c.racingSafetyCap=safetyActive?safetyCap:null;c.racingPassSafetyOverride=regularPassOverride;c.racingSpeedRaw=st.raw;c.racingSpeedTarget=st.target;c.racingLongAccel=st.accel;c.racingJerk=st.jerk;c.racingMode=st.mode;c.racingBrake=clamp(-st.accel/Math.max(.25,brakeAvail),0,1);c.racingThrottle=safetyActive?0:clamp(st.accel/Math.max(.25,accelBase),0,1);c.racingLatUse=latUse;if(c.racingBrake>.02)c.brakeVisual=Math.max(c.brakeVisual||0,c.racingBrake);
   }
 
   function removePitStopEvent(carId,eventStart){if(!Array.isArray(R.events))return;for(let i=R.events.length-1;i>=eventStart;i--)if(R.events[i]?.carId===carId&&R.events[i]?.type==='PIT_STOP')R.events.splice(i,1);}
