@@ -10,7 +10,9 @@ async function boot(page){
     ready:!!(window.__RACING_RACE__&&window.__RACING_WORLD__&&window.__RACING_REGRESSION_MONITOR__),
     status:document.querySelector('#status')?.textContent||'',error:document.querySelector('#error')?.textContent||'',three:window.__RACING_THREE_SOURCE__||null
   }));
-  expect(state.status,state.error||'runtime boot status').not.toBe('ERROR');expect(state.ready,state.error||'runtime globals were not created').toBeTruthy();return state;
+  expect(state.status,state.error||'runtime boot status').not.toBe('ERROR');expect(state.ready,state.error||'runtime globals were not created').toBeTruthy();
+  await page.evaluate(()=>window.__RACING_RACE__?.update?.(.001));
+  return state;
 }
 
 test('boots independently of optional render assets, renders non-empty frame, and invariants stay clean',async({page})=>{
