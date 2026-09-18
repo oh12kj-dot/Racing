@@ -1,6 +1,7 @@
 import {test,expect} from '@playwright/test';
 
 async function boot(page){
+  await page.addInitScript(()=>localStorage.setItem('racing_v10_settings',JSON.stringify({circuit:'SUZUKA',weather:'SUNNY'})));
   await page.goto('/iphone-demo/index.html?runtimeTest=1',{waitUntil:'domcontentloaded'});
   await page.waitForFunction(()=>!!(window.__RACING_RACE__&&window.__RACING_WORLD__&&window.__RACING_TEST_TICK__)||document.querySelector('#status')?.textContent==='ERROR',null,{timeout:30000});
   const state=await page.evaluate(()=>({ready:!!(window.__RACING_RACE__&&window.__RACING_WORLD__),status:document.querySelector('#status')?.textContent||'',error:document.querySelector('#error')?.textContent||''}));
