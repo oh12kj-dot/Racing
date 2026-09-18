@@ -47,7 +47,7 @@ test('pit release safety uses time-to-collision for a fast car arriving from beh
 test('contact layers no longer erase physical contact outcomes after the fact',()=>{
   const contact=readFileSync(new URL('../../iphone-demo/runtime/race-contact-avoidance.js',import.meta.url),'utf8');
   const side=readFileSync(new URL('../../iphone-demo/runtime/race-side-by-side.js',import.meta.url),'utf8');
-  expect(contact).toContain("mode:'predictive-cap-multiclass-pass-aware-physical-obb-authoritative'");
+  expect(contact).toContain("mode:'projected-trajectory-parallel-pass-aware-physical-obb-authoritative'");
   expect(contact).not.toContain('suppressedFalseContacts');expect(contact).not.toContain('damage=b.damage');
   expect(side).toContain("contactPolicy:'physical-contact-authoritative'");
   expect(side).not.toContain('puncture=false');expect(side).not.toContain('events.push=function');
@@ -87,7 +87,7 @@ test('predictive collision braking requests a cap that the final longitudinal ow
   expect(base).toContain('const safetyCap=Number(c.predictiveSpeedCap)');
   expect(base).toContain('safetyActive=c.predictiveSpeedCap!=null&&Number.isFinite(safetyCap)');
   expect(base).toContain('if(safetyActive&&c.v>safetyCap)');
-  expect(base).toContain('physicalSafetyLimit=Math.max(safetyCap,before-brakeAvail*dt)');
+  expect(base).toContain('physicalSafetyLimit=Math.max(safetyCap,before-Math.max(.25,brakeAvail)*dt)');
   expect(base).toContain('safetyCap:c.racingSafetyCap??null');
 });
 
