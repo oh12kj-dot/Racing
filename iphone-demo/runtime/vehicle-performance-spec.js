@@ -79,7 +79,7 @@ export function tyreEnvelopeAtSpeed(type='gt',speedMps=0,{gripScale=1,aeroScale=
 }
 
 export function physicalCornerSpeedLimit(type='gt',curvature=0,{topSpeed=null,gripScale=1,aeroScale=1}={}){
-  const p=performanceFor(type),k=Math.abs(Number(curvature)||0),top=Math.max(1,Number.isFinite(Number(topSpeed))?Number(topSpeed):p.top);if(k<1e-5)return top;
+  const p=performanceFor(type),k=Math.abs(Number(curvature)||0),hasTop=topSpeed!=null&&topSpeed!==''&&Number.isFinite(Number(topSpeed)),top=Math.max(1,hasTop?Number(topSpeed):p.top);if(k<1e-5)return top;
   let v=Math.min(top,Math.sqrt(Math.max(1,(Number(p.tyreMu0)||1.3)*Math.max(.25,Number(gripScale)||1)*9.81/k)));
   for(let i=0;i<12;i++){
     const e=tyreEnvelopeAtSpeed(type,v,{gripScale,aeroScale}),next=Math.min(top,Math.sqrt(Math.max(1,e.lateralAccel/k)));if(Math.abs(next-v)<.015){v=next;break;}v=v*.42+next*.58;
