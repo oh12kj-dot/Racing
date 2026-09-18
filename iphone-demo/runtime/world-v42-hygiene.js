@@ -90,7 +90,7 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
     }
     return false;
   }
-  const protectedSurfaceName=/TRACK|ROAD|SURFACE|TERRAIN|ASPHALT|KERB|CURB|RACING_LINE|PIT_LANE|PIT_ASPHALT|PIT_APRON/i;
+  const protectedSurfaceName=/TRACK_SURFACE|ROAD_SURFACE|TERRAIN|ASPHALT|KERB|CURB|RACING_LINE|PIT_LANE|PIT_ASPHALT|PIT_APRON/i;
   const overheadName=/BRIDGE|OVERPASS/i;
   let removedMeshes=0,removedInstances=0;
 
