@@ -1,4 +1,6 @@
 import {test,expect} from '@playwright/test';
+import {readdir,readFile} from 'node:fs/promises';
+import path from 'node:path';
 
 async function boot(page){
   await page.goto('/iphone-demo/index.html?runtimeTest=1',{waitUntil:'domcontentloaded'});
@@ -10,6 +12,38 @@ async function boot(page){
   expect(state.status,state.error||'runtime boot status').not.toBe('ERROR');
   expect(state.ready,state.error||'runtime globals were not created').toBeTruthy();
 }
+
+async function walkFiles(dir){
+  const entries=await readdir(dir,{withFileTypes:true}),files=[];
+  for(const entry of entries){
+    const full=path.join(dir,entry.name);
+    if(entry.isDirectory())files.push(...await walkFiles(full));
+    else files.push(full);
+  }
+  return files;
+}
+
+test('retired runtime compatibility shims have no source imports',async()=>{
+  const root=process.cwd();
+  const retired=[['18','race'],['27','race'],['28','race'],['29','race'],['30','race'],['5','world']]
+    .map(([version,kind])=>path.resolve(root,'iphone-demo','runtime',`v${version}-${kind}.js`));
+  const retiredSet=new Set(retired),references=[];
+  const files=(await walkFiles(path.resolve(root,'iphone-demo'))).filter(file=>/\.js$/i.test(file));
+  const patterns=[/\bfrom\s*['"]([^'"]+)['"]/g,/\bimport\s*['"]([^'"]+)['"]/g,/\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g];
+  for(const file of files){
+    const source=await readFile(file,'utf8');
+    for(const pattern of patterns){
+      pattern.lastIndex=0;
+      for(let match;(match=pattern.exec(source));){
+        const spec=match[1];
+        if(!spec)continue;
+        const resolved=spec.startsWith('/iphone-demo/')?path.resolve(root,spec.slice(1)):spec.startsWith('.')?path.resolve(path.dirname(file),spec):null;
+        if(resolved&&retiredSet.has(resolved))references.push(`${path.relative(root,file)} -> ${spec}`);
+      }
+    }
+  }
+  expect(references,'retired runtime shim imports must be removed before deleting the shim files').toEqual([]);
+});
 
 test('race and world implementations stay owned by stable runtime modules',async({page})=>{
   await boot(page);
