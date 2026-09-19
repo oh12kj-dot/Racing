@@ -109,6 +109,11 @@ Current direct runtime paths include:
 - `race-finish-control.js -> race-vehicle-systems.js`
 - `race-pace-policy.js -> race-systems.js`
 - `race.js -> race-base.js`
+- `race-spin.js -> race-pit-strategy.js`
+- `race-pit-strategy.js -> race-side-by-side.js`
+- `race-side-by-side.js -> race-launch-safety.js`
+- `race-launch-safety.js -> race-contact-avoidance.js`
+- `race-class-performance.js -> race-driver-incident-calibration.js`
 
 Large or behaviour-critical modules are intentionally not rewritten merely to remove one import hop. This includes racing-line generation, vehicle/class performance, spin handling, launch safety, side-by-side control, collision avoidance, pit strategy, race control, session control and the large world/pit builders.
 
