@@ -87,6 +87,6 @@ test('wet racing line stays continuous instead of alternating across straights',
     return{supported:true,status,error,maxJump,maxStraightJump,largeStraightJumps,allowed:Number(d.wetContinuityDelta)||null,owner:d.owner||''};
   });
   expect(result.status,result.error||JSON.stringify(result)).not.toBe('ERROR');expect(result.supported).toBeTruthy();
-  expect(result.owner).toBe('runtime-multi-corner-line-v2');expect(result.largeStraightJumps,JSON.stringify(result)).toBe(0);
+  expect(result.owner).toBe('runtime-multi-corner-line-v3-curvature-continuity');expect(result.largeStraightJumps,JSON.stringify(result)).toBe(0);
   expect(result.maxStraightJump,JSON.stringify(result)).toBeLessThan(.31);expect(result.maxJump,JSON.stringify(result)).toBeLessThan(.31);
 });
