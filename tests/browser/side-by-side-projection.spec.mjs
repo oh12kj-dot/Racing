@@ -32,13 +32,20 @@ test('corner load increases the clearance required for a projected parallel pass
 });
 
 test('follow policy does not brake a physically clear parallel pass but still caps convergence',()=>{
-  const common={followerType:'formula',leaderType:'touring',gapM:8,speedMps:78,leaderSpeedMps:69,bodyGapM:5,currentLateralM:2.06,safeLateralM:2.27,passIntent:false};
+  const common={followerType:'formula',leaderType:'touring',gapM:8,speedMps:78,leaderSpeedMps:69,bodyGapM:5,currentLateralM:2.06,safeLateralM:2.27,physicalLateralM:2.0,passIntent:false};
   const parallel=trafficFollowPolicy({...common,plannedLateralM:2.16});
   const converging=trafficFollowPolicy({...common,plannedLateralM:1.88});
   expect(parallel.parallelEscape).toBeTruthy();
   expect(parallel.shouldCap).toBeFalsy();
   expect(converging.parallelEscape).toBeFalsy();
   expect(converging.shouldCap).toBeTruthy();
+});
+
+test('follow policy never treats overlapping body widths as a safe parallel escape',()=>{
+  const result=trafficFollowPolicy({followerType:'formula',leaderType:'touring',gapM:7,speedMps:35,leaderSpeedMps:32,bodyGapM:5,currentLateralM:1.90,plannedLateralM:2.15,safeLateralM:2.08,physicalLateralM:2.0,passIntent:false});
+  expect(result.physicalLateral).toBe(2.0);
+  expect(result.parallelEscape).toBeFalsy();
+  expect(result.shouldCap).toBeTruthy();
 });
 
 test('runtime adds no traffic speed cap when a faster car is already safely parallel',async({page})=>{
@@ -58,8 +65,8 @@ test('runtime adds no traffic speed cap when a faster car is already safely para
     reset(fast);reset(slow);fast.type='formula';slow.type='touring';
     fast.s=straight;slow.s=straight+1.0;fast.v=78;slow.v=69;fast.lane=-1.03;slow.lane=1.03;fast.laneTarget=-1.08;slow.laneTarget=1.08;fast.lateralVelocity=-.05;slow.lateralVelocity=.05;
     for(const c of[fast,slow]){const q=W.sample(c.s,c.lane);c.mesh.position.copy(q.p);c.mesh.position.y+=.12;c.mesh.rotation.y=Math.atan2(q.t.x,q.t.z);c.mesh.visible=true;}
-    const before=R.collisionAvoidance?.parallelPassFrames||0,speedBefore=fast.v;R.update(.016);
-    return{best,cap:fast.predictiveSpeedCap,safetyCap:fast.racingSafetyCap,frames:(R.collisionAvoidance?.parallelPassFrames||0)-before,risk:fast.projectedSideBySideRisk||null,speedBefore,speedAfter:fast.v,brake:fast.racingBrake||0,mode:fast.racingMode||'',target:fast.racingSpeedTarget??null,cornerTarget:fast.racingCornerTarget??null,traffic:fast.racingTrafficPolicy||null};
+    const before=R.collisionAvoidance?.parallelPassFrames||0;R.update(.016);
+    return{best,cap:fast.predictiveSpeedCap,safetyCap:fast.racingSafetyCap,frames:(R.collisionAvoidance?.parallelPassFrames||0)-before,risk:fast.projectedSideBySideRisk||null,brake:fast.racingBrake||0,mode:fast.racingMode||'',target:fast.racingSpeedTarget??null,cornerTarget:fast.racingCornerTarget??null,traffic:fast.racingTrafficPolicy||null};
   });
   expect(result.frames,JSON.stringify(result)).toBeGreaterThan(0);
   expect(result.risk?.parallelClear,JSON.stringify(result)).toBeTruthy();
