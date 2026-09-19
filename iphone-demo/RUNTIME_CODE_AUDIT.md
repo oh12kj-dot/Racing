@@ -10,6 +10,7 @@ The stable runtime layer owns new work:
 - `runtime/race.js` — pit merge hand-off and run-generation metadata
 - `runtime/audio.js` — engine/effects/radio mixer and per-utterance PTT state machine
 - `runtime/ui.js` — sound toggle and five-channel audio mixer settings
+- `runtime/ui-core.js` — authoritative v16-era spectator UI implementation used by compatibility entry points
 - `runtime/profiler.js` — current + previous diagnostic generations
 - `runtime/diagnostics-store.js` — bounded persistent diagnostic rotation
 - `runtime/config.js` — stable configuration exports and audio defaults
@@ -82,7 +83,7 @@ The repository still contains historical `vNN-*` modules because the mature simu
 
 Do not add a new `vNN-*` file for ordinary feature work. Modify the stable `runtime/` service instead.
 
-When a historical entry point must remain for compatibility, prefer a thin re-export to the authoritative stable module instead of copying the implementation. `v10-settings.js` and `v10-circuits.js` intentionally follow this pattern; defaults and circuit definitions must not be duplicated back into those files.
+When a historical entry point must remain for compatibility, prefer a thin re-export to the authoritative stable module instead of copying the implementation. `v10-settings.js`, `v10-circuits.js`, and `v16-ui.js` intentionally follow this pattern; defaults, circuit definitions, and the v16 UI implementation must not be duplicated back into those files.
 
 The active dependency boundary is now:
 
