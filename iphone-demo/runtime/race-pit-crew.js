@@ -1,4 +1,4 @@
-import {createRace as createV11Race} from './v11-race.js';
+import {createRace as createV11Race} from './race-pit-presentation.js';
 
 export function createRace(W,statusEl,settings={}){
   const base=createV11Race(W,statusEl,settings),originalUpdate=base.update;
