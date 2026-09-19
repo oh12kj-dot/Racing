@@ -72,6 +72,17 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
   W.racingCurvatureAt=s=>field(curvatureProfiles.OPTIMAL,s);
   W.racingLineFor=(s,mode='OPTIMAL')=>field(profiles[modeName(mode)],s);
   W.racingCurvatureFor=(s,mode='OPTIMAL')=>field(curvatureProfiles[modeName(mode)],s);
+  // The final trajectory layer replaces the racing-line curvature built by inner
+  // world layers. Rebuild the planning envelope here as well; otherwise the speed
+  // planner keeps a closure over the obsolete inner curvature and can miss narrow
+  // peaks on the line the car actually follows.
+  const demandRadius=Math.max(3.5,step*1.10),demandOffsets=[-demandRadius,-demandRadius*.5,0,demandRadius*.5,demandRadius];
+  W.racingCurvatureDemandFor=(s,mode='OPTIMAL')=>{
+    const profile=curvatureProfiles[modeName(mode)];let demand=0;
+    for(const d of demandOffsets)demand=Math.max(demand,Math.abs(field(profile,(Number(s)||0)+d)));
+    return demand;
+  };
+  W.racingCurvaturePlanningDiagnostics={owner:'runtime-final-line-curvature-demand-v2',gridStep:step,radius:demandRadius,samples:demandOffsets.length};
   W.multiCornerLineDiagnostics={owner:'runtime-multi-corner-line-v3-curvature-continuity',count,step,horizonMeters:125,passes:4,laneCurvatureLimit,laneSecondDelta,wetContinuityDelta:wetMaxDelta,modes:Object.keys(profiles)};
   return W;
 }
