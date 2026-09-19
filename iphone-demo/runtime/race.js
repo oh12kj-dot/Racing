@@ -1,4 +1,4 @@
-import {createRace as createLegacyRace} from '../v41-race.js';
+import {createRace as createLegacyRace} from './race-base.js';
 import {LOG_POLICY} from './config.js';
 import {createPitStateMachine} from './pit-state.js';
 import {createBarrierSafety} from './barrier-safety.js';
