@@ -11,8 +11,8 @@ export function createRace(W,statusEl,settings={}){
   function nearestAhead(c){let car=null,dist=Infinity;for(const o of R.cars){if(o===c||o.retired||o.pitState!=='NONE')continue;const d=gap(c,o);if(d>0&&d<dist){dist=d;car=o;}}return{car,dist};}
   function requestLaunchCap(c,cap){const x=Math.max(0,Number(cap)||0),old=c.launchSpeedCap;c.launchSpeedCap=old!=null&&Number.isFinite(Number(old))?Math.min(Number(old),x):x;}
   function launchParallelEscape(c,f,dist){
-    const currentLat=Math.abs((c.lane||0)-(f.lane||0)),plannedLat=Math.abs((Number.isFinite(Number(c.laneTarget))?Number(c.laneTarget):(c.lane||0))-(Number.isFinite(Number(f.laneTarget))?Number(f.laneTarget):(f.lane||0))),body=((c.length||5)+(f.length||5))*.5,safeLat=((c.width||2)+(f.width||2))*.5+.08;
-    const policy=trafficFollowPolicy({followerType:c.type,leaderType:f.type,gapM:dist,speedMps:c.v||0,leaderSpeedMps:f.v||0,bodyGapM:body,currentLateralM:currentLat,plannedLateralM:plannedLat,safeLateralM:safeLat,passIntent:false});
+    const currentLat=Math.abs((c.lane||0)-(f.lane||0)),plannedLat=Math.abs((Number.isFinite(Number(c.laneTarget))?Number(c.laneTarget):(c.lane||0))-(Number.isFinite(Number(f.laneTarget))?Number(f.laneTarget):(f.lane||0))),body=((c.length||5)+(f.length||5))*.5,physicalLat=((c.width||2)+(f.width||2))*.5,safeLat=physicalLat+.08;
+    const policy=trafficFollowPolicy({followerType:c.type,leaderType:f.type,gapM:dist,speedMps:c.v||0,leaderSpeedMps:f.v||0,bodyGapM:body,currentLateralM:currentLat,plannedLateralM:plannedLat,safeLateralM:safeLat,physicalLateralM:physicalLat,passIntent:false});
     c.launchTrafficPolicy={leaderId:f.id,...policy};return policy.parallelEscape===true;
   }
   function launchDiscipline(dt){
