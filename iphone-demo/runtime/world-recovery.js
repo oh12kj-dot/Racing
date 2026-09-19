@@ -1,4 +1,4 @@
-import {buildWorld as buildV23World} from './v23-world.js';
+import {buildWorld as buildV23World} from './world-pit-animation.js';
 
 export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
   const W=buildV23World(THREE,TRACK,settings,circuitName);
