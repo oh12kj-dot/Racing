@@ -23,8 +23,12 @@ function validExitCar(c){
 }
 
 export function pitExitStage(W,c){
+  const phase=String(c?._runtimePitPhase||''),pathComplete=!!c&&typeof W?.pitOffsetAtS==='function'&&typeof W?.inPitWindow==='function'&&!W.inPitWindow(c.s);
+  // Modern pit geometry already performs the complete 13.6 m -> 0 m merge before
+  // the exit-end marker. Do not start the legacy second lateral merge afterwards.
+  if(pathComplete&&(c.pitState==='EXIT'||(c.pitState==='NONE'&&phase==='MERGE')))return'PATH_RELEASE';
   if(!validExitCar(c))return'INACTIVE';
-  if(String(c._runtimePitPhase||'')==='MERGE'||finite(c._runtimePitMergeStartS))return'MERGE';
+  if(phase==='MERGE'||finite(c._runtimePitMergeStartS))return'MERGE';
   const inSpeed=typeof W?.inPitSpeedZone==='function'?!!W.inPitSpeedZone(c.s):null;
   const inWindow=typeof W?.inPitWindow==='function'?!!W.inPitWindow(c.s):null;
   if(inSpeed===true)return'LIMITED';
@@ -101,6 +105,10 @@ function advanceDrivenMerge(W,c,spec){
 export function advancePitExitAfterLimiter(W,c,dt=.016,beforeV=null,raceTime=0){
   const stage=pitExitStage(W,c);if(stage==='INACTIVE'||stage==='LIMITED')return stage;
   if(!c._runtimePitExitLimiterReleased){c._runtimePitExitLimiterReleased=true;c._runtimePitExitReleasedAt=Number(raceTime)||0;}
+  if(stage==='PATH_RELEASE'){
+    const offset=syncPitLogicalLane(W,c,'EXIT');c._runtimePitPathReleaseOffset=finite(offset)?Number(offset):null;
+    c.pitState='NONE';c.pitTimer=0;c._runtimePitPhase='MERGE';c.pitLaneStatus='MERGE';clearMergeState(c);return'PATH_RELEASE';
+  }
   if(stage==='ACCELERATE'){
     const step=clamp(Number(dt)||.016,.001,.05),start=finite(beforeV)?Number(beforeV):Math.max(0,Number(c.v)||0);
     const accelBase=Math.max(3.5,Number(c._v18BaseAccel)||Number(c.accel)||5.4),accel=clamp(accelBase*.72,3.5,6.5);
@@ -135,7 +143,7 @@ export function createRace(W,statusEl,settings={}){
   W.runtimeRacecraftAuthority='runtime-racecraft-v2';
   const R=createSpectatorRace(W,statusEl,settings),baseUpdate=R.update,beforeSpeed=new Float64Array(Math.max(1,R.cars?.length||20));
   const mobile=!!globalThis.matchMedia?.('(pointer:coarse)')?.matches,trajectory=createTrajectoryController(W,R,{mobile});
-  let limiterReleases=0,mergeReleases=0,updates=0,entrySurfaceFrames=0;
+  let limiterReleases=0,mergeReleases=0,pathReleases=0,updates=0,entrySurfaceFrames=0;
 
   function preparePitApproach(dt){
     const limit=Number(W.pitSpeedLimit)||22.22,step=clamp(Number(dt)||.016,.001,.05);
@@ -155,7 +163,7 @@ export function createRace(W,statusEl,settings={}){
     for(let i=0;i<cars.length;i++){
       const c=cars[i],wasReleased=!!c._runtimePitExitLimiterReleased,wasMerging=finite(c._runtimePitMergeStartS)||String(c._runtimePitPhase||'')==='MERGE',stage=advancePitExitAfterLimiter(W,c,dt,beforeSpeed[i],R.race?.t||0);
       if(!wasReleased&&c._runtimePitExitLimiterReleased)limiterReleases++;
-      if(stage==='MERGE'&&!wasMerging)mergeReleases++;
+      if(stage==='MERGE'&&!wasMerging)mergeReleases++;if(stage==='PATH_RELEASE')pathReleases++;
       if((stage==='LIMITED'||stage==='ACCELERATE')&&c.pitState==='EXIT'&&W.inPitWindow?.(c.s))syncPitLogicalLane(W,c,'EXIT');
       if(enforcePitEntrySurface(W,c))entrySurfaceFrames++;
       if(c.pitState!=='ENTRY'){c._runtimePitEntryLane=null;c._runtimePitEntryBlend=0;}
@@ -166,7 +174,7 @@ export function createRace(W,statusEl,settings={}){
   return new Proxy(R,{get(target,prop){
     if(prop==='update')return update;
     if(prop==='trajectoryDiagnostics')return trajectory.diagnostics();
-    if(prop==='pitExitLimiterDiagnostics')return{owner:'runtime-pit-exit-release-v6-logical-path',limiterReleases,mergeReleases,entrySurfaceFrames,updates,snapshotAllocations:1,cars:(R.cars||[]).filter(c=>c._runtimePitExitLimiterReleased).map(c=>({id:c.id,phase:c._runtimePitPhase,pitState:c.pitState,releasedAt:c._runtimePitExitReleasedAt,v:c.v,mergeDistance:c._runtimePitMergeDistance||0,logicalOffset:c._runtimePitLogicalOffset??null}))};
+    if(prop==='pitExitLimiterDiagnostics')return{owner:'runtime-pit-exit-release-v7-path-release',limiterReleases,mergeReleases,pathReleases,entrySurfaceFrames,updates,snapshotAllocations:1,cars:(R.cars||[]).filter(c=>c._runtimePitExitLimiterReleased).map(c=>({id:c.id,phase:c._runtimePitPhase,pitState:c.pitState,releasedAt:c._runtimePitExitReleasedAt,v:c.v,mergeDistance:c._runtimePitMergeDistance||0,logicalOffset:c._runtimePitLogicalOffset??null,pathReleaseOffset:c._runtimePitPathReleaseOffset??null}))};
     return Reflect.get(target,prop,target);
   }});
 }
