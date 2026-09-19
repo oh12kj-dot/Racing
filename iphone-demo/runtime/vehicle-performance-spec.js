@@ -107,19 +107,18 @@ export function resolveMulticlassPassPlan({followerType='gt',leaderType='gt',gap
   return{eligible,targetLane,paceDelta:adv.paceDelta,topDelta:adv.topDelta,rangeM:p.multiclassPassRangeM,minClosingMps:p.minPassClosingMps};
 }
 
-export function trafficFollowPolicy({followerType='gt',leaderType='gt',gapM=999,speedMps=0,leaderSpeedMps=0,bodyGapM=5,currentLateralM=0,plannedLateralM=0,safeLateralM=2.4,passIntent=false}={}){
-  const adv=performanceAdvantage(followerType,leaderType),gap=Math.max(0,Number(gapM)||0),speed=Math.max(0,Number(speedMps)||0),leader=Math.max(0,Number(leaderSpeedMps)||0),body=Math.max(.5,Number(bodyGapM)||5),closing=Math.max(0,speed-leader),safeLat=Math.max(.5,Number(safeLateralM)||2.4),planned=Math.abs(Number(plannedLateralM)||0),current=Math.abs(Number(currentLateralM)||0);
+export function trafficFollowPolicy({followerType='gt',leaderType='gt',gapM=999,speedMps=0,leaderSpeedMps=0,bodyGapM=5,currentLateralM=0,plannedLateralM=0,safeLateralM=2.4,physicalLateralM=0,passIntent=false}={}){
+  const adv=performanceAdvantage(followerType,leaderType),gap=Math.max(0,Number(gapM)||0),speed=Math.max(0,Number(speedMps)||0),leader=Math.max(0,Number(leaderSpeedMps)||0),body=Math.max(.5,Number(bodyGapM)||5),closing=Math.max(0,speed-leader),safeLat=Math.max(.5,Number(safeLateralM)||2.4),physicalLat=Math.max(.5,Number(physicalLateralM)||safeLat*.88),planned=Math.abs(Number(plannedLateralM)||0),current=Math.abs(Number(currentLateralM)||0);
   const passEscape=!!passIntent&&adv.faster&&planned>=safeLat*.88;
-  // Once two cars are physically side-by-side and their requested paths are
-  // separating rather than converging, longitudinal follow-braking is the wrong
-  // control action. Keep the physical/contact model authoritative and let both
-  // cars continue; projected convergence still falls through to the TTC guard.
-  const parallelEscape=current>=safeLat*.88&&planned>=Math.max(current-.03,safeLat*.92);
+  // Parallel running may relax longitudinal follow-braking only after the actual
+  // vehicle bodies are clear. Requested lane separation alone is not enough: at
+  // race starts it previously allowed overlapping body widths to count as safe.
+  const parallelEscape=current>=Math.max(physicalLat+.02,safeLat*.88)&&planned>=Math.max(current-.03,physicalLat+.02,safeLat*.92);
   const lateralEscape=passEscape||parallelEscape;
   const safeDistance=body+(lateralEscape?1.8:4.5)+speed*(lateralEscape?.065:.18);
   const usable=Math.max(.05,gap-safeDistance),ttc=closing>.3?usable/closing:99;
   const ttcLimit=lateralEscape?1.05:adv.faster?2.15:3.20,nearBuffer=lateralEscape?8:adv.faster?18:26;
   const shouldCap=!parallelEscape&&current<safeLat&&(gap<safeDistance+nearBuffer||ttc<ttcLimit);
   const margin=clamp((gap-safeDistance)/(lateralEscape?9:adv.faster?17:24),0,1),allowance=lateralEscape?11:adv.faster?7:5.5;
-  return{...adv,passEscape,parallelEscape,lateralEscape,safeDistance,ttc,ttcLimit,nearBuffer,shouldCap,allowedSpeed:leader+margin*allowance};
+  return{...adv,passEscape,parallelEscape,lateralEscape,physicalLateral:physicalLat,safeDistance,ttc,ttcLimit,nearBuffer,shouldCap,allowedSpeed:leader+margin*allowance};
 }
