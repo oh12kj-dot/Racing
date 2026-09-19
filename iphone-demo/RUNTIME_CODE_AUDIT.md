@@ -85,6 +85,8 @@ Do not add a new `vNN-*` file for ordinary feature work. Modify the stable `runt
 
 When a historical entry point must remain for compatibility, prefer a thin re-export to the authoritative stable module instead of copying the implementation. `v10-settings.js`, `v10-circuits.js`, and `v16-ui.js` intentionally follow this pattern; defaults, circuit definitions, and the v16 UI implementation must not be duplicated back into those files.
 
+Stable runtime modules should import their implementation providers directly instead of routing out through a historical compatibility entry point and back into `runtime/`. Compatibility shims remain available for legacy callers, but should not add an extra hop to the active runtime path.
+
 The active dependency boundary is now:
 
 `app.js -> runtime/* -> mature legacy providers`
