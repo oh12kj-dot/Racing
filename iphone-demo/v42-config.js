@@ -1,19 +1,4 @@
-export const LOG_POLICY=Object.freeze({
-  profilerSamples:90,
-  diagnosticSamples:60,
-  dynamicsSamples:600,
-  dynamicsPersistSamples:120,
-  events:180,
-  radio:60,
-  crashHistory:60,
-  audioTrace:120,
-  cameraCutSeconds:120,
-  cameraCutEntries:80,
-  persistedGenerations:3,
-  persistedDays:7,
-  persistIntervalSec:30,
-  maxStoredChars:900000
-});
+export {LOG_POLICY} from './runtime/config.js';
 
 export const SUZUKA_PIT=Object.freeze({
   entryUF:.942,
