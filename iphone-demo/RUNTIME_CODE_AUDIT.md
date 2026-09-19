@@ -87,6 +87,28 @@ When a historical entry point must remain for compatibility, prefer a thin re-ex
 
 Stable runtime modules should import their implementation providers directly instead of routing out through a historical compatibility entry point and back into `runtime/`. Compatibility shims remain available for legacy callers, but should not add an extra hop to the active runtime path.
 
+### Internal compatibility-hop cleanup
+
+The cleanup is deliberately conservative: compatibility files stay in place, while small runtime modules bypass a verified one-line re-export when the provider is known exactly. No formulas, thresholds, timing, update order, state transitions or random behaviour are changed by these redirects.
+
+Current direct runtime paths include:
+
+- `world-environment-core.js -> world-core.js`
+- `world-geometry-correction.js -> world-environment-core.js`
+- `world-clearance.js -> world-geometry-correction.js`
+- `world-depth.js -> world-effects.js`
+- `world-pit-animation.js -> world-depth.js`
+- `race-replay-policy.js -> race-core.js`
+- `race-progress.js -> race-championship-core.js`
+- `race-pit-presentation.js -> race-rules-thermal.js`
+- `race-pit-crew.js -> race-pit-presentation.js`
+- `race-pit-service.js -> race-pit-crew.js`
+- `race-finish-control.js -> race-vehicle-systems.js`
+- `race-pace-policy.js -> race-systems.js`
+- `race.js -> race-base.js`
+
+Large or behaviour-critical modules are intentionally not rewritten merely to remove one import hop. This includes racing-line generation, vehicle/class performance, spin handling, launch safety, side-by-side control, collision avoidance, pit strategy, race control, session control and the large world/pit builders.
+
 The active dependency boundary is now:
 
 `app.js -> runtime/* -> mature legacy providers`
