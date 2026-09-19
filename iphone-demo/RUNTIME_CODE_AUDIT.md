@@ -77,6 +77,8 @@ The dedicated pit lane still moves to the separated 21.5 m offset behind the pit
 
 `W.auditCircuit()` reports the pit-entry/pit-exit barrier clearance and `mainTrackEdgeOverlapAtMerge`, which is now defined as visible pit-surface overlap and should be zero.
 
+Pit service-time defaults are owned by `runtime/pit-config.js` as `DEFAULT_SERVICE_TIME`. Runtime pit presentation/crew code must consume that shared table rather than maintain a second copy of the same per-class values.
+
 ## Historical modules
 
 The repository still contains historical `vNN-*` modules because the mature simulation core uses selected versions as compatibility providers. They are no longer the application-facing organization model.
@@ -98,6 +100,7 @@ Current direct runtime paths include:
 - `world-clearance.js -> world-geometry-correction.js`
 - `world-depth.js -> world-effects.js`
 - `world-pit-animation.js -> world-depth.js`
+- `world-recovery.js -> world-pit-animation.js`
 - `race-replay-policy.js -> race-core.js`
 - `race-progress.js -> race-championship-core.js`
 - `race-pit-presentation.js -> race-rules-thermal.js`
