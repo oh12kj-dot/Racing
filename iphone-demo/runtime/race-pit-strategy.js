@@ -1,4 +1,4 @@
-import {createRace as createV29Race} from './v29-race.js';
+import {createRace as createV29Race} from './race-side-by-side.js';
 
 export function createRace(W,statusEl,settings={}){
   const R=createV29Race(W,statusEl,settings),baseUpdate=R.update,total=W.total;
