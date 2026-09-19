@@ -50,10 +50,28 @@ function clearMergeState(c){
   c._runtimePitMergeStartS=null;c._runtimePitMergeLastS=null;c._runtimePitMergeDistance=0;c._runtimePitMergeStartOffset=null;
 }
 
+function authoritativePitOffset(W,c,state='EXIT',pose=null){
+  const q=pose||W.pitPose?.(c.s,c.teamId,state);
+  if(finite(q?.offset))return Number(q.offset);
+  const path=Number(W.pitOffsetAtS?.(c.s));if(Number.isFinite(path))return path;
+  if(q?.p&&typeof W.sample==='function'){
+    const center=W.sample(c.s,0);if(center?.p&&center?.side){
+      const dx=q.p.x-center.p.x,dz=q.p.z-center.p.z;
+      return dx*center.side.x+dz*center.side.z;
+    }
+  }
+  return null;
+}
+
+function syncPitLogicalLane(W,c,state='EXIT',pose=null){
+  const offset=authoritativePitOffset(W,c,state,pose);if(!finite(offset))return null;
+  c.lane=Number(offset);c.laneTarget=Number(offset);c._runtimePitLogicalOffset=Number(offset);return Number(offset);
+}
+
 function poseDrivenMerge(W,c,spec,alpha,distance){
   const start=finite(c._runtimePitMergeStartOffset)?Number(c._runtimePitMergeStartOffset):Number(spec.mergeTrackOffset)||0,target=Number(spec.mergeLaneTarget)||0;
   const offset=start+(target-start)*smooth01(alpha),look=1.2,total=Math.max(1,Number(W.total)||1),nextAlpha=clamp((distance+look)/Math.max(1,Number(spec.mergeBlendMeters)||42),0,1),nextOffset=start+(target-start)*smooth01(nextAlpha);
-  c.lane=offset;c.laneTarget=target;
+  c.lane=offset;c.laneTarget=target;c._runtimePitLogicalOffset=offset;
   if(!c.mesh||typeof W.sample!=='function')return;
   const q=W.sample(c.s,offset),q2=W.sample(((Number(c.s)||0)+look)%total,nextOffset);if(!q?.p)return;
   c.mesh.position.copy(q.p);c.mesh.position.y+=.12;
@@ -64,7 +82,9 @@ function poseDrivenMerge(W,c,spec,alpha,distance){
 function advanceDrivenMerge(W,c,spec){
   const total=Math.max(1,Number(W.total)||1),blend=Math.max(8,Number(spec.mergeBlendMeters)||42);
   if(!finite(c._runtimePitMergeStartS)){
-    c._runtimePitMergeStartS=Number(c.s)||0;c._runtimePitMergeLastS=Number(c.s)||0;c._runtimePitMergeDistance=0;c._runtimePitMergeStartOffset=finite(spec.mergeTrackOffset)?Number(spec.mergeTrackOffset):(Number(c.lane)||0);
+    c._runtimePitMergeStartS=Number(c.s)||0;c._runtimePitMergeLastS=Number(c.s)||0;c._runtimePitMergeDistance=0;
+    const pathOffset=Number(W.pitOffsetAtS?.(c.s));
+    c._runtimePitMergeStartOffset=Number.isFinite(pathOffset)?pathOffset:(finite(c._runtimePitLogicalOffset)?Number(c._runtimePitLogicalOffset):(finite(c.lane)?Number(c.lane):(finite(spec.mergeTrackOffset)?Number(spec.mergeTrackOffset):0)));
   }else{
     const previous=finite(c._runtimePitMergeLastS)?Number(c._runtimePitMergeLastS):Number(c.s)||0,step=forwardDistance(total,previous,c.s);
     // Ignore impossible discontinuities from stale legacy state; normal frame travel
@@ -97,12 +117,17 @@ function enforcePitEntrySurface(W,c){
   if(!Number.isFinite(entryUF)||!Number.isFinite(uf))return false;
   const meters=(uf-entryUF)*total;if(!Number.isFinite(meters)||meters<0)return false;
   const pit=W.pitPose(c.s,c.teamId,'ENTRY');if(!pit?.p)return false;
-  if(meters>=PIT_ENTRY_CAPTURE_METERS){c.mesh.position.copy(pit.p);c.mesh.position.y+=.12;c.mesh.rotation.y=Number(pit.rotationY)||Math.atan2(pit.t?.x||0,pit.t?.z||1);c._runtimePitEntryBlend=1;return true;}
-  const lane=finite(c._runtimePitEntryLane)?Number(c._runtimePitEntryLane):(Number(c.lane)||0),alpha=smooth01(meters/PIT_ENTRY_CAPTURE_METERS),pitOffset=finite(pit.offset)?Number(pit.offset):Number(W.pitOffsetAtS?.(c.s));
+  if(!finite(c._runtimePitEntryLane))c._runtimePitEntryLane=Number(c.lane)||0;
+  const entryLane=Number(c._runtimePitEntryLane)||0;
+  if(meters>=PIT_ENTRY_CAPTURE_METERS){
+    c.mesh.position.copy(pit.p);c.mesh.position.y+=.12;c.mesh.rotation.y=Number(pit.rotationY)||Math.atan2(pit.t?.x||0,pit.t?.z||1);c._runtimePitEntryBlend=1;syncPitLogicalLane(W,c,'ENTRY',pit);return true;
+  }
+  const alpha=smooth01(meters/PIT_ENTRY_CAPTURE_METERS),pitOffset=authoritativePitOffset(W,c,'ENTRY',pit);
   if(!finite(pitOffset))return false;
-  const offset=lane+(pitOffset-lane)*alpha,q=W.sample(c.s,offset);if(!q?.p)return false;
+  const offset=entryLane+(Number(pitOffset)-entryLane)*alpha,q=W.sample(c.s,offset);if(!q?.p)return false;
+  c.lane=offset;c.laneTarget=offset;c._runtimePitLogicalOffset=offset;
   c.mesh.position.copy(q.p);c.mesh.position.y+=.12;
-  const track=W.sample(c.s,lane),trackYaw=track?.t?Math.atan2(track.t.x,track.t.z):Number(pit.rotationY)||0,pitYaw=Number(pit.rotationY)||trackYaw,tau=Math.PI*2,delta=((pitYaw-trackYaw+Math.PI)%tau+tau)%tau-Math.PI;c.mesh.rotation.y=trackYaw+delta*alpha;c._runtimePitEntryBlend=alpha;return true;
+  const track=W.sample(c.s,entryLane),trackYaw=track?.t?Math.atan2(track.t.x,track.t.z):Number(pit.rotationY)||0,pitYaw=Number(pit.rotationY)||trackYaw,tau=Math.PI*2,delta=((pitYaw-trackYaw+Math.PI)%tau+tau)%tau-Math.PI;c.mesh.rotation.y=trackYaw+delta*alpha;c._runtimePitEntryBlend=alpha;return true;
 }
 
 export function createRace(W,statusEl,settings={}){
@@ -131,7 +156,9 @@ export function createRace(W,statusEl,settings={}){
       const c=cars[i],wasReleased=!!c._runtimePitExitLimiterReleased,wasMerging=finite(c._runtimePitMergeStartS)||String(c._runtimePitPhase||'')==='MERGE',stage=advancePitExitAfterLimiter(W,c,dt,beforeSpeed[i],R.race?.t||0);
       if(!wasReleased&&c._runtimePitExitLimiterReleased)limiterReleases++;
       if(stage==='MERGE'&&!wasMerging)mergeReleases++;
+      if((stage==='LIMITED'||stage==='ACCELERATE')&&c.pitState==='EXIT'&&W.inPitWindow?.(c.s))syncPitLogicalLane(W,c,'EXIT');
       if(enforcePitEntrySurface(W,c))entrySurfaceFrames++;
+      if(c.pitState!=='ENTRY'){c._runtimePitEntryLane=null;c._runtimePitEntryBlend=0;}
     }
     trajectory.update(dt,trajectoryFrame);updates++;
   }
@@ -139,7 +166,7 @@ export function createRace(W,statusEl,settings={}){
   return new Proxy(R,{get(target,prop){
     if(prop==='update')return update;
     if(prop==='trajectoryDiagnostics')return trajectory.diagnostics();
-    if(prop==='pitExitLimiterDiagnostics')return{owner:'runtime-pit-exit-release-v5-physical-approach',limiterReleases,mergeReleases,entrySurfaceFrames,updates,snapshotAllocations:1,cars:(R.cars||[]).filter(c=>c._runtimePitExitLimiterReleased).map(c=>({id:c.id,phase:c._runtimePitPhase,pitState:c.pitState,releasedAt:c._runtimePitExitReleasedAt,v:c.v,mergeDistance:c._runtimePitMergeDistance||0}))};
+    if(prop==='pitExitLimiterDiagnostics')return{owner:'runtime-pit-exit-release-v6-logical-path',limiterReleases,mergeReleases,entrySurfaceFrames,updates,snapshotAllocations:1,cars:(R.cars||[]).filter(c=>c._runtimePitExitLimiterReleased).map(c=>({id:c.id,phase:c._runtimePitPhase,pitState:c.pitState,releasedAt:c._runtimePitExitReleasedAt,v:c.v,mergeDistance:c._runtimePitMergeDistance||0,logicalOffset:c._runtimePitLogicalOffset??null}))};
     return Reflect.get(target,prop,target);
   }});
 }
