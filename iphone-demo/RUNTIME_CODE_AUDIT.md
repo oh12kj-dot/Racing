@@ -13,6 +13,8 @@ The stable runtime layer owns new work:
 - `runtime/profiler.js` — current + previous diagnostic generations
 - `runtime/diagnostics-store.js` — bounded persistent diagnostic rotation
 - `runtime/config.js` — stable configuration exports and audio defaults
+- `runtime/settings.js` — authoritative application settings/defaults
+- `runtime/circuits.js` — authoritative circuit metadata and generated alternate layouts
 - `runtime/index.js` — the only application-facing runtime facade
 
 New feature work should update these stable files instead of adding another `vNN-*` application layer.
@@ -79,6 +81,8 @@ The dedicated pit lane still moves to the separated 21.5 m offset behind the pit
 The repository still contains historical `vNN-*` modules because the mature simulation core uses selected versions as compatibility providers. They are no longer the application-facing organization model.
 
 Do not add a new `vNN-*` file for ordinary feature work. Modify the stable `runtime/` service instead.
+
+When a historical entry point must remain for compatibility, prefer a thin re-export to the authoritative stable module instead of copying the implementation. `v10-settings.js` and `v10-circuits.js` intentionally follow this pattern; defaults and circuit definitions must not be duplicated back into those files.
 
 The active dependency boundary is now:
 
