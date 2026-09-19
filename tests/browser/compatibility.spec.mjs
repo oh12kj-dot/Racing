@@ -28,8 +28,9 @@ test('retired runtime compatibility shims have no source imports',async()=>{
   const retired=[['18','race'],['27','race'],['28','race'],['29','race'],['30','race'],['5','world']]
     .map(([version,kind])=>path.resolve(root,'iphone-demo','runtime',`v${version}-${kind}.js`));
   const retiredSet=new Set(retired),references=[];
-  const files=(await walkFiles(path.resolve(root,'iphone-demo'))).filter(file=>/\.js$/i.test(file));
-  const patterns=[/\bfrom\s*['"]([^'"]+)['"]/g,/\bimport\s*['"]([^'"]+)['"]/g,/\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g];
+  const sourceRoots=['iphone-demo','tests','view-engineering'].map(dir=>path.resolve(root,dir));
+  const files=(await Promise.all(sourceRoots.map(walkFiles))).flat().filter(file=>/\.(?:js|mjs|html)$/i.test(file));
+  const patterns=[/\bfrom\s*['"]([^'"]+)['"]/g,/\bimport\s*['"]([^'"]+)['"]/g,/\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g,/\bsrc\s*=\s*['"]([^'"]+)['"]/g];
   for(const file of files){
     const source=await readFile(file,'utf8');
     for(const pattern of patterns){
