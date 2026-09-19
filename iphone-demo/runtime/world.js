@@ -1,4 +1,4 @@
-import {buildWorld as buildAuditedWorld} from './world-v42-hygiene.js';
+import {buildWorld as buildAuditedWorld} from '../v42-world.js';
 import {SUZUKA_PIT,BUILDING_LAYOUT} from './config.js';
 
 export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
@@ -65,7 +65,7 @@ export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
     if(uf<=SUZUKA_PIT.entryUF)return merge;
     if(uf<SUZUKA_PIT.fullUF)return merge+(SUZUKA_PIT.laneOffset-merge)*smooth((uf-SUZUKA_PIT.entryUF)/(SUZUKA_PIT.fullUF-SUZUKA_PIT.entryUF));
     if(uf<=SUZUKA_PIT.exitBeginUF)return SUZUKA_PIT.laneOffset;
-    if(uf<SUZUKA_PIT.exitEndUF)return SUZUKA_PIT.laneOffset+(merge-SUZUKA_PIT.mergeTrackOffset)*0+merge+(SUZUKA_PIT.laneOffset-merge)*(1-smooth((uf-SUZUKA_PIT.exitBeginUF)/(SUZUKA_PIT.exitEndUF-SUZUKA_PIT.exitBeginUF)));
+    if(uf<SUZUKA_PIT.exitEndUF)return SUZUKA_PIT.laneOffset+(merge-SUZUKA_PIT.laneOffset)*smooth((uf-SUZUKA_PIT.exitBeginUF)/(SUZUKA_PIT.exitEndUF-SUZUKA_PIT.exitBeginUF));
     return merge;
   }
   function widthUF(uf){
