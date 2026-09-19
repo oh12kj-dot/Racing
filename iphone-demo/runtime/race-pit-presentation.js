@@ -1,4 +1,4 @@
-import {createRace as createV10Race} from './v10-race.js';
+import {createRace as createV10Race} from './race-rules-thermal.js';
 
 export function createRace(W,statusEl,settings={}){
   const base=createV10Race(W,statusEl,settings);

@@ -1,4 +1,4 @@
-import {createRace as createV6Race} from './v6-race.js';
+import {createRace as createV6Race} from './race-core.js';
 
 export function createRace(W,statusEl){
   const base=createV6Race(W,statusEl);

@@ -1,4 +1,4 @@
-import {createRace as createV27Race} from './v27-race.js';
+import {createRace as createV27Race} from './race-contact-avoidance.js';
 import {projectedSideBySideRisk} from './race-contact-avoidance.js';
 
 export function createRace(W,statusEl,settings={}){
