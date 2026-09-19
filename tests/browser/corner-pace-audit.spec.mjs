@@ -39,9 +39,11 @@ test('isolated Formula lap exposes realistic dry Suzuka pace telemetry',async({p
   expect(result.total,JSON.stringify(result)).toBeGreaterThan(5200);expect(result.total,JSON.stringify(result)).toBeLessThan(6400);
   expect(result.completedLaps,JSON.stringify(result)).toBeGreaterThanOrEqual(1);expect(result.lapTime,JSON.stringify(result)).toBeGreaterThan(60);expect(result.lapTime,JSON.stringify(result)).toBeLessThan(140);
   expect(result.wetness,JSON.stringify(result)).toBe(0);expect(result.lineMode,JSON.stringify(result)).not.toBe('WET');
-  expect(result.maxSpeed,JSON.stringify(result)).toBeGreaterThan(220);expect(result.maxSpeed,JSON.stringify(result)).toBeLessThan(345);
+  // FIA 2026 Japanese GP qualifying recorded 346.5 km/h at Intermediate 2.
+  // This is a track-wide maximum guard, not the separately located 308.7 km/h speed trap.
+  expect(result.maxSpeed,JSON.stringify(result)).toBeGreaterThan(220);expect(result.maxSpeed,JSON.stringify(result)).toBeLessThan(350);
   expect(result.tightMean,JSON.stringify(result)).toBeLessThan(result.straightMean);expect(result.curvyMean,JSON.stringify(result)).toBeLessThan(result.straightMean);
-  expect(result.maxLatUse,JSON.stringify(result)).toBeGreaterThan(.25);expect(result.maxLatUse,JSON.stringify(result)).toBeLessThan(1.08);
+  expect(result.maxLatUse,JSON.stringify(result)).toBeGreaterThan(.25);expect(result.maxLatUse,JSON.stringify(result)).toBeLessThan(1.03);
   expect(result.maxFrictionCircleUse,JSON.stringify(result)).toBeLessThanOrEqual(.986);
   expect(result.maxActualLatG,JSON.stringify(result)).toBeGreaterThan(1.5);expect(result.maxActualLatG,JSON.stringify(result)).toBeLessThan(5.5);
   expect(result.pitState,JSON.stringify(result)).toBe('NONE');expect(result.retired,JSON.stringify(result)).toBeFalsy();
