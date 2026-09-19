@@ -24,3 +24,26 @@ test('race and world implementations stay owned by stable runtime modules',async
   });
   expect(result.unexpected,`unexpected historical implementation resources: ${result.unexpected.join(', ')}`).toEqual([]);
 });
+
+test('compatibility entry points re-export canonical runtime symbols',async({page})=>{
+  await page.goto('/iphone-demo/index.html?runtimeTest=1',{waitUntil:'domcontentloaded'});
+  const same=await page.evaluate(async()=>{
+    const [legacySettings,settings,legacyCircuits,circuits,legacyUI,uiCore,legacyConfig,config]=await Promise.all([
+      import('/iphone-demo/v10-settings.js'),
+      import('/iphone-demo/runtime/settings.js'),
+      import('/iphone-demo/v10-circuits.js'),
+      import('/iphone-demo/runtime/circuits.js'),
+      import('/iphone-demo/v16-ui.js'),
+      import('/iphone-demo/runtime/ui-core.js'),
+      import('/iphone-demo/v42-config.js'),
+      import('/iphone-demo/runtime/config.js')
+    ]);
+    return{
+      settings:legacySettings.DEFAULT_SETTINGS===settings.DEFAULT_SETTINGS&&legacySettings.loadSettings===settings.loadSettings&&legacySettings.saveSettings===settings.saveSettings&&legacySettings.resolveCircuit===settings.resolveCircuit,
+      circuits:legacyCircuits.CIRCUITS===circuits.CIRCUITS&&legacyCircuits.getCircuitTrack===circuits.getCircuitTrack,
+      ui:legacyUI.createUI===uiCore.createUI,
+      logPolicy:legacyConfig.LOG_POLICY===config.LOG_POLICY
+    };
+  });
+  expect(same).toEqual({settings:true,circuits:true,ui:true,logPolicy:true});
+});
