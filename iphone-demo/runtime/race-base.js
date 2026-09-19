@@ -25,7 +25,7 @@ export function createRace(W,statusEl,settings={}){
   }
   function lineValue(c,mode,s=c.s){return clamp(W.racingLineFor?.(s,mode)??W.racingLineAt?.(s)??0,-3.25,3.25);}
   function lineCurv(mode,s){return W.racingCurvatureFor?.(s,mode)??W.racingCurvatureAt?.(s)??W.curvatureAt?.(s)??0;}
-  function planningCurv(mode,s){const demand=W.racingCurvatureDemandFor?.(s,mode);return demand==null?Math.abs(lineCurv(mode,s)):Math.abs(Number(demand)||0);}
+  function planningCurv(mode,s){const demand=W.racingCurvatureDemandFor?.(s,mode);return demand==null?Math.abs(lineCurv(mode,s)):Math.max(Math.abs(lineCurv(mode,s)),Math.abs(Number(demand)||0));}
   function applyLine(c,dt){
     if(!clearState(c)||R.flag!=='GREEN'||R.sessionPhase==='FORMATION')return;
     const st=controllers.get(c.id),mode=chooseLine(c),ideal=lineValue(c,mode),traffic=(c.avoid||0)>0||c.blueFlag||c.coolingMode;
@@ -40,14 +40,20 @@ export function createRace(W,statusEl,settings={}){
     const st=controllers.get(c.id),ideal=lineValue(c,st?.line||chooseLine(c)),deviation=Math.abs((c.lane||0)-ideal),off=clamp((deviation-1.20)/2.35,0,1),e=R.trackEvolution;
     c.trackEvolutionGrip=1+(e.dryLine||0)*.018*(1-off)-(e.marbles||0)*.055*off;c.racingLineDeviation=deviation;
   }
+  function frictionCircleLongitudinal(latRatio){const u=clamp(Number(latRatio)||0,0,.985);return Math.sqrt(Math.max(.03,1-u*u));}
   function speedEnvelope(c,mode){
-    const spec=performanceFor(c.type),damage=damagePerformanceFactors(c),baseTop=c._v18BaseMax||c.classPerformance?.top||c.baseMax||c.baseMaxNominal||c.max||spec.top,top=Math.max(24,baseTop)*(1+(c.slipstream||0)*spec.draftGain)*damage.top,wet=clamp(Number(W.env?.wetness)||0,0,1),wear=clamp(c.wear||0,0,1),tempGrip=clamp(c.tempGrip||1,.75,1.08),surface=clamp(c.surfaceGrip||1,.80,1.08),evolution=clamp(c.trackEvolutionGrip||1,.88,1.04),damageAero=clamp(Math.min(c.aeroFront??1,c.aeroRear??1),.45,1),aero=clamp(spec.aero*damageAero,.45,1),classGrip=clamp(c.classPerformance?.tyre??spec.tyre,.88,1.12),wetRetention=clamp(1-wet*(1-(c.classPerformance?.wet??spec.wet)),.68,1),tyreGrip=clamp(tempGrip*surface*evolution*classGrip*(1-wear*.13)*wetRetention,.50,1.12),ideal=lineValue(c,mode),deviation=Math.abs((c.lane||0)-ideal),cornerDemand=clamp(Math.abs(lineCurv(mode,c.s+28))*70,0,1),lineEfficiency=1-cornerDemand*clamp(deviation/3,0,1)*.10,dirtyAirScale=clamp(1-(c.dirtyAir||0)*spec.dirtyAirLoss,.78,1),gCap=spec.lateralG*9.81*tyreGrip*(.82+.18*aero)*lineEfficiency*dirtyAirScale*damage.lateral,brakeBase=Math.max(7,c._v18BaseBrake||c.brake||spec.brake)*clamp(.74+.26*tyreGrip,.62,1.04)*(1-wet*.20)*damage.brake,brakePlanUtil=.72,planBrake=brakeBase*brakePlanUtil;let target=top;
-    // The planning deceleration and the actual controller use the same brake
-    // utilisation. This starts braking earlier than a max-brake stopping-distance
-    // calculation and avoids asking a slowly-ramping controller to do the impossible.
-    // The local peak envelope is planning-only; live friction-circle demand below
-    // continues to use the exact path curvature at the car's current position.
-    for(const d of look){const k=planningCurv(mode,c.s+d);if(k<.00105)continue;const corner=Math.min(top,Math.sqrt(Math.max(1,gCap/k))),allowed=Math.sqrt(corner*corner+2*planBrake*d);if(allowed<target)target=allowed;}
+    const spec=performanceFor(c.type),damage=damagePerformanceFactors(c),baseTop=c._v18BaseMax||c.classPerformance?.top||c.baseMax||c.baseMaxNominal||c.max||spec.top,top=Math.max(24,baseTop)*(1+(c.slipstream||0)*spec.draftGain)*damage.top,wet=clamp(Number(W.env?.wetness)||0,0,1),wear=clamp(c.wear||0,0,1),tempGrip=clamp(c.tempGrip||1,.75,1.08),surface=clamp(c.surfaceGrip||1,.80,1.08),evolution=clamp(c.trackEvolutionGrip||1,.88,1.04),damageAero=clamp(Math.min(c.aeroFront??1,c.aeroRear??1),.45,1),aero=clamp(spec.aero*damageAero,.45,1),classGrip=clamp(c.classPerformance?.tyre??spec.tyre,.88,1.12),wetRetention=clamp(1-wet*(1-(c.classPerformance?.wet??spec.wet)),.68,1),tyreGrip=clamp(tempGrip*surface*evolution*classGrip*(1-wear*.13)*wetRetention,.50,1.12),ideal=lineValue(c,mode),deviation=Math.abs((c.lane||0)-ideal),cornerDemand=clamp(Math.abs(lineCurv(mode,c.s+28))*70,0,1),lineEfficiency=1-cornerDemand*clamp(deviation/3,0,1)*.10,dirtyAirScale=clamp(1-(c.dirtyAir||0)*spec.dirtyAirLoss,.78,1),gCap=spec.lateralG*9.81*tyreGrip*(.82+.18*aero)*lineEfficiency*dirtyAirScale*damage.lateral,brakeBase=Math.max(7,c._v18BaseBrake||c.brake||spec.brake)*clamp(.74+.26*tyreGrip,.62,1.04)*(1-wet*.20)*damage.brake,brakePlanUtil=.72;
+    // Build the corner-speed limit at every sample, then integrate backwards from
+    // the horizon. Each six-metre braking segment uses the same friction circle as
+    // the live controller, so planning never assumes full longitudinal braking while
+    // the tyre is already carrying substantial lateral load.
+    const curveLimit=new Array(look.length),curve=new Array(look.length);
+    for(let i=0;i<look.length;i++){const k=planningCurv(mode,c.s+look[i]);curve[i]=k;curveLimit[i]=k<.00105?top:Math.min(top,Math.sqrt(Math.max(1,gCap/k)));}
+    let target=curveLimit[curveLimit.length-1];
+    for(let i=curveLimit.length-2;i>=0;i--){
+      const nextK=curve[i+1],latRatio=target*target*nextK/Math.max(1,gCap),longAvail=frictionCircleLongitudinal(latRatio),segmentBrake=brakeBase*(.30+.70*longAvail)*brakePlanUtil,ds=Math.max(.1,look[i+1]-look[i]),reachable=Math.sqrt(Math.max(0,target*target+2*segmentBrake*ds));
+      target=Math.min(curveLimit[i],reachable);
+    }
     const cornerTarget=target,a=aheadOf(c);if(a?.car&&a.dist<120){const other=a.car,lat=Math.abs((other.lane||0)-(c.lane||0)),safeLat=(c.width+other.width)*.48+.35,overlap=lat<safeLat,plannedLat=Math.abs((Number.isFinite(Number(c.laneTarget))?Number(c.laneTarget):(c.lane||0))-(Number.isFinite(Number(other.laneTarget))?Number(other.laneTarget):(other.lane||0))),bodyGap=(c.length+other.length)*.5,passIntent=!!c.multiclassPassIntent&&(!Number.isFinite(Number(c.multiclassPassTargetId))||Number(c.multiclassPassTargetId)===Number(other.id)),follow=trafficFollowPolicy({followerType:c.type,leaderType:other.type,gapM:a.dist,speedMps:c.v||0,leaderSpeedMps:other.v||0,bodyGapM:bodyGap,currentLateralM:lat,plannedLateralM:plannedLat,safeLateralM:safeLat,passIntent});if(overlap&&follow.shouldCap)target=Math.min(target,follow.allowedSpeed);c.racingTrafficPolicy={leaderId:other.id,...follow};}
     c.racingDamagePerformance=damage;c.racingLineDeviation=deviation;return{target:Math.max(8,target),cornerTarget:Math.max(8,cornerTarget),brakeBase,gCap,accelScale:damage.accel,brakePlanUtil};
   }
@@ -65,7 +71,7 @@ export function createRace(W,statusEl,settings={}){
     const safetyCap=Number(c.predictiveSpeedCap),safetyActive=c.predictiveSpeedCap!=null&&Number.isFinite(safetyCap)&&safetyCap>=0;
     if(safetyActive){st.target=Math.min(st.target,safetyCap);st.raw=Math.min(st.raw,safetyCap);}
     const error=st.target-before;st.hold=Math.max(0,st.hold-dt);const wanted=error<-.35?'BRAKE':error>1.80?'THROTTLE':'COAST';if(wanted!==st.mode&&(wanted==='BRAKE'||st.hold<=0||error<-4.8)){st.mode=wanted;st.hold=wanted==='COAST'?.20:.30;}
-    const spec=performanceFor(c.type),k=Math.abs(lineCurv(mode,c.s)),latDemand=before*before*k,latUse=clamp(latDemand/Math.max(1,x.gCap),0,.985),longAvail=Math.sqrt(Math.max(.03,1-latUse*latUse)),accelBase=Math.max(2.5,c._v18BaseAccel||c.accel||spec.accel)*x.accelScale*(1+(c.energyMode==='PUSH'?.07:0))*(.45+.55*longAvail),brakeAvail=x.brakeBase*(.30+.70*longAvail),cornerBrakeActive=before>x.cornerTarget+.35;
+    const spec=performanceFor(c.type),k=Math.abs(lineCurv(mode,c.s)),latDemand=before*before*k,latRatio=latDemand/Math.max(1,x.gCap),latUse=clamp(latRatio,0,.985),longAvail=frictionCircleLongitudinal(latRatio),accelBase=Math.max(2.5,c._v18BaseAccel||c.accel||spec.accel)*x.accelScale*(1+(c.energyMode==='PUSH'?.07:0))*(.45+.55*longAvail),brakeAvail=x.brakeBase*(.30+.70*longAvail),cornerBrakeActive=before>x.cornerTarget+.35;
     let desiredA=0;if(st.mode==='BRAKE'){const tracking=clamp((-error-.10)/6,0,1),cornerFloor=cornerBrakeActive?x.brakePlanUtil:0,demand=clamp(Math.max(cornerFloor,tracking),.08,1);desiredA=-brakeAvail*demand;}else if(st.mode==='THROTTLE'){const demand=clamp((error-.50)/8.8,0,1);desiredA=accelBase*demand;}else desiredA=-clamp(.14+before*.0035,.14,.48);
     st.prevAccel=st.accel;const releasingBrake=st.mode!=='BRAKE'&&st.accel<-1&&desiredA>st.accel,applyingBrake=desiredA<st.accel&&st.mode==='BRAKE',jerkLimit=applyingBrake?Math.max(90,brakeAvail*7):releasingBrake?Math.max(70,brakeAvail*3):desiredA<st.accel?22:7.5,maxDelta=jerkLimit*dt;st.accel+=clamp(desiredA-st.accel,-maxDelta,maxDelta);st.jerk=(st.accel-st.prevAccel)/Math.max(.001,dt);
     // Hydraulic brake pressure can rise rapidly in a racing car, but velocity is
@@ -74,7 +80,7 @@ export function createRace(W,statusEl,settings={}){
     // deliberately overwritten here; explicit safety caps are applied by this same owner.
     c.v=Math.max(0,before+st.accel*dt);
     if(safetyActive&&c.v>safetyCap){const physicalSafetyLimit=Math.max(safetyCap,before-brakeAvail*dt);c.v=Math.min(c.v,physicalSafetyLimit);st.accel=(c.v-before)/Math.max(.001,dt);st.jerk=(st.accel-st.prevAccel)/Math.max(.001,dt);st.mode='BRAKE';}
-    c.racingSafetyCap=safetyActive?safetyCap:null;c.racingSpeedRaw=st.raw;c.racingSpeedTarget=st.target;c.racingCornerTarget=x.cornerTarget;c.racingLongAccel=st.accel;c.racingJerk=st.jerk;c.racingMode=st.mode;c.racingBrake=clamp(-st.accel/Math.max(1,brakeAvail),0,1);c.racingThrottle=safetyActive?0:clamp(st.accel/Math.max(1,accelBase),0,1);c.racingLatUse=latUse;if(c.racingBrake>.02)c.brakeVisual=Math.max(c.brakeVisual||0,c.racingBrake);
+    c.racingSafetyCap=safetyActive?safetyCap:null;c.racingSpeedRaw=st.raw;c.racingSpeedTarget=st.target;c.racingCornerTarget=x.cornerTarget;c.racingLongAccel=st.accel;c.racingJerk=st.jerk;c.racingMode=st.mode;c.racingBrake=clamp(-st.accel/Math.max(1,brakeAvail),0,1);c.racingThrottle=safetyActive?0:clamp(st.accel/Math.max(1,accelBase),0,1);c.racingLatUse=latRatio;c.racingFrictionCircleUse=latUse;if(c.racingBrake>.02)c.brakeVisual=Math.max(c.brakeVisual||0,c.racingBrake);
   }
 
   function removePitStopEvent(carId,eventStart){if(!Array.isArray(R.events))return;for(let i=R.events.length-1;i>=eventStart;i--)if(R.events[i]?.carId===carId&&R.events[i]?.type==='PIT_STOP')R.events.splice(i,1);}
