@@ -1,6 +1,31 @@
-// Racing runtime: stable entry point. Versioned legacy modules are hidden behind ./runtime/index.js.
+// Racing runtime: stable entry point. Runtime imports are explicit so the boot path is easy to trace.
 import {TRACK} from './track.js';
-import {loadSettings,saveSettings,resolveCircuit,CIRCUITS,getCircuitTrack,buildWorld,createRace,createDirector,createEnvironment,createCamera,createAudio,createUI,createSafetyCar,createBroadcast,createProfiler,createPerformanceManager,enhanceVisuals,enhanceSurfaceDetail,enhanceProceduralClassVisuals,createEnvironmentReflections,createSceneQualityController,createSelectiveGlow,createRenderAssetManager,cleanupLegacyWorld,attachRuntimeAudit,loadThree,createRuntimeRegression,createLifecycleController,createVehicleMotion} from './runtime/index.js';
+import {buildWorld} from './runtime/world-road-rebuild.js';
+import {createRace} from './runtime/race-performance.js';
+import {createAudio} from './runtime/audio-race-presence.js';
+import {createUI} from './runtime/ui-performance.js';
+import {createProfiler} from './runtime/profiler.js';
+import {enhanceVisuals} from './runtime/visuals-performance.js';
+import {enhanceSurfaceDetail} from './runtime/surface-detail.js';
+import {enhanceProceduralClassVisuals} from './runtime/procedural-class-visuals.js';
+import {createEnvironmentReflections} from './runtime/reflections.js';
+import {createSceneQualityController} from './runtime/quality-scene.js';
+import {createSelectiveGlow} from './runtime/glow.js';
+import {createRenderAssetManager} from './runtime/assets-shadow-policy.js';
+import {cleanupLegacyWorld} from './runtime/world-cleanup.js';
+import {attachRuntimeAudit} from './runtime/audit-meta.js';
+import {loadThree} from './runtime/three-loader.js';
+import {createCamera} from './runtime/camera-suzuka-tv.js';
+import {createRuntimeRegression} from './runtime/regression.js';
+import {createPerformanceManager} from './runtime/performance-hybrid-shadow.js';
+import {createLifecycleController} from './runtime/lifecycle.js';
+import {createVehicleMotion} from './runtime/vehicle-motion.js';
+import {loadSettings,saveSettings,resolveCircuit} from './runtime/settings.js';
+import {CIRCUITS,getCircuitTrack} from './runtime/circuits.js';
+import {createSafetyCar} from './runtime/safety-car.js';
+import {createBroadcast} from './runtime/broadcast.js';
+import {createDirector} from './runtime/director.js';
+import {createEnvironment} from './runtime/environment.js';
 const statusEl=document.getElementById('status'),speedEl=document.getElementById('speed'),camEl=document.getElementById('cam'),errorEl=document.getElementById('error'),runtimeTest=new URLSearchParams(location.search).has('runtimeTest');
 function fail(e){console.error(e);statusEl.textContent='ERROR';errorEl.style.display='block';errorEl.textContent='起動エラー: '+(e?.message||e)}
 window.addEventListener('error',e=>fail(e.error||e.message));window.addEventListener('unhandledrejection',e=>fail(e.reason));
