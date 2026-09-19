@@ -17,7 +17,9 @@ test('natural seeded race does not devolve into repeated car-to-car contact',asy
     const R=window.__RACING_RACE__,tick=window.__RACING_TEST_TICK__;
     if(!R||typeof tick!=='function')return{ready:false,status:document.querySelector('#status')?.textContent||'',error:document.querySelector('#error')?.textContent||''};
     const seen=new Set(),contacts=[],incidents=[];let greenSeconds=0,greenSamples=0,maxConcurrentBattle=0;
+    const carState=c=>c?{id:c.id,type:c.type,s:Number(c.s)||0,lane:Number(c.lane)||0,laneTarget:Number.isFinite(Number(c.laneTarget))?Number(c.laneTarget):null,v:Number(c.v)||0,predictiveSpeedCap:Number.isFinite(Number(c.predictiveSpeedCap))?Number(c.predictiveSpeedCap):null,racingTarget:Number.isFinite(Number(c.racingSpeedTarget))?Number(c.racingSpeedTarget):null,racingMode:c.racingMode||null,racecraftIntent:c.racecraftIntent||null,battleState:c.battleState||null,passTarget:Number.isFinite(Number(c.multiclassPassTargetId))?Number(c.multiclassPassTargetId):null,sideRisk:c.projectedSideBySideRisk?{parallelClear:!!c.projectedSideBySideRisk.parallelClear,projectedContact:!!c.projectedSideBySideRisk.projectedContact,currentSep:Number(c.projectedSideBySideRisk.currentSep)||0,minFutureSep:Number(c.projectedSideBySideRisk.minFutureSep)||0}:null}:null;
     for(let i=0;i<3600;i++){
+      const before=new Map((R.cars||[]).map(c=>[Number(c.id),carState(c)]));
       tick(.05,false);
       const greenRunning=R.flag==='GREEN'&&R.sessionPhase==='RACE'&&R.race.t>(R.race.green||0);
       if(greenRunning){greenSeconds+=.05;greenSamples++;}
@@ -27,7 +29,7 @@ test('natural seeded race does not devolve into repeated car-to-car contact',asy
       for(let j=start;j<events.length;j++){
         const e=events[j];if(!e?.id||seen.has(e.id))continue;seen.add(e.id);
         if(!greenRunning||Number(e.t)<=(R.race.green||0))continue;
-        if(e.type==='CONTACT')contacts.push({t:e.t,kmh:Number(e.data?.impactKmh)||0,severity:Number(e.data?.severity)||0,a:e.carId,b:e.data?.otherId,physical:!!e.data?.physical,trajectoryAudit:!!e.data?.trajectoryAudit,zoneA:e.data?.zoneA||null,zoneB:e.data?.zoneB||null});
+        if(e.type==='CONTACT')contacts.push({t:e.t,kmh:Number(e.data?.impactKmh)||0,severity:Number(e.data?.severity)||0,a:e.carId,b:e.data?.otherId,physical:!!e.data?.physical,trajectoryAudit:!!e.data?.trajectoryAudit,zoneA:e.data?.zoneA||null,zoneB:e.data?.zoneB||null,beforeA:before.get(Number(e.carId))||null,beforeB:before.get(Number(e.data?.otherId))||null});
         if(e.type==='INCIDENT'&&e.data?.kind==='CAR_CAR')incidents.push({t:e.t,kmh:Number(e.data?.impactKmh)||0,severity:Number(e.data?.severity)||0});
       }
     }
