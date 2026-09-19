@@ -1,4 +1,4 @@
-import {buildWorld as buildAuditedWorld} from '../v42-world.js';
+import {buildWorld as buildAuditedWorld} from './world-v42-hygiene.js';
 import {SUZUKA_PIT,BUILDING_LAYOUT} from './config.js';
 
 export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
