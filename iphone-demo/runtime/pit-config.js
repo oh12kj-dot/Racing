@@ -1,4 +1,4 @@
-const DEFAULT_SERVICE_TIME=Object.freeze({formula:2.6,proto:3.1,hyper:3.3,lmh:3.2,gt:4.1,supercar:4.3,touring:4.7});
+export const DEFAULT_SERVICE_TIME=Object.freeze({formula:2.6,proto:3.1,hyper:3.3,lmh:3.2,gt:4.1,supercar:4.3,touring:4.7});
 
 const finite=(...values)=>{
   for(const value of values){if(value==null||value==='')continue;const n=Number(value);if(Number.isFinite(n))return n;}
