@@ -15,8 +15,6 @@ async function boot(page){
   });
 }
 
-const mod1=x=>((x%1)+1)%1;
-
 test('pit entry visual pose and logical lane remain the same physical path',async({page})=>{
   await boot(page);
   const result=await page.evaluate(()=>{
@@ -45,7 +43,7 @@ test('pit entry visual pose and logical lane remain the same physical path',asyn
   expect(result.blend,JSON.stringify(result)).toBeLessThan(1);
 });
 
-test('pit exit merge starts from the physical pit path instead of a fixed lateral jump',async({page})=>{
+test('pit exit releases from the completed physical pit path without a second lateral merge',async({page})=>{
   await boot(page);
   const result=await page.evaluate(()=>{
     const W=window.__RACING_WORLD__,R=window.__RACING_RACE__,c=R.cars.find(x=>!x.retired);
@@ -55,15 +53,18 @@ test('pit exit merge starts from the physical pit path instead of a fixed latera
     if(!Number.isFinite(exitUF))return{supported:false};
     const justAfter=((((exitUF+.7/total)%1)+1)%1)*total;
     c.s=justAfter;c.v=22;c.pitState='EXIT';c.pitTimer=0;c.lane=.12;c.laneTarget=.12;
-    c._runtimePitPhase='FAST_LANE_EXIT';c._runtimePitArrival=1;c._runtimePitQueued=false;c._runtimeReleaseWait=false;c._runtimePitMergeStartS=null;c._runtimePitMergeLastS=null;c._runtimePitMergeDistance=0;c._runtimePitMergeStartOffset=null;c._runtimePitLogicalOffset=.12;
+    c._runtimePitPhase='FAST_LANE_EXIT';c._runtimePitArrival=1;c._runtimePitQueued=false;c._runtimeReleaseWait=false;c._runtimePitMergeStartS=null;c._runtimePitMergeLastS=null;c._runtimePitMergeDistance=0;c._runtimePitMergeStartOffset=null;c._runtimePitLogicalOffset=.12;c._runtimePitPathReleaseOffset=null;
     const expectedStart=Number(W.pitOffsetAtS(c.s));
     R.update(.05);
     const expected=W.sample(c.s,c.lane),dx=c.mesh.position.x-expected.p.x,dz=c.mesh.position.z-expected.p.z;
-    return{supported:true,expectedStart,lane:c.lane,laneTarget:c.laneTarget,mergeStart:c._runtimePitMergeStartOffset,mergeDistance:c._runtimePitMergeDistance||0,visualErrorXZ:Math.hypot(dx,dz),state:c.pitState,phase:c._runtimePitPhase};
+    return{supported:true,expectedStart,lane:c.lane,laneTarget:c.laneTarget,pathReleaseOffset:c._runtimePitPathReleaseOffset,mergeStart:c._runtimePitMergeStartOffset,mergeDistance:c._runtimePitMergeDistance||0,visualErrorXZ:Math.hypot(dx,dz),state:c.pitState,phase:c._runtimePitPhase};
   });
   expect(result.supported).toBeTruthy();
+  expect(result.state,JSON.stringify(result)).toBe('NONE');
   expect(result.phase,JSON.stringify(result)).toBe('MERGE');
-  expect(Math.abs(result.mergeStart-result.expectedStart),JSON.stringify(result)).toBeLessThan(.05);
+  expect(Math.abs(result.pathReleaseOffset-result.expectedStart),JSON.stringify(result)).toBeLessThan(.05);
+  expect(result.mergeStart,JSON.stringify(result)).toBeNull();
+  expect(result.mergeDistance,JSON.stringify(result)).toBe(0);
   expect(Math.abs(result.lane-result.expectedStart),JSON.stringify(result)).toBeLessThan(.25);
   expect(result.visualErrorXZ,JSON.stringify(result)).toBeLessThan(.03);
   expect(Math.abs(result.lane),JSON.stringify(result)).toBeLessThan(1);
