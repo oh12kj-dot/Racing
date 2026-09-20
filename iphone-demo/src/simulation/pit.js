@@ -97,7 +97,10 @@ export function planPit(car,cars,track,dt,emit){
     lane=t.workingLane;speed=0;
     if(car.v<.35)p.serviceTimer=Math.max(0,p.serviceTimer-dt);
     if(p.serviceTimer<=0){
-      if(!p.serviceApplied){serviceSystems(car);p.serviceApplied=true;}
+      if(!p.serviceApplied){
+        serviceSystems(car);p.serviceApplied=true;
+        p.lastServiceDamage=car.incident?.damage||0;
+      }
       p.phase=fastLaneBlocked(car,cars,track)?'RELEASE_WAIT':'WORKING_EXIT';
       emit?.('PIT_DONE',car,`${car.name} SERVICE COMPLETE`);
     }
