@@ -10,6 +10,7 @@ import {createRaceControl} from './race-control.js';
 import {computeTrafficAero} from './traffic-aero.js';
 import {evaluatePitStrategy} from './strategy.js';
 import {createEnvironment,stepEnvironment,environmentSnapshot} from './environment.js';
+import {contactManifold} from './contact.js';
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 
@@ -100,17 +101,14 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
       for(let j=i+1;j<cars.length;j++){
         const b=cars[j];
         if(b.retired||b.finished||b.pit.phase==='SERVICE')continue;
-        let d=b.s-a.s;
-        if(d>track.total*.5)d-=track.total;if(d<-track.total*.5)d+=track.total;
-        const long=Math.abs(d),lat=Math.abs(b.lane-a.lane);
-        const body=(a.length+b.length)*.48,width=(a.width+b.width)*.49;
-        if(long<body&&lat<width){
+        const contact=contactManifold(a,b,track);
+        if(contact.hit){
           const pair=`${a.id}:${b.id}`;activePairs.add(pair);
           if(!contactPairs.has(pair))totalContacts++;
           const dv=Math.abs(a.v-b.v),mean=(a.v+b.v)*.5;
           a.v=Math.max(0,mean+(a.v-mean)*.35);b.v=Math.max(0,mean+(b.v-mean)*.35);
           const dir=(a.lane-b.lane)||((a.id<b.id)?-1:1);
-          const impulse=(width-lat)*2.4;
+          const impulse=contact.lateralPenetration*2.4;
           a.laneV+=Math.sign(dir)*impulse;b.laneV-=Math.sign(dir)*impulse;
           if(dv>7){
             const victim=a.v>b.v?a:b;
