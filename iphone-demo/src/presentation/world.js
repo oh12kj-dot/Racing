@@ -50,20 +50,27 @@ function carMesh(car){
   return g;
 }
 export function createWorld(container,track,cars){
-  const scene=new THREE.Scene();scene.background=new THREE.Color(0x9db6c8);scene.fog=new THREE.FogExp2(0x9db6c8,.0014);
+  const drySky=new THREE.Color(0x9db6c8),wetSky=new THREE.Color(0x687784);
+  const dryRoad=new THREE.Color(0x25282c),wetRoad=new THREE.Color(0x15191d);
+  const dryPit=new THREE.Color(0x2c3035),wetPit=new THREE.Color(0x181c20);
+  const dryGrass=new THREE.Color(0x496b3f),wetGrass=new THREE.Color(0x354f35);
+  const scene=new THREE.Scene();scene.background=drySky.clone();scene.fog=new THREE.FogExp2(drySky.clone(),.0014);
   const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});
   renderer.setPixelRatio(Math.min(devicePixelRatio||1,2));renderer.setSize(container.clientWidth,container.clientHeight);
   renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.outputColorSpace=THREE.SRGBColorSpace;container.appendChild(renderer.domElement);
   scene.add(new THREE.HemisphereLight(0xddeeff,0x36523d,2.0));
   const sun=new THREE.DirectionalLight(0xffffff,2.6);sun.position.set(-80,160,50);sun.castShadow=true;
   sun.shadow.mapSize.set(1024,1024);sun.shadow.camera.left=-220;sun.shadow.camera.right=220;sun.shadow.camera.top=220;sun.shadow.camera.bottom=-220;scene.add(sun);
-  const grass=new THREE.Mesh(new THREE.PlaneGeometry(760,620),new THREE.MeshStandardMaterial({color:0x496b3f,roughness:1}));
+  const grassMat=new THREE.MeshStandardMaterial({color:dryGrass,roughness:1});
+  const grass=new THREE.Mesh(new THREE.PlaneGeometry(760,620),grassMat);
   grass.rotation.x=-Math.PI/2;grass.position.y=-.035;grass.receiveShadow=true;scene.add(grass);
   const mainRoadWidth=track.sample(0).halfWidth*2;
-  const road=new THREE.Mesh(roadGeometry(track,0,track.total,mainRoadWidth,900),new THREE.MeshStandardMaterial({color:0x25282c,roughness:.93,metalness:.02}));road.receiveShadow=true;scene.add(road);
+  const roadMat=new THREE.MeshStandardMaterial({color:dryRoad,roughness:.93,metalness:.02});
+  const road=new THREE.Mesh(roadGeometry(track,0,track.total,mainRoadWidth,900),roadMat);road.receiveShadow=true;scene.add(road);
   scene.add(lineGeometry(track,7.1,0xffffff,.75),lineGeometry(track,-7.1,0xffffff,.75),lineGeometry(track,0,0x202225,.25));
   const pit=track.pit,pitRoadWidth=7.2,pitRoadCenter=(pit.fastLane+pit.workingLane)*.5;
-  const pitRoad=new THREE.Mesh(roadGeometry(track,pit.entryStart,pit.mergeEnd,pitRoadWidth,260,pitRoadCenter),new THREE.MeshStandardMaterial({color:0x2c3035,roughness:.9}));pitRoad.receiveShadow=true;scene.add(pitRoad);
+  const pitRoadMat=new THREE.MeshStandardMaterial({color:dryPit,roughness:.9,metalness:.02});
+  const pitRoad=new THREE.Mesh(roadGeometry(track,pit.entryStart,pit.mergeEnd,pitRoadWidth,260,pitRoadCenter),pitRoadMat);pitRoad.receiveShadow=true;scene.add(pitRoad);
   const wallMat=new THREE.MeshStandardMaterial({color:0xd6d7d8,roughness:.65});
   const garages=new Map();
   const teamCount=cars.reduce((max,car)=>Math.max(max,Number.isFinite(car.teamId)?car.teamId:-1),-1)+1;
@@ -79,7 +86,17 @@ export function createWorld(container,track,cars){
   for(const car of cars){const m=carMesh(car);m.traverse(o=>{if(o.isMesh){o.castShadow=true;o.receiveShadow=true;}});carGroups.set(car.id,m);scene.add(m);}
   const startQ=track.sample(0,0),gantry=new THREE.Mesh(new THREE.BoxGeometry(18,.55,.45),new THREE.MeshStandardMaterial({color:0x181a1d}));
   gantry.position.set(startQ.x,6.5,startQ.z);gantry.rotation.y=startQ.heading;scene.add(gantry);
-  function update(snapshot){for(const car of snapshot.cars){const q=track.sample(car.s,car.lane),m=carGroups.get(car.id);if(!m)continue;m.position.set(q.x,CAR_BASE_Y,q.z);m.rotation.y=Number.isFinite(car.yaw)?car.yaw:q.heading;m.visible=!car.retired;}}
+  function update(snapshot){
+    const weather=snapshot.environment;
+    const wetness=Math.max(0,Math.min(1,weather?.wetness??0));
+    const visibility=Math.max(.35,Math.min(1,weather?.visibility??1));
+    roadMat.color.copy(dryRoad).lerp(wetRoad,wetness);roadMat.roughness=.93-.55*wetness;roadMat.metalness=.02+.16*wetness;
+    pitRoadMat.color.copy(dryPit).lerp(wetPit,wetness);pitRoadMat.roughness=.90-.50*wetness;pitRoadMat.metalness=.02+.14*wetness;
+    grassMat.color.copy(dryGrass).lerp(wetGrass,wetness);
+    scene.background.copy(drySky).lerp(wetSky,wetness);scene.fog.color.copy(scene.background);scene.fog.density=.0014+(1-visibility)*.0042;
+    sun.intensity=2.6-wetness*.9;
+    for(const car of snapshot.cars){const q=track.sample(car.s,car.lane),m=carGroups.get(car.id);if(!m)continue;m.position.set(q.x,CAR_BASE_Y,q.z);m.rotation.y=Number.isFinite(car.yaw)?car.yaw:q.heading;m.visible=!car.retired;}
+  }
   function resize(){renderer.setSize(container.clientWidth,container.clientHeight,false);renderer.setPixelRatio(Math.min(devicePixelRatio||1,2));}
-  return{scene,renderer,carGroups,garages,worldGeometry:{mainRoadWidth,pitRoadWidth,pitRoadCenter,garageLateral,roadY:ROAD_Y,carBaseY:CAR_BASE_Y,wheelRadius:WHEEL_RADIUS,wheelCenterY:WHEEL_CENTER_Y},update,resize};
+  return{scene,renderer,carGroups,garages,weatherMaterials:{road:roadMat,pitRoad:pitRoadMat,grass:grassMat},worldGeometry:{mainRoadWidth,pitRoadWidth,pitRoadCenter,garageLateral,roadY:ROAD_Y,carBaseY:CAR_BASE_Y,wheelRadius:WHEEL_RADIUS,wheelCenterY:WHEEL_CENTER_Y},update,resize};
 }
