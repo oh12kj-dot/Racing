@@ -20,7 +20,7 @@ function cautionFacts(time,cars){
   else if(hazards.length){desired='YELLOW';primary=hazards[0];}
   return{desired,primary,hazards,stopped};
 }
-function flagMessage(flag,hazard){
+function flagMessage(flag){
   if(flag==='YELLOW')return ['YELLOW',`YELLOW FLAG — INCIDENT ON TRACK`];
   if(flag==='VSC')return ['VSC',`VIRTUAL SAFETY CAR — SLOW DOWN`];
   if(flag==='SAFETY_CAR')return ['SAFETY_CAR',`SAFETY CAR — FORM THE QUEUE`];
@@ -45,7 +45,7 @@ export function createRaceControl(){
       this.incidentId=hazard?.id??null;
       if(flag==='GREEN')this.cautionUntil=0;
       else if(flag!=='CHEQUERED')this.cautionUntil=Math.max(this.cautionUntil,time+(MIN_DURATION[flag]||0));
-      const [type,text]=flagMessage(flag,hazard);
+      const [type,text]=flagMessage(flag);
       emit?.(type,hazard,text,`FLAG:${flag}:${hazard?.id??'race'}:${Math.floor(time)}`);
     },
     update(time,cars,track,emit){
@@ -80,11 +80,15 @@ export function createRaceControl(){
         if(threat){slow.blueFlag=true;slow.blueFlagFrom=threat.id;}
       }
     },
+    queueCars(cars){
+      return cars.filter(c=>!c.retired&&!c.finished&&c.id!==this.incidentId).sort((a,b)=>b.totalProgress-a.totalProgress);
+    },
     targetFor(car,cars,track){
-      if(this.flag==='VSC')return 28;
+      const incident=car.id===this.incidentId;
+      if(this.flag==='VSC')return incident?10:28;
       if(this.flag==='YELLOW'){
-        const live=cars.filter(c=>!c.retired&&!c.finished).sort((a,b)=>b.totalProgress-a.totalProgress);
-        const i=live.indexOf(car);
+        if(incident)return 12;
+        const live=this.queueCars(cars),i=live.indexOf(car);
         if(i<=0)return 30;
         const ahead=live[i-1];
         let gap=ahead.totalProgress-car.totalProgress;
@@ -95,8 +99,8 @@ export function createRaceControl(){
         return clamp(ahead.v+(gap-desired)*.10,12,30.5);
       }
       if(this.flag==='SAFETY_CAR'){
-        const live=cars.filter(c=>!c.retired&&!c.finished).sort((a,b)=>b.totalProgress-a.totalProgress);
-        const i=live.indexOf(car);
+        if(incident)return 8;
+        const live=this.queueCars(cars),i=live.indexOf(car);
         if(i<=0)return 24;
         const ahead=live[i-1];
         let gap=ahead.totalProgress-car.totalProgress;
