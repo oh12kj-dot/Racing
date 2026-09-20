@@ -1,4 +1,4 @@
-import {buildWorld as buildV6World} from './v6-world.js';
+import {buildWorld as buildV6World} from './world-environment-core.js';
 
 export function buildWorld(THREE,TRACK){
   const W=buildV6World(THREE,TRACK);

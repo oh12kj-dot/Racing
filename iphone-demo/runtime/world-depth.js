@@ -1,4 +1,4 @@
-import {buildWorld as buildV16World} from './v16-world.js';
+import {buildWorld as buildV16World} from './world-effects.js';
 
 export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
   const W=buildV16World(THREE,TRACK,settings,circuitName);
