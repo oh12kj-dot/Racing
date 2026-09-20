@@ -4,13 +4,14 @@ import {createWorld} from './src/presentation/world.js';
 import {createCameraDirector} from './src/presentation/camera.js';
 import {createUI} from './src/presentation/ui.js';
 import {createRaceAudio} from './src/presentation/audio.js';
+import {createPerformanceMonitor} from './src/presentation/performance.js';
 
 const viewport=document.querySelector('#viewport');
 const boot=document.querySelector('#boot');
 const watchButton=document.querySelector('#watchButton');
 const bootStatus=document.querySelector('#bootStatus');
 
-let sim,world,director,ui,audio;
+let sim,world,director,ui,audio,perf;
 let started=false,last=performance.now(),acc=0,raf=0,tickIndex=0;
 const lifecycle={
   paused:false,reason:null,resumeCount:0,contextLosses:0,contextRestores:0,
@@ -35,6 +36,7 @@ function init(){
   director=createCameraDirector(world,sim.track);
   world.camera=director.camera;
   audio=createRaceAudio();
+  perf=createPerformanceMonitor(world.renderer,{qualityTier:'FULL'});
   ui=createUI(document.querySelector('#ui'),{
     onCamera:m=>director.setMode(m),
     onPrev:()=>director.cycleTracked(-1,sim.cars),
@@ -53,31 +55,42 @@ function init(){
   world.renderer.domElement.addEventListener('webglcontextlost',e=>{e.preventDefault();lifecycle.contextLosses++;lifecycle.pause('webgl-context-lost');});
   world.renderer.domElement.addEventListener('webglcontextrestored',()=>{lifecycle.contextRestores++;lifecycle.resume();});
 
-  window.__RACING__={sim,world,director,lifecycle};
+  window.__RACING__={sim,world,director,lifecycle,performance:perf};
   window.__RACING_RACE__=sim;
   window.__RACING_WORLD__=world;
   window.__RACING_LIFECYCLE__=lifecycle;
+  window.__RACING_PERFORMANCE__=perf;
   window.__RACING_REGRESSION_MONITOR__={owner:'clean-rebuild-v1',diagnostics:()=>sim.snapshot().diagnostics};
   window.__RACING_THREE_SOURCE__={kind:'local-npm',version:'0.185.1'};
   window.__RACING_TEST_TICK__=(seconds=.05)=>{
-    const s=stepSimulation(seconds);
-    world.update(s);const c=director.update(s);ui.update(s,c);world.renderer.render(world.scene,director.camera);return s;
+    const workStart=performance.now(),idxBefore=tickIndex,simStart=performance.now();
+    const s=stepSimulation(seconds),simEnd=performance.now();
+    world.update(s);const c=director.update(s);ui.update(s,c);
+    const renderStart=performance.now();world.renderer.render(world.scene,director.camera);const end=performance.now();
+    perf.record({frameIntervalMs:0,mainThreadMs:end-workStart,simFrameMs:simEnd-simStart,renderFrameMs:end-renderStart,simSteps:tickIndex-idxBefore});
+    return s;
   };
 }
 function frame(now){
   raf=requestAnimationFrame(frame);
-  const elapsed=Math.min(.12,(now-last)/1000);last=now;
+  const workStart=performance.now(),frameIntervalMs=Math.max(0,now-last);
+  const elapsed=Math.min(.12,frameIntervalMs/1000);last=now;
+  let steps=0,simFrameMs=0;
   if(started&&!document.hidden&&!lifecycle.paused){
     acc=Math.min(.25,acc+elapsed);
-    let steps=0;
+    const simStart=performance.now();
     while(acc>=FIXED_DT&&steps<8){sim.update(FIXED_DT);tickIndex++;acc-=FIXED_DT;steps++;}
+    simFrameMs=performance.now()-simStart;
   }
   const snap=sim.snapshot();
   world.update(snap);
   const cam=director.update(snap);
   audio.update(cam?.tracked);
   ui.update(snap,cam);
+  const renderStart=performance.now();
   world.renderer.render(world.scene,director.camera);
+  const end=performance.now();
+  perf.record({frameIntervalMs,mainThreadMs:end-workStart,simFrameMs,renderFrameMs:end-renderStart,simSteps:steps});
 }
 function resize(){
   if(!world||!director)return;
