@@ -18,6 +18,7 @@ export function createTrack(){
     cumulative[i]=cumulative[i-1]+Math.hypot(b.x-a.x,b.z-a.z);
   }
   const total=cumulative[count];
+  const sectors=[total/3,total*2/3];
   const curv=new Float64Array(count);
   for(let i=0;i<count;i++){
     const p0=pts[(i-2+count)%count],p1=pts[i],p2=pts[(i+2)%count];
@@ -33,6 +34,7 @@ export function createTrack(){
     exitStart:total*.915,
     mergeStart:total*.94,
     mergeEnd:total*.985,
+    limiterEnd:total*.958,
     fastLane:-10.5,
     workingLane:-13.5,
     approachLane:-2.7,
@@ -54,7 +56,7 @@ export function createTrack(){
     const dx=b.x-a.x,dz=b.z-a.z,len=Math.hypot(dx,dz)||1;
     const tx=dx/len,tz=dz/len;
     const nx=-tz,nz=tx;
-    return{x:px+nx*lateral,z:pz+nz*lateral,tx,tz,nx,nz,heading:Math.atan2(tx,tz),curvature:curv[i],halfWidth:7.5};
+    return{x:px+nx*lateral,z:pz+nz*lateral,tx,tz,nx,nz,heading:Math.atan2(tx,tz),curvature:curv[i],halfWidth:7.5,s:x};
   }
   function curvature(s){return curv[indexForS(s)];}
   function idealLane(s){
@@ -62,5 +64,31 @@ export function createTrack(){
     return clamp((k0*150-ka*48-kb*30),-2.25,2.25);
   }
   function forwardDistance(a,b){return((wrapS(b)-wrapS(a))+total)%total;}
-  return{total,count,pit,wrapS,sample,curvature,idealLane,forwardDistance};
+  function signedDistance(a,b){
+    let d=wrapS(b)-wrapS(a);
+    if(d>total*.5)d-=total;if(d<-total*.5)d+=total;
+    return d;
+  }
+  function worldToTrack(x,z){
+    let bestI=0,bestD=Infinity;
+    for(let i=0;i<count;i+=4){
+      const p=pts[i],d=(x-p.x)**2+(z-p.z)**2;
+      if(d<bestD){bestD=d;bestI=i;}
+    }
+    let best={d:Infinity,s:0,lateral:0};
+    for(let di=-6;di<=6;di++){
+      const i=(bestI+di+count)%count,j=(i+1)%count;
+      const a=pts[i],b=pts[j],dx=b.x-a.x,dz=b.z-a.z,l2=dx*dx+dz*dz||1;
+      const u=clamp(((x-a.x)*dx+(z-a.z)*dz)/l2,0,1);
+      const px=a.x+dx*u,pz=a.z+dz*u;
+      const dd=(x-px)**2+(z-pz)**2;
+      if(dd<best.d){
+        const len=Math.sqrt(l2),nx=-dz/len,nz=dx/len;
+        const segStart=cumulative[i],segEnd=i===count-1?total:cumulative[i+1];
+        best={d:dd,s:wrapS(segStart+(segEnd-segStart)*u),lateral:(x-px)*nx+(z-pz)*nz};
+      }
+    }
+    return{s:best.s,lateral:best.lateral,error:Math.sqrt(best.d)};
+  }
+  return{total,count,pit,sectors,wrapS,sample,curvature,idealLane,forwardDistance,signedDistance,worldToTrack};
 }
