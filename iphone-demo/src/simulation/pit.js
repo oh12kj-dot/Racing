@@ -72,11 +72,15 @@ export function planPit(car,cars,track,dt,emit){
     const toBox=p.boxS-car.s;
     const u=clamp(1-toBox/105,0,1);
     lane=t.fastLane+(t.workingLane-t.fastLane)*u;
-    speed=Math.min(8.5,Math.sqrt(Math.max(0,2*Math.max(4,car.spec.brake*.58)*Math.max(0,toBox))));
+    speed=Math.min(p.missedCount?6.5:8.5,Math.sqrt(Math.max(0,2*Math.max(4,car.spec.brake*.58)*Math.max(0,toBox))));
     const occupied=sameTeamService(car,cars);
-    if(occupied&&toBox<10){
+    if(toBox<-2.8){
+      p.missedCount=(p.missedCount||0)+1;
+      p.phase='FAST_LANE_EXIT';p.queue=false;
+      emit?.('PIT_MISSED',car,`${car.name} MISSED THE BOX`);
+    }else if(occupied&&toBox<10){
       p.phase='QUEUE';p.queue=true;
-    }else if(toBox<1.5&&toBox>-2.8&&car.v<1.8){
+    }else if(toBox<1.5&&car.v<1.8){
       p.phase='SERVICE';p.serviceTimer=3.2+(car.id%4)*.35;p.queue=false;
       emit?.('PIT_SERVICE',car,`${car.name} IN THE BOX`);
     }
@@ -123,8 +127,13 @@ export function planPit(car,cars,track,dt,emit){
     lane=t.fastLane+(mergeLane-t.fastLane)*u;
     speed=u<.3?t.speedLimit:Infinity;
     if(car.s>=t.mergeEnd){
-      p.phase='TRACK';p.requested=false;p.served=true;
-      emit?.('PIT_EXIT',car,`${car.name} REJOINS`);
+      p.phase='TRACK';p.requested=false;
+      if(p.missedCount){
+        emit?.('PIT_RETRY',car,`${car.name} WILL TRY AGAIN NEXT LAP`);
+      }else{
+        p.served=true;
+        emit?.('PIT_EXIT',car,`${car.name} REJOINS`);
+      }
     }
   }
   return{targetLane:lane,targetSpeed:speed,reason};
