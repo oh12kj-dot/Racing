@@ -56,7 +56,7 @@ test('RC-06: lost inside overlap can request a physical switchback path without 
   const k=track.curvature(attacker.s+12),insideSign=k>=0?1:-1;
   attacker.v=45;leader.v=48;
   attacker.lane=insideSign*3.15;leader.lane=0;
-  leader.s=track.wrapS(attacker.s+8);
+  leader.s=track.wrapS(attacker.s+12);
   attacker.racecraft={state:'ALONGSIDE',targetId:leader.id,commitUntil:30,setupUntil:0,switchUntil:0,attackKind:'INSIDE',lane:attacker.lane,defenseUsed:false,alongsideAt:18};
 
   const progressBefore=[attacker.s,leader.s];
