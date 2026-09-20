@@ -25,6 +25,15 @@ function makeBlocked(cars){
   }
   return cars.slice(0,3);
 }
+function emptiestAnchor(sim,excluded){
+  const others=sim.cars.filter(c=>!excluded.includes(c)&&!c.retired&&!c.finished);
+  let best=0,bestClearance=-1;
+  for(let s=0;s<sim.track.total;s+=20){
+    const clearance=others.reduce((min,car)=>Math.min(min,Math.abs(sim.track.signedDistance(s,car.s))),Infinity);
+    if(clearance>bestClearance){bestClearance=clearance;best=s;}
+  }
+  return best;
+}
 
 test('RED-01: race control owns RED without writing vehicle pose, lane or velocity',()=>{
   const src=fs.readFileSync(path.join(root,'src/simulation/race-control.js'),'utf8');
@@ -100,19 +109,37 @@ test('RED-06: full simulation slows physically under RED and does not teleport t
   expect(sim.cars.filter(c=>!c.retired&&!c.finished).every(c=>c.v<2.2)).toBeTruthy();
 });
 
-test('RED-07: red-flag incident recovery is explicit, counted and does not advance the removed cars',()=>{
+test('RED-07: red-flag recovery starts only after the field is controlled and does not advance removed cars',()=>{
   const sim=createRaceSimulation(0x7edc0de,{raceLaps:40});
   for(let i=0;i<Math.round(14/FIXED_DT);i++)sim.update(FIXED_DT);
   const incidents=sim.cars.filter(c=>!c.retired&&!c.finished&&c.pit.phase==='TRACK').slice(0,3);
-  for(const car of incidents){car.v=0;car.incident.damage=.22;}
+  expect(incidents).toHaveLength(3);
+  const anchor=emptiestAnchor(sim,incidents),lap=Math.max(0,incidents[0].lap);
+  for(let i=0;i<incidents.length;i++){
+    const car=incidents[i];
+    car.s=sim.track.wrapS(anchor+(i-1)*10);
+    car.lap=lap;car.totalProgress=lap*sim.track.total+car.s;
+    car.lane=-3+i*3;car.laneV=0;car.laneA=0;car.v=0;
+    car.incident.damage=.22;car.incident.spinTimer=0;car.incident.redRecoveryTimer=0;
+  }
+  sim.update(FIXED_DT);
+  expect(sim.snapshot().flag).toBe('RED');
+  expect(new Set(sim.raceControl.incidentIds)).toEqual(new Set(incidents.map(c=>c.id)));
+  expect(sim.raceControl.fieldControlled(sim.cars)).toBeFalsy();
+  expect(incidents.every(c=>c.incident.redRecoveryTimer===0)).toBeTruthy();
+
+  let controlled=false;
+  for(let i=0;i<Math.round(12/FIXED_DT);i++){
+    sim.update(FIXED_DT);
+    if(sim.raceControl.fieldControlled(sim.cars)){controlled=true;break;}
+  }
+  expect(controlled).toBeTruthy();
   const progress=incidents.map(c=>c.totalProgress);
-  sim.raceControl.transition('RED',sim.snapshot().time,incidents[0],undefined,incidents.map(c=>c.id));
-  sim.raceControl.restartPhase='RED_STOP';
-  for(let i=0;i<Math.round(6.5/FIXED_DT);i++)sim.update(FIXED_DT);
+  for(let i=0;i<Math.round(6.2/FIXED_DT);i++)sim.update(FIXED_DT);
   for(let i=0;i<incidents.length;i++){
     expect(incidents[i].retired).toBeTruthy();
     expect(incidents[i].diagnostics.recoveries).toBeGreaterThanOrEqual(1);
-    expect(incidents[i].totalProgress-progress[i]).toBeLessThan(1);
+    expect(Math.abs(incidents[i].totalProgress-progress[i])).toBeLessThan(1);
   }
   expect(sim.events.filter(e=>e.type==='RECOVERY_RETIRE').length).toBeGreaterThanOrEqual(3);
 });
