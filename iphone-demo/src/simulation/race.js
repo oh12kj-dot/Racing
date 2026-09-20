@@ -55,7 +55,10 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
     const s=track.wrapS(-i*8.2);
     const c=createVehicleState(e,s,-1);
     c.lane=(i%2?1:-1)*(1.25+(Math.floor(i/2)%2)*.55);
-    c.targetLane=c.lane;c.reaction=.12+rng.range(0,.28);return c;
+    c.targetLane=c.lane;
+    c.reaction=.12+rng.range(0,.28);
+    c.driver={mistakeTimer:0,mistakeDuration:0,steerBias:0,lift:0};
+    return c;
   });
   const events=[],eventKeys=new Map();
   let time=0,greenAt=3.0,running=true,finished=false,winnerId=null,sequence=0,totalContacts=0,contactPairs=new Set();
@@ -100,13 +103,21 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
     contactPairs=activePairs;
   }
 
-  function maybeDriverIncident(car,dt){
+  function maybeDriverMistake(car,dt){
+    const d=car.driver;
+    if(d.mistakeTimer>0){d.mistakeTimer=Math.max(0,d.mistakeTimer-dt);return;}
     if(raceControl.flag!=='GREEN'||car.pit.phase!=='TRACK'||car.incident.spinTimer>0||car.lap<0)return;
     const k=Math.abs(track.curvature(car.s));
     if(k<.007||car.v<24)return;
     const wear=car.systems.tyreWear;
     const risk=(.0000006+Math.max(0,wear-.25)*.000004+(1-car.consistency)*.000003)*(dt/FIXED_DT);
-    if(rng.next()<risk){car.incident.spinTimer=1.5+rng.range(0,.9);emit('SPIN',car,`${car.name} HAS A MOMENT`,`SPIN:${car.id}:${car.lap}`);}
+    if(rng.next()<risk){
+      d.mistakeDuration=.55+rng.range(0,.85);
+      d.mistakeTimer=d.mistakeDuration;
+      d.steerBias=rng.signed()*(.45+rng.range(0,.9));
+      d.lift=.12+rng.range(0,.30);
+      emit('DRIVER_ERROR',car,`${car.name} RUNS WIDE`,`DRIVER_ERROR:${car.id}:${car.lap}`);
+    }
   }
 
   function update(dt=FIXED_DT){
@@ -129,7 +140,12 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
       if(pitPlan){targetSpeed=Math.min(targetSpeed,pitPlan.targetSpeed);targetLane=pitPlan.targetLane;source='PIT:'+car.pit.phase;}
       else{const rc=planRacecraft(car,cars,track,time);targetSpeed=Math.min(targetSpeed,rc.targetSpeed);targetLane=rc.targetLane;source=rc.reason;}
 
-      maybeDriverIncident(car,dt);
+      maybeDriverMistake(car,dt);
+      if(car.driver.mistakeTimer>0&&car.pit.phase==='TRACK'){
+        const phase=car.driver.mistakeTimer/Math.max(.01,car.driver.mistakeDuration);
+        targetLane=clamp(targetLane+car.driver.steerBias*Math.sin(Math.PI*(1-phase)),-6.2,6.2);
+        source='DRIVER_ERROR_INPUT';
+      }
       if(car.incident.spinTimer>0){
         car.incident.spinTimer=Math.max(0,car.incident.spinTimer-dt);
         targetSpeed=Math.min(targetSpeed,Math.max(5,car.v*.70));
@@ -143,6 +159,7 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
 
       car.targetSpeed=Number.isFinite(targetSpeed)?targetSpeed:car.spec.top;car.targetLane=targetLane;car.controlSource=source;
       const control=controlFor(car,car.targetSpeed,car.targetLane);
+      if(car.driver.mistakeTimer>0&&car.pit.phase==='TRACK')control.throttle*=1-car.driver.lift;
       stepVehicle(car,track,control,dt);stepSystems(car,dt);updateTiming(car,track,time);
 
       if(car.incident.damage>.93&&car.v<2){car.retired=true;emit('RETIRE',car,`${car.name} RETIRES`,`RETIRE:${car.id}`);}
