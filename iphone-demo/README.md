@@ -17,14 +17,14 @@ Simulation and presentation are intentionally separated so the renderer/UI canno
 - `src/simulation/strategy.js` — reason-coded pit/service decisions including weather tyre intent; it does not own tactical lane choice
 - `src/simulation/pit.js` — physical pit approach, limiter, fast lane, working lane, queue, service, tyre-change application, release and merge
 - `src/simulation/timing.js` — lap and sector timing
-- `src/simulation/race-control.js` — GREEN/YELLOW/VSC/SAFETY_CAR/CHEQUERED authority and blue-flag context
+- `src/simulation/race-control.js` — GREEN/YELLOW/VSC/SAFETY_CAR/RED/CHEQUERED authority, controlled RED recovery/restart procedure and blue-flag context
 - `src/simulation/race.js` — deterministic fixed-step orchestration, environment stepping, classification, contacts, radio events and authoritative state hash
 
 ### Presentation/platform
 
 - `src/presentation/world.js` — Three.js world and vehicle rendering; wet-road/sky/fog presentation reads authoritative environment state only
 - `src/presentation/camera.js` — AUTO/TV/FOLLOW/ONBOARD/PIT/HELI spectator cameras
-- `src/presentation/ui.js` — touch UI, authoritative classification, tyre/weather/reliability telemetry and radio
+- `src/presentation/ui.js` — touch UI, authoritative classification, tyre/weather/reliability telemetry, RED/restart procedure display and radio
 - `src/presentation/audio.js` — optional tracked-car engine tone
 - `src/presentation/performance.js` — frame/simulation/render and renderer-load diagnostics
 - `app.js` — application shell, fixed-step accumulator, lifecycle/WebGL recovery, deterministic weather launch profiles and test hooks
@@ -100,6 +100,10 @@ The current clean build includes:
 - authoritative classification with overall/class position, status, completed/current lap, gap/interval, pit-stop count and timing data
 - physical YELLOW, VSC and SAFETY_CAR speed/spacing control without teleporting or resetting the field
 - VSC pace control that does not artificially bunch the pack and safety-car catch-up that excludes the incident car from queue formation
+- RED escalation for physically blocked track or extreme visibility, with no direct pose/velocity rewrite
+- RED cars decelerating through the normal vehicle controller, zero-speed hold without throttle creep, and incident recovery only after the non-incident field is physically stopped
+- RED restart sequence through SAFETY_CAR formation before GREEN, with queue formation verified physically rather than by teleport/reset
+- spectator UI showing distinct `STOP UNDER RED` and `SC RESTART FORMATION` procedure states
 - spectator AUTO/TV/FOLLOW/ONBOARD/PIT/HELI cameras
 - iPhone-sized touch UI, vehicle selection, visibility pause/resume and WebGL context recovery
 - tracked-car tyre compound/wetness, engine temperature, mechanical stress, power derate and failure telemetry
@@ -123,6 +127,9 @@ The browser suite includes dedicated contracts for:
 - blue flags without abrupt stop/teleport
 - repeated contacts, incident persistence, hazard response, barrier contact and exceptional recovery
 - YELLOW/VSC/SAFETY_CAR authority, non-teleporting caution behaviour, non-bunching VSC and physical SC catch-up
+- RED authority without direct vehicle writes, blocked-track and low-visibility escalation, physical stop, controlled-field recovery and SAFETY_CAR restart formation
+- zero-speed hold without throttle creep, deterministic RED procedure and dry-race protection against false RED escalation
+- spectator UI distinction between RED stop and SC restart formation
 - deterministic reliability, damage-performance degradation, pre-failure derate/strategy response and physical failure-to-retirement flow
 - pit approach/limiter/corridor/service/parallel service/double stack/release/exit/radio dedupe
 - lap counting, sector timing, finish rules and overall/class classification
@@ -133,4 +140,4 @@ The browser suite includes dedicated contracts for:
 
 ## Remaining fidelity work
 
-This is a working clean race spectator application, but it is not intended to claim final real-world fidelity in every subsystem. Further work should deepen the existing single authorities rather than add wrapper controllers. High-value future areas include red-flag/restart procedure, richer weather forecasting/racing-line drying and standing-water effects, intermediate tyre compounds where rules require them, richer fuel/hybrid/energy deployment and strategy, more detailed component-specific reliability/damage, production vehicle/environment assets, and broader calibrated real-world performance validation.
+This is a working clean race spectator application, but it is not intended to claim final real-world fidelity in every subsystem. Further work should deepen the existing single authorities rather than add wrapper controllers. High-value future areas include richer weather forecasting/racing-line drying and standing-water effects, intermediate tyre compounds where rules require them, richer fuel/hybrid/energy deployment and strategy, more detailed component-specific reliability/damage, production vehicle/environment assets, and broader calibrated real-world performance validation.
