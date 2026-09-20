@@ -40,6 +40,7 @@ The rebuilt system must be understandable without reading the discarded implemen
 - `11_CURRENT_IMPLEMENTATION_INVENTORY.md` — snapshot of current implementation that informed these documents
 - `12_REBUILD_AND_DELETION_PLAN.md` — safe sequence for backup, deletion and clean reconstruction
 - `13_KNOWN_FAILURES_AND_GUARDRAILS.md` — defects already observed and rules that prevent recurrence
+- `14_LEGACY_WORKSTREAM_DETAILS.md` — Rust/WASM/UE5/Blender/browser operational work that must be classified before cleanup
 
 ## 4. Critical interpretation rule
 
