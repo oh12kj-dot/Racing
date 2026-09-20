@@ -22,7 +22,10 @@ function sameTeamService(car,cars){return cars.find(o=>o!==car&&!o.retired&&!o.f
 function pitApproachDecel(car){return clamp(car.spec.brake*.20,3.2,6.5);}
 function brakeEnvelope(car,dist,target){const a=pitApproachDecel(car);return Math.sqrt(Math.max(target*target,target*target+2*a*Math.max(0,dist)));}
 export function maybeRequestPit(car,track,emit,decision=null){
-  if(car.pit.requested)return;
+  if(car.pit.requested){
+    if(decision?.service)car.pit.servicePlan={...decision.service};
+    return;
+  }
   const urgent=needsPit(car)&&car.lap>=1;
   const planned=!car.pit.served&&car.lap>=car.pit.plannedLap;
   const request=decision?.request??(planned||urgent);
@@ -31,6 +34,7 @@ export function maybeRequestPit(car,track,emit,decision=null){
   if(d<520){
     car.pit.requested=true;
     car.pit.requestReason=decision?.reason??(urgent?'SYSTEM_LIMIT':'PLANNED_STOP');
+    car.pit.servicePlan=decision?.service?{...decision.service}:null;
     car.pit.phase='PIT_APPROACH';
     emit?.('PIT_CALL',car,`BOX THIS LAP — ${car.name}`);
   }
@@ -101,8 +105,9 @@ export function planPit(car,cars,track,dt,emit){
     if(car.v<.35)p.serviceTimer=Math.max(0,p.serviceTimer-dt);
     if(p.serviceTimer<=0){
       if(!p.serviceApplied){
-        serviceSystems(car);p.serviceApplied=true;
+        serviceSystems(car,p.servicePlan);p.serviceApplied=true;
         p.lastServiceDamage=car.incident?.damage||0;
+        p.lastServicePlan=p.servicePlan?{...p.servicePlan}:null;
       }
       p.phase=fastLaneBlocked(car,cars,track)?'RELEASE_WAIT':'WORKING_EXIT';
       emit?.('PIT_DONE',car,`${car.name} SERVICE COMPLETE`);
@@ -133,7 +138,7 @@ export function planPit(car,cars,track,dt,emit){
     lane=t.fastLane+(mergeLane-t.fastLane)*u;
     speed=car.s<t.limiterEnd?t.speedLimit:Infinity;
     if(car.s>=t.mergeEnd){
-      p.phase='TRACK';p.requested=false;
+      p.phase='TRACK';p.requested=false;p.servicePlan=null;
       if(p.missedCount)emit?.('PIT_RETRY',car,`${car.name} WILL TRY AGAIN NEXT LAP`);
       else{p.served=true;p.completedStops=(p.completedStops||0)+1;emit?.('PIT_EXIT',car,`${car.name} REJOINS`);}
     }
