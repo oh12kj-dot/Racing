@@ -38,33 +38,37 @@ test('RACE-07: a moving spin remains yellow and clears only after the minimum ca
   rc.update(clearAt+.1,cars,track);expect(rc.flag).toBe('GREEN');
 });
 
-test('RACE-08: a stopped car triggers VSC without an artificial field-bunching target',()=>{
+test('RACE-08: a stopped car triggers VSC without artificially bunching the running field',()=>{
   const {track,cars}=field(3),rc=createRaceControl();
-  cars[1].v=0;cars[1].incident.damage=.2;
+  const incident=cars[1];
+  incident.v=0;incident.incident.damage=.2;
   rc.update(20,cars,track);
   expect(rc.flag).toBe('VSC');
-  const targets=cars.map(car=>rc.targetFor(car,cars,track));
+  const running=cars.filter(car=>car!==incident);
+  const targets=running.map(car=>rc.targetFor(car,cars,track));
   expect(new Set(targets).size).toBe(1);
   expect(targets[0]).toBe(28);
+  expect(rc.targetFor(incident,cars,track)).toBeLessThan(targets[0]);
   expect(rc.isCaution()).toBeTruthy();
 });
 
-test('RACE-09: severe or multiple stopped hazards escalate to safety car and catch-up is physical',()=>{
-  const {track,cars}=field(2),rc=createRaceControl();
-  const [ahead,behind]=cars;
+test('RACE-09: severe hazards escalate to safety car and catch-up ignores the incident car',()=>{
+  const {track,cars}=field(3),rc=createRaceControl();
+  const [ahead,behind,incident]=cars;
   ahead.v=22;ahead.totalProgress=520;ahead.s=520;
   behind.v=22;behind.totalProgress=400;behind.s=400;
-  ahead.incident.damage=.7;ahead.v=0;
+  incident.totalProgress=470;incident.s=470;incident.v=0;incident.incident.damage=.7;
   rc.update(20,cars,track);
   expect(rc.flag).toBe('SAFETY_CAR');
+  expect(rc.queueCars(cars)).not.toContain(incident);
 
-  ahead.v=22;
   const farTarget=rc.targetFor(behind,cars,track);
   behind.totalProgress=503;behind.s=503;
   const nearTarget=rc.targetFor(behind,cars,track);
   expect(farTarget).toBeGreaterThan(nearTarget);
   expect(farTarget).toBeLessThanOrEqual(27);
   expect(nearTarget).toBeGreaterThanOrEqual(7);
+  expect(rc.targetFor(incident,cars,track)).toBe(8);
 });
 
 test('RACE-10: safety-car activation changes targets but never teleports the field',()=>{
