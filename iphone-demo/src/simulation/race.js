@@ -9,6 +9,7 @@ import {updateTiming} from './timing.js';
 import {createRaceControl} from './race-control.js';
 import {computeTrafficAero} from './traffic-aero.js';
 import {evaluatePitStrategy} from './strategy.js';
+import {createEnvironment,stepEnvironment,environmentSnapshot} from './environment.js';
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 
@@ -62,7 +63,7 @@ function fnv1a(values){
 
 export function createRaceSimulation(seed=0x5eed2026,options={}){
   const raceLaps=options.raceLaps??RACE_LAPS;
-  const track=createTrack(),rng=createRng(seed),raceControl=createRaceControl();
+  const track=createTrack(),rng=createRng(seed),raceControl=createRaceControl(),environment=createEnvironment(options.environment||{});
   const entrants=buildEntrants();
   const cars=entrants.map((e,i)=>{
     const gridOffset=4.1+i*8.2;
@@ -139,6 +140,7 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
   function update(dt=FIXED_DT){
     if(!running||finished)return;
     time+=dt;
+    stepEnvironment(environment,dt);
     raceControl.update(time,cars,track,emit);
 
     for(const car of cars)car.aeroTraffic=computeTrafficAero(car,cars,track);
@@ -148,10 +150,10 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
 
       if(time<greenAt+car.reaction){
         car.targetSpeed=0;car.targetLane=car.lane;
-        stepVehicle(car,track,{throttle:0,brake:1,steer:0},dt);stepSystems(car,dt);continue;
+        stepVehicle(car,track,{throttle:0,brake:1,steer:0},dt);stepSystems(car,dt,environment);continue;
       }
 
-      car.strategy=evaluatePitStrategy(car,track,raceLaps);
+      car.strategy=evaluatePitStrategy(car,track,raceLaps,environment);
       maybeRequestPit(car,track,(type,c,text)=>emit(type,c,text,`${type}:${c.id}:${c.pit.plannedLap}:${c.strategy.reason}`),car.strategy);
       const pitPlan=planPit(car,cars,track,dt,(type,c,text)=>emit(type,c,text,`${type}:${c.id}:${c.lap}`));
 
@@ -185,7 +187,7 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
       const control=controlFor(car,car.targetSpeed,car.targetLane);
       if(car.driver.mistakeTimer>0&&car.pit.phase==='TRACK')control.throttle*=1-car.driver.lift;
       const wasFailed=car.systems.failed;
-      stepVehicle(car,track,control,dt);stepSystems(car,dt);updateTiming(car,track,time);
+      stepVehicle(car,track,control,dt);stepSystems(car,dt,environment);updateTiming(car,track,time);
       if(!wasFailed&&car.systems.failed){
         emit('MECHANICAL_FAILURE',car,`${car.name} POWER UNIT FAILURE — ${car.systems.failureReason}`,`FAILURE:${car.id}`);
       }
@@ -247,11 +249,14 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
   }
 
   function stateHash(){
-    const values=[Math.round(time*60),raceControl.flag,Math.round(raceControl.cautionUntil*60),raceControl.incidentId??-1];
+    const values=[
+      Math.round(time*60),raceControl.flag,Math.round(raceControl.cautionUntil*60),raceControl.incidentId??-1,
+      Math.round(environment.wetness*1e6),Math.round(environment.rainRate*1e6),Math.round(environment.visibility*1e6),Math.round(environment.ambientTemp*100)
+    ];
     for(const c of [...cars].sort((a,b)=>a.id-b.id)){
       values.push(
         c.id,c.lap,Math.round(c.s*1000),Math.round(c.v*1000),Math.round(c.lane*1000),Math.round(c.yaw*1e5),Math.round(c.steer*1e5),c.gear,
-        Math.round(c.systems.fuel*1000),Math.round(c.systems.tyreWear*1e6),Math.round(c.systems.tyreTemp*1000),Math.round(c.systems.grip*1e6),
+        Math.round(c.systems.fuel*1000),Math.round(c.systems.tyreWear*1e6),Math.round(c.systems.tyreTemp*1000),Math.round(c.systems.grip*1e6),c.systems.tyreCompound,
         Math.round(c.systems.mechanicalStress*1e6),Math.round(c.systems.powerDerate*1e6),c.systems.failed?1:0,c.systems.failureReason??'NONE',
         Math.round((c.tyre?.slipRatio??0)*1e6),Math.round((c.tyre?.slipAngle??0)*1e6),Math.round((c.tyre?.loadTransfer??0)*1e6),
         c.strategy?.reason??'NONE',c.pit.phase,c.finished?1:0,c.retired?1:0
@@ -261,21 +266,21 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
   }
 
   function snapshot(){
-    const order=standings(),lead=order[0],classification=classificationFor(order);
+    const order=standings(),lead=order[0],classification=classificationFor(order),environmentState=environmentSnapshot(environment);
     let fastestLap=null;
     for(const car of cars){
       if(!Number.isFinite(car.timing.bestLap))continue;
       if(fastestLap==null||car.timing.bestLap<fastestLap.time)fastestLap={carId:car.id,time:car.timing.bestLap};
     }
     return{
-      session:'RACE',time,greenAt,flag:raceControl.flag,running,finished,winnerId,RACE_LAPS:raceLaps,track,cars,events,
+      session:'RACE',time,greenAt,flag:raceControl.flag,running,finished,winnerId,RACE_LAPS:raceLaps,track,cars,events,environment:environmentState,
       order,classification,fastestLap,leader:lead,lap:Math.min(raceLaps,Math.max(0,(lead?.lap??-1)+1)),stateHash:stateHash(),
       diagnostics:{
         finite:cars.every(c=>[
           c.s,c.v,c.lane,c.laneV,c.yaw,c.yawRate,c.steer,c.gear,c.systems.fuel,c.systems.tyreWear,c.systems.tyreTemp,c.systems.grip,
           c.systems.mechanicalStress,c.systems.powerDerate,
           c.tyre?.slipRatio??0,c.tyre?.slipAngle??0,c.tyre?.loadTransfer??0,c.tyre?.longitudinalAccel??0,c.tyre?.forceUsage??0
-        ].every(Number.isFinite)),
+        ].every(Number.isFinite))&&[environment.wetness,environment.rainRate,environment.visibility,environment.ambientTemp].every(Number.isFinite),
         maxSpeedKph:Math.max(...cars.map(c=>c.v*3.6)),
         pitCars:cars.filter(c=>c.pit.phase!=='TRACK').length,
         contacts:totalContacts,
@@ -290,6 +295,8 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
         maxMechanicalStress:Math.max(...cars.map(c=>c.systems.mechanicalStress||0)),
         deratedCars:cars.filter(c=>c.systems.powerDerate>.01&&!c.systems.failed).length,
         failedCars:cars.filter(c=>c.systems.failed).length,
+        wetness:environment.wetness,
+        wetTyreCars:cars.filter(c=>c.systems.tyreCompound==='WET').length,
         maxWake:Math.max(...cars.map(c=>c.aeroTraffic?.wake||0)),
         blueFlags:cars.filter(c=>c.blueFlag).length
       }
@@ -297,7 +304,7 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
   }
 
   return{
-    track,cars,events,update,snapshot,stateHash,raceControl,
+    track,cars,events,environment,update,snapshot,stateHash,raceControl,
     setRunning(v){running=!!v;},get running(){return running;},reset(){if(typeof location!=='undefined')location.reload();}
   };
 }
