@@ -2,23 +2,24 @@ import {createSystems} from './systems.js';
 import {createTiming} from './timing.js';
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const wrapAngle=a=>Math.atan2(Math.sin(a),Math.cos(a));
 
 function interpBand(b,r){
   r=clamp(r,0,1);
   if(r<=.45){const t=r/.45;return b.low+(b.mid-b.low)*t;}
   const t=(r-.45)/.55;return b.mid+(b.high-b.mid)*t;
 }
-export function tyreLateralAccel(spec,speed,grip=1){
-  const aero=(spec.aeroLoadG70||0)*(speed/Math.max(1,spec.aeroRefSpeed||70))**2;
+export function tyreLateralAccel(spec,speed,grip=1,aeroFactor=1){
+  const aero=(spec.aeroLoadG70||0)*(speed/Math.max(1,spec.aeroRefSpeed||70))**2*clamp(aeroFactor,.65,1.08);
   const mu=spec.tyreMu*grip/(1+.14*aero);
   return Math.max(1,mu*9.81*(1+aero));
 }
-export function cornerSpeedLimit(spec,curvature,grip=1){
+export function cornerSpeedLimit(spec,curvature,grip=1,aeroFactor=1){
   const k=Math.abs(curvature);
   if(k<1e-5)return spec.top;
   let v=Math.min(spec.top,Math.sqrt(spec.tyreMu*grip*9.81/k));
   for(let i=0;i<8;i++){
-    const a=tyreLateralAccel(spec,v,grip);
+    const a=tyreLateralAccel(spec,v,grip,aeroFactor);
     const next=Math.min(spec.top,Math.sqrt(a/k));
     v=v*.45+next*.55;
   }
@@ -34,8 +35,10 @@ export function createVehicleState(entry,s,lap=-1){
     s,lap,
     v:0,
     lane:0,laneV:0,laneA:0,
+    yaw:0,yawRate:0,yawInitialized:false,gear:1,
     steer:0,throttle:0,brake:1,
     targetSpeed:0,targetLane:0,
+    aero:{leaderId:null,draftStrength:0,dirtyAirStrength:0,dragFactor:1,downforceFactor:1},
     racecraft:{state:'RESET',targetId:null,commitUntil:0,defenseUsed:false},
     pit:{phase:'TRACK',requested:false,served:false,plannedLap:2+(entry.id%3),serviceTimer:0,queue:false,boxS:0,missedCount:0},
     incident:{spinTimer:0,damage:0},
@@ -54,7 +57,8 @@ export function stepVehicle(car,track,control,dt){
   car.brake=clamp(control.brake||0,0,1);
 
   const grip=car.systems?.grip??1;
-  const tyreLat=tyreLateralAccel(spec,car.v,grip);
+  const aero=car.aero??{dragFactor:1,downforceFactor:1};
+  const tyreLat=tyreLateralAccel(spec,car.v,grip,aero.downforceFactor);
   const maxLat=Math.min(spec.laneChangeG*9.81,tyreLat);
   const wantedA=clamp(control.laneAccel||0,-maxLat,maxLat);
   const jerk=maxLat*3.8;
@@ -65,13 +69,13 @@ export function stepVehicle(car,track,control,dt){
 
   const latUse=clamp(Math.abs(car.laneA)/Math.max(1,tyreLat),0,1);
   const longFactor=Math.sqrt(Math.max(0,1-latUse*latUse));
-  const ratio=car.v/Math.max(1,spec.top);
+  const speedRatio=car.v/Math.max(1,spec.top);
   const fuelFactor=(car.systems?.fuel??1)>0?.99:.10;
   const baseDrive=car.throttle*accelerationAt(spec,car.v)*fuelFactor;
   const baseBrake=car.brake*spec.brake;
   const drive=baseDrive*longFactor;
   const brake=baseBrake*longFactor;
-  const drag=0.18*ratio*ratio*9.81;
+  const drag=0.18*speedRatio*speedRatio*9.81*clamp(aero.dragFactor,.78,1.05);
   const overspeed=car.v>spec.top?Math.min(10,(car.v-spec.top)*2.2):0;
   const acc=drive-brake-drag-overspeed;
   car.v=Math.max(0,car.v+acc*dt);
@@ -101,6 +105,13 @@ export function stepVehicle(car,track,control,dt){
   if(car.lastS>track.total*.85&&car.s<track.total*.15)car.lap++;
   car.totalProgress=car.lap*track.total+car.s;
 
-  const yaw=Math.atan2(car.laneV,Math.max(4,car.v));
-  car.steer=clamp(Math.atan2(spec.wheelbase*Math.tan(yaw),Math.max(2,car.v*.12)),-.52,.52);
+  const heading=track.sample(car.s).heading;
+  const slipYaw=Math.atan2(car.laneV,Math.max(4,car.v));
+  const nextYaw=wrapAngle(heading+slipYaw);
+  if(car.yawInitialized)car.yawRate=wrapAngle(nextYaw-car.yaw)/Math.max(1e-4,dt);
+  else{car.yawRate=0;car.yawInitialized=true;}
+  car.yaw=nextYaw;
+  const gearCount=Math.max(1,spec.gears||6);
+  car.gear=car.v<1?1:clamp(1+Math.floor(clamp(car.v/Math.max(1,spec.top),0,.999)*gearCount),1,gearCount);
+  car.steer=clamp(Math.atan2(spec.wheelbase*Math.tan(slipYaw),Math.max(2,car.v*.12)),-.52,.52);
 }
