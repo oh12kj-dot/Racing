@@ -15,7 +15,7 @@ export function createUI(root,callbacks={}){
   root.innerHTML=`
   <div class="hud">
     <div class="topbar">
-      <div class="chip race-state"><span class="flag" id="flag">GREEN</span><span id="lap">LAP 0/8</span><span id="clock">0:00.0</span><span id="weather">DRY</span></div>
+      <div class="chip race-state"><span class="flag" id="flag">GREEN</span><span id="procedure" hidden></span><span id="lap">LAP 0/8</span><span id="clock">0:00.0</span><span id="weather">DRY</span></div>
       <div class="chip camera-label" id="cameraLabel">AUTO</div>
     </div>
     <div class="leaderboard" id="leaderboard"></div>
@@ -33,7 +33,7 @@ export function createUI(root,callbacks={}){
     </div>
   </div>`;
   const els={
-    flag:root.querySelector('#flag'),lap:root.querySelector('#lap'),clock:root.querySelector('#clock'),weather:root.querySelector('#weather'),
+    flag:root.querySelector('#flag'),procedure:root.querySelector('#procedure'),lap:root.querySelector('#lap'),clock:root.querySelector('#clock'),weather:root.querySelector('#weather'),
     camera:root.querySelector('#cameraLabel'),board:root.querySelector('#leaderboard'),radio:root.querySelector('#radio'),tele:root.querySelector('#telemetry')
   };
   root.querySelectorAll('[data-cam]').forEach(b=>b.addEventListener('click',()=>callbacks.onCamera?.(b.dataset.cam)));
@@ -73,6 +73,8 @@ export function createUI(root,callbacks={}){
 
   function update(snapshot,cameraState){
     els.flag.textContent=snapshot.flag;els.flag.dataset.flag=snapshot.flag;
+    const procedure=snapshot.restartPhase==='RED_STOP'?'STOP UNDER RED':snapshot.restartPhase==='SC_FORMATION'?'SC RESTART FORMATION':'';
+    els.procedure.textContent=procedure;els.procedure.hidden=!procedure;
     els.lap.textContent=`LAP ${Math.min(snapshot.RACE_LAPS,Math.max(0,snapshot.lap))}/${snapshot.RACE_LAPS}`;
     els.clock.textContent=fmtTime(snapshot.time);els.camera.textContent=cameraState?.mode||'AUTO';
     const weather=snapshot.environment;
