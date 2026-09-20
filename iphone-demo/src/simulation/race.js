@@ -171,7 +171,7 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
 
       if(car.incident.damage>.93&&car.v<2){car.retired=true;emit('RETIRE',car,`${car.name} RETIRES`,`RETIRE:${car.id}`);}
 
-      if(car.lap>=raceLaps-1&&!car.finished&&car.pit.served){
+      if(car.lap>=raceLaps-1&&!car.finished&&car.pit.served&&car.pit.phase==='TRACK'){
         car.finished=true;car.finishTime=time;
         if(winnerId==null){winnerId=car.id;raceControl.chequered(time);emit('FINISH',car,`${car.name} WINS`,'FINISH');}
       }
