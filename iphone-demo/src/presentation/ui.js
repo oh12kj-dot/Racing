@@ -82,7 +82,7 @@ export function createUI(root,callbacks={}){
       const gap=fmtDelta(row,'gapToLeaderMeters','gapToLeaderSeconds',i===0);
       const interval=fmtDelta(row,'intervalMeters','intervalSeconds',i===0);
       const status=row?.status??'--';
-      const statusLabel=c.blueFlag&&status==='RUNNING'?'BLUE':status;
+      const statusLabel=c.systems?.failed&&status==='RUNNING'?'FAIL':c.blueFlag&&status==='RUNNING'?'BLUE':status;
       const overall=row?.overallPosition??i+1;
       const classPosition=row?.classPosition??'--';
       const pitStops=row?.pitStops??0;
@@ -100,11 +100,13 @@ export function createUI(root,callbacks={}){
       const displayLap=row?.currentLap??(car.lap<0?0:Math.min(snapshot.RACE_LAPS,car.lap+1));
       const gap=fmtDelta(row,'gapToLeaderMeters','gapToLeaderSeconds',row?.overallPosition===1);
       const interval=fmtDelta(row,'intervalMeters','intervalSeconds',row?.overallPosition===1);
+      const reliability=sys.failed?`FAIL ${sys.failureReason??'MECHANICAL'}`:`ENG ${Math.round(sys.engineTemp)}°C · STRESS ${Math.round((sys.mechanicalStress||0)*100)}% · DERATE ${Math.round((sys.powerDerate||0)*100)}%`;
       els.tele.innerHTML=`<div class="muted">${car.number} ${car.name} · ${car.spec.label}${car.blueFlag?' · BLUE FLAG':''}</div>
         <div class="big">${Math.round(car.v*3.6)} <span class="muted">km/h</span></div>
         <div class="muted">P${row?.overallPosition??'--'} · CLASS P${row?.classPosition??'--'} · GAP ${gap} · INT ${interval}</div>
         <div class="muted">L${displayLap} · ${row?.status??car.pit.phase} · ${car.racecraft.state} · PITS ${row?.pitStops??0}</div>
         <div class="muted">FUEL ${sys.fuel.toFixed(1)}L · TYRE ${Math.round(sys.tyreWear*100)}% · ${Math.round(sys.tyreTemp)}°C</div>
+        <div class="muted">${reliability}</div>
         <div class="muted">CUR ${fmtTime(row?.currentLapTime)} · LAST ${fmtTime(row?.lastLap)} · BEST ${fmtTime(row?.bestLap)}</div>`;
     }
     const lines=snapshot.events.slice(-4);
