@@ -59,7 +59,8 @@ export function planPit(car,cars,track,dt,emit){
     const u=clamp((car.s-t.entryStart)/span,0,1);
     lane=t.approachLane+(t.fastLane-t.approachLane)*u;
     const d=Math.max(0,t.speedLine-car.s);
-    speed=brakeEnvelope(car,d,t.speedLimit);
+    const crossesControlLineNextStep=d<=Math.max(.25,car.v*dt*1.15);
+    speed=crossesControlLineNextStep?t.speedLimit:brakeEnvelope(car,d,t.speedLimit);
     if(car.s>=t.speedLine){p.phase='FAST_LANE';emit?.('PIT_ENTRY',car,`${car.name} PIT ENTRY`);}
   }
 
