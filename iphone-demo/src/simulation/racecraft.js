@@ -155,7 +155,7 @@ export function planRacecraft(car,cars,track,time){
       const choice=attackChoice(car,front.o,cars,track);
       if(choice){
         state.state='SETUP';state.targetId=front.o.id;state.lane=choice.lane;state.attackKind=faster?`MULTICLASS_${choice.kind}`:choice.kind;
-        state.setupUntil=time+(brakingAttack?.36:.58);state.commitUntil=0;
+        state.setupUntil=time+(brakingAttack ? .36 : .58);state.commitUntil=0;
         targetLane=state.lane;reason=faster?'MULTICLASS_PASS':'ATTACK';activeTarget=front.o;
       }
     }
