@@ -56,8 +56,10 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
   const track=createTrack(),rng=createRng(seed),raceControl=createRaceControl();
   const entrants=buildEntrants();
   const cars=entrants.map((e,i)=>{
-    const s=track.wrapS(-i*8.2);
+    const gridOffset=4.1+i*8.2;
+    const s=track.wrapS(-gridOffset);
     const c=createVehicleState(e,s,-1);
+    c.totalProgress=-gridOffset;
     c.yaw=track.sample(s).heading;
     c.lane=(i%2?1:-1)*(1.25+(Math.floor(i/2)%2)*.55);
     c.targetLane=c.lane;
@@ -172,7 +174,7 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
 
       if(car.incident.damage>.93&&car.v<2){car.retired=true;emit('RETIRE',car,`${car.name} RETIRES`,`RETIRE:${car.id}`);}
 
-      if(car.lap>=raceLaps-1&&!car.finished&&car.pit.served&&car.pit.phase==='TRACK'){
+      if(car.lap>=raceLaps&&!car.finished&&car.pit.served&&car.pit.phase==='TRACK'){
         car.finished=true;car.finishTime=time;
         if(winnerId==null){winnerId=car.id;raceControl.chequered(time);emit('FINISH',car,`${car.name} WINS`,'FINISH');}
       }
@@ -204,7 +206,7 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
     const order=standings(),lead=order[0];
     return{
       session:'RACE',time,greenAt,flag:raceControl.flag,running,finished,winnerId,RACE_LAPS:raceLaps,track,cars,events,
-      order,leader:lead,lap:Math.max(0,lead?.lap??0),stateHash:stateHash(),
+      order,leader:lead,lap:Math.min(raceLaps,Math.max(0,(lead?.lap??-1)+1)),stateHash:stateHash(),
       diagnostics:{
         finite:cars.every(c=>[c.s,c.v,c.lane,c.laneV,c.yaw,c.yawRate,c.steer,c.gear,c.systems.fuel,c.systems.tyreWear].every(Number.isFinite)),
         maxSpeedKph:Math.max(...cars.map(c=>c.v*3.6)),
