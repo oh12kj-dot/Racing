@@ -52,7 +52,27 @@ test('UI classification: leaderboard and tracked telemetry render authoritative 
   await expect(row.locator('.lb-class')).toContainText(`PITS ${expected.pitStops}`);
 
   await row.click();
-  await expect(page.locator('#telemetry')).toContainText(`P${expected.overallPosition} · CLASS P${expected.classPosition}`);
-  await expect(page.locator('#telemetry')).toContainText(`GAP ${gap} · INT ${interval}`);
-  await expect(page.locator('#telemetry')).toContainText(`PITS ${expected.pitStops}`);
+  const telemetry=page.locator('#telemetry');
+  await expect(telemetry).toContainText(`P${expected.overallPosition} · CLASS P${expected.classPosition}`);
+  await expect(telemetry).toContainText(`GAP ${gap} · INT ${interval}`);
+  await expect(telemetry).toContainText(`PITS ${expected.pitStops}`);
+  await expect(telemetry).toContainText('ENG ');
+  await expect(telemetry).toContainText('STRESS ');
+  await expect(telemetry).toContainText('DERATE ');
+});
+
+test('UI reliability: an active mechanical failure is visibly labelled without changing classification authority',async({page})=>{
+  await page.goto('/iphone-demo/index.html?runtimeTest=1',{waitUntil:'domcontentloaded'});
+  await page.waitForFunction(()=>!!window.__RACING_RACE__&&!!window.__RACING_LIFECYCLE__&&document.querySelectorAll('.lb-row').length===24);
+  await page.evaluate(()=>window.__RACING_LIFECYCLE__.pauseForTest());
+  const carId=await page.evaluate(()=>{
+    const car=window.__RACING_RACE__.cars[0];
+    car.systems.failed=true;car.systems.failureReason='OVERHEAT';car.systems.powerDerate=1;
+    return car.id;
+  });
+  await page.evaluate(()=>window.__RACING__.ui.update(window.__RACING_RACE__.snapshot(),window.__RACING__.director.state));
+  const row=page.locator(`.lb-row[data-id="${carId}"]`);
+  await expect(row.locator('.lb-class')).toContainText('FAIL');
+  await row.click();
+  await expect(page.locator('#telemetry')).toContainText('FAIL OVERHEAT');
 });
