@@ -18,3 +18,12 @@ test('STRATEGY: residual repaired damage does not immediately request another st
   expect(decision.request).toBeTruthy();
   expect(decision.reason).toBe(PIT_REASON.DAMAGE);
 });
+
+test('STRATEGY: remaining laps follows the authoritative current-lap index',()=>{
+  const car=createVehicleState(buildEntrants()[0],100,-1),track=createTrack();
+  expect(evaluatePitStrategy(car,track,8).remainingLaps).toBe(8);
+  car.lap=0;expect(evaluatePitStrategy(car,track,8).remainingLaps).toBe(8);
+  car.lap=1;expect(evaluatePitStrategy(car,track,8).remainingLaps).toBe(7);
+  car.lap=7;expect(evaluatePitStrategy(car,track,8).remainingLaps).toBe(1);
+  car.lap=8;expect(evaluatePitStrategy(car,track,8).remainingLaps).toBe(0);
+});
