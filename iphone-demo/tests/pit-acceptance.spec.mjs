@@ -24,7 +24,7 @@ test('PIT-01/02/13: pit call is deduplicated and early ENTRY is deferred to phys
 
 test('PIT-06/07/08/09: capture is physical, teams service in parallel and same-team double stack queues',()=>{
   const track=createTrack(),entries=buildEntrants();
-  const a=createVehicleState(entries[0],boxFor(entries[0],track)+4,2);
+  const a=createVehicleState(entries[0],boxFor(entries[0],track)-4,2);
   const same=createVehicleState(entries[1],boxFor(entries[1],track)+1,2);
   const otherEntry=entries.find(e=>e.teamId!==a.teamId);
   const b=createVehicleState(otherEntry,boxFor(otherEntry,track)+1,2);
