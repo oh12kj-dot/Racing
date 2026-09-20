@@ -9,21 +9,21 @@ Simulation and presentation are intentionally separated so the renderer/UI canno
 ### Simulation authorities
 
 - `src/simulation/track.js` — circuit geometry, widths, track/world coordinates and pit coordinates
-- `src/simulation/vehicle.js` — longitudinal/lateral vehicle physics, steering-rate limits, yaw, gears and barrier response
+- `src/simulation/vehicle.js` — longitudinal/lateral vehicle physics, tyre-force sharing, load transfer, steering, yaw, gears, damage-performance effects and barrier response
 - `src/simulation/racecraft.js` — attack/defend/pass/yield/hazard tactical intent
 - `src/simulation/traffic-aero.js` — draft drag reduction and dirty-air downforce loss
-- `src/simulation/systems.js` — fuel, tyre wear/temperature and thermal state
+- `src/simulation/systems.js` — fuel, tyre wear/temperature, slip-driven degradation, thermal state and deterministic mechanical reliability
 - `src/simulation/strategy.js` — reason-coded pit/service decisions only; it does not own tactical lane choice
 - `src/simulation/pit.js` — physical pit approach, limiter, fast lane, working lane, queue, service, release and merge
 - `src/simulation/timing.js` — lap and sector timing
-- `src/simulation/race-control.js` — race flag/caution authority
+- `src/simulation/race-control.js` — GREEN/YELLOW/VSC/SAFETY_CAR/CHEQUERED authority and blue-flag context
 - `src/simulation/race.js` — deterministic fixed-step orchestration, classification, contacts, radio events and authoritative state hash
 
 ### Presentation/platform
 
 - `src/presentation/world.js` — Three.js world and vehicle rendering only
 - `src/presentation/camera.js` — AUTO/TV/FOLLOW/ONBOARD/PIT/HELI spectator cameras
-- `src/presentation/ui.js` — touch UI, authoritative classification display, telemetry and radio
+- `src/presentation/ui.js` — touch UI, authoritative classification display, reliability telemetry and radio
 - `src/presentation/audio.js` — optional tracked-car engine tone
 - `src/presentation/performance.js` — frame/simulation/render and renderer-load diagnostics
 - `app.js` — application shell, fixed-step accumulator, lifecycle/WebGL recovery and test hooks
@@ -56,7 +56,9 @@ The current clean build includes:
 
 - 24 cars across Formula, Hyper, LMH, Prototype, GT, Supercar and Touring classes
 - class-specific acceleration, braking, tyre grip, aero, steering response, mass and top-speed envelopes
-- continuous physical speed envelope from upcoming curvature and braking distance
+- continuous physical speed envelope from upcoming curvature and braking distance using the same tyre/braking capability as the vehicle model
+- friction-ellipse sharing between longitudinal and lateral tyre force
+- longitudinal load-transfer state, tyre slip ratio/slip angle and slip-driven tyre heat/wear feedback
 - steering input → vehicle-physics lateral acceleration, with steering-rate/jerk/friction limits
 - yaw/yaw-rate and gear state
 - deterministic fixed simulation step and authoritative state hashing
@@ -67,8 +69,11 @@ The current clean build includes:
 - one-move defense contract and predictable blue-flag behaviour
 - driver-error input perturbations rather than randomly assigning a spin result
 - physical car-car contact, spin/hazard response, barrier response and explicit exceptional-recovery diagnostics
-- fuel, tyre wear/temperature and engine/thermal state
-- reason-coded pit strategy for planned stops, tyres, fuel, engine temperature and damage
+- causal damage effects on aero efficiency, drive, steering response, drag and top-speed capability
+- deterministic reliability model: damage/thermal/load stress → derate → mechanical failure; no random DNF assignment
+- physical post-failure coast/deceleration before retirement, with observable failure events and telemetry
+- fuel, tyre wear/temperature, brake temperature and engine/thermal state
+- reason-coded pit strategy for planned stops, tyres, fuel, engine/mechanical risk and damage
 - physical pit sequence: approach → entry → fast lane → working approach → queue/service → release → exit → merge
 - progressive braking to pit limiter, box lateral/longitudinal capture, same-team queueing, parallel team service and safe release
 - event-key radio deduplication, including protection against repeated `BOX THIS LAP`
@@ -76,9 +81,11 @@ The current clean build includes:
 - deterministic physical grid positions before the start line
 - lap/sector/best-lap timing and chequered finish
 - authoritative classification with overall/class position, status, completed/current lap, gap/interval, pit-stop count and timing data
-- physical yellow/caution speed control without field teleport/bunch reset
+- physical YELLOW, VSC and SAFETY_CAR speed/spacing control without teleporting or resetting the field
+- VSC pace control that does not artificially bunch the pack and safety-car catch-up that excludes the incident car from queue formation
 - spectator AUTO/TV/FOLLOW/ONBOARD/PIT/HELI cameras
 - iPhone-sized touch UI, vehicle selection, visibility pause/resume and WebGL context recovery
+- tracked-car engine temperature, mechanical stress, power derate and failure telemetry
 - performance diagnostics for simulation/main/render time, renderer load, long-frame rate and memory where available
 
 ## Acceptance/regression coverage
@@ -87,11 +94,13 @@ The browser suite includes dedicated contracts for:
 
 - 24-car finite state over 60 simulated minutes
 - anti-101-km/h fixed-speed regression
-- class ordering, progressive braking and combined friction usage
+- class ordering, progressive braking, combined friction usage, load transfer and tyre slip behaviour
 - steering authority/rate and deterministic replay hash
 - straight/multiclass passing, safe side-by-side running, convergence veto, inside/outside attacks, switchback and one-move defense
 - blue flags without abrupt stop/teleport
 - repeated contacts, incident persistence, hazard response, barrier contact and exceptional recovery
+- YELLOW/VSC/SAFETY_CAR authority, non-teleporting caution behaviour, non-bunching VSC and physical SC catch-up
+- deterministic reliability, damage-performance degradation, pre-failure derate/strategy response and physical failure-to-retirement flow
 - pit approach/limiter/corridor/service/parallel service/double stack/release/exit/radio dedupe
 - lap counting, sector timing, finish rules and overall/class classification
 - track self-intersection, usable width, garage/box alignment and scenery clearance
@@ -101,4 +110,4 @@ The browser suite includes dedicated contracts for:
 
 ## Remaining fidelity work
 
-This is a working clean race spectator application, but it is not intended to claim final real-world fidelity in every subsystem. Further work should deepen the existing single authorities rather than add wrapper controllers. High-value future areas include richer tyre/slip/load-transfer physics, more complete sporting procedures such as VSC/SC/red-flag rules, weather/wet-track behaviour, deeper strategy/reliability modelling, production vehicle/environment assets and broader calibrated real-world performance validation.
+This is a working clean race spectator application, but it is not intended to claim final real-world fidelity in every subsystem. Further work should deepen the existing single authorities rather than add wrapper controllers. High-value future areas include weather/wet-track behaviour and tyre compounds, red-flag/restart procedure, richer fuel/hybrid/energy deployment and strategy, more detailed component-specific reliability/damage, production vehicle/environment assets, and broader calibrated real-world performance validation.
