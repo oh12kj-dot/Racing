@@ -126,3 +126,19 @@ test('RED-08: identical severe-weather red procedures remain deterministic in au
   expect(a.snapshot().restartPhase).toBe('RED_STOP');
   expect(a.stateHash()).toBe(b.stateHash());
 });
+
+test('RED-09: a zero-speed target holds a stopped car without throttle creep',()=>{
+  const sim=createRaceSimulation(0x5a0f00d,{raceLaps:40});
+  for(let i=0;i<Math.round(14/FIXED_DT);i++)sim.update(FIXED_DT);
+  const car=sim.cars.find(c=>!c.retired&&!c.finished&&c.pit.phase==='TRACK');
+  expect(car).toBeTruthy();
+  car.v=0;car.laneV=0;car.laneA=0;
+  const startS=car.s;
+  sim.raceControl.transition('RED',sim.snapshot().time,car,undefined,[car.id]);
+  sim.raceControl.restartPhase='RED_STOP';
+  for(let i=0;i<Math.round(1/FIXED_DT);i++)sim.update(FIXED_DT);
+  expect(car.targetSpeed).toBe(0);
+  expect(car.throttle).toBe(0);
+  expect(car.v).toBeLessThan(.05);
+  expect(Math.abs(sim.track.signedDistance(startS,car.s))).toBeLessThan(.05);
+});
