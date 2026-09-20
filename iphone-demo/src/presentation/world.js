@@ -1,11 +1,16 @@
 import * as THREE from 'three';
 
+const ROAD_Y=.02;
+const WHEEL_RADIUS=.34;
+const WHEEL_CENTER_Y=.32;
+const CAR_BASE_Y=ROAD_Y+WHEEL_RADIUS-WHEEL_CENTER_Y;
+
 function roadGeometry(track,start=0,end=track.total,width=15,samples=720,offset=0){
   const pos=[],uv=[],idx=[];
   for(let i=0;i<=samples;i++){
     const s=start+(end-start)*(i/samples);
     const q=track.sample(s,offset),half=width*.5;
-    pos.push(q.x+q.nx*half,.02,q.z+q.nz*half,q.x-q.nx*half,.02,q.z-q.nz*half);
+    pos.push(q.x+q.nx*half,ROAD_Y,q.z+q.nz*half,q.x-q.nx*half,ROAD_Y,q.z-q.nz*half);
     uv.push(0,i/samples*30,1,i/samples*30);
     if(i<samples){const k=i*2;idx.push(k,k+2,k+1,k+2,k+3,k+1);}
   }
@@ -37,9 +42,9 @@ function carMesh(car){
     body.scale.set(.96,.62,1.02);cabin.scale.set(.72,.72,.82);
     const fin=new THREE.Mesh(new THREE.BoxGeometry(.08,.48,car.length*.24),dark);fin.position.set(0,1.0,-.25);g.add(fin);
   }
-  const wheelGeo=new THREE.CylinderGeometry(.34,.34,.22,10);wheelGeo.rotateZ(Math.PI/2);
+  const wheelGeo=new THREE.CylinderGeometry(WHEEL_RADIUS,WHEEL_RADIUS,.22,10);wheelGeo.rotateZ(Math.PI/2);
   for(const x of [-car.width*.47,car.width*.47])for(const z of [-car.length*.27,car.length*.27]){
-    const w=new THREE.Mesh(wheelGeo,dark);w.position.set(x,.32,z);g.add(w);
+    const w=new THREE.Mesh(wheelGeo,dark);w.position.set(x,WHEEL_CENTER_Y,z);g.add(w);
   }
   g.userData.carId=car.id;
   return g;
@@ -74,7 +79,7 @@ export function createWorld(container,track,cars){
   for(const car of cars){const m=carMesh(car);m.traverse(o=>{if(o.isMesh){o.castShadow=true;o.receiveShadow=true;}});carGroups.set(car.id,m);scene.add(m);}
   const startQ=track.sample(0,0),gantry=new THREE.Mesh(new THREE.BoxGeometry(18,.55,.45),new THREE.MeshStandardMaterial({color:0x181a1d}));
   gantry.position.set(startQ.x,6.5,startQ.z);gantry.rotation.y=startQ.heading;scene.add(gantry);
-  function update(snapshot){for(const car of snapshot.cars){const q=track.sample(car.s,car.lane),m=carGroups.get(car.id);if(!m)continue;m.position.set(q.x,.08,q.z);m.rotation.y=Number.isFinite(car.yaw)?car.yaw:q.heading;m.visible=!car.retired;}}
+  function update(snapshot){for(const car of snapshot.cars){const q=track.sample(car.s,car.lane),m=carGroups.get(car.id);if(!m)continue;m.position.set(q.x,CAR_BASE_Y,q.z);m.rotation.y=Number.isFinite(car.yaw)?car.yaw:q.heading;m.visible=!car.retired;}}
   function resize(){renderer.setSize(container.clientWidth,container.clientHeight,false);renderer.setPixelRatio(Math.min(devicePixelRatio||1,2));}
-  return{scene,renderer,carGroups,garages,worldGeometry:{mainRoadWidth,pitRoadWidth,pitRoadCenter,garageLateral},update,resize};
+  return{scene,renderer,carGroups,garages,worldGeometry:{mainRoadWidth,pitRoadWidth,pitRoadCenter,garageLateral,roadY:ROAD_Y,carBaseY:CAR_BASE_Y,wheelRadius:WHEEL_RADIUS,wheelCenterY:WHEEL_CENTER_Y},update,resize};
 }
