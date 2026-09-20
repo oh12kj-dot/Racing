@@ -65,18 +65,18 @@ export function planPit(car,cars,track,dt,emit){
   if(p.phase==='FAST_LANE'){
     lane=t.fastLane;speed=t.speedLimit;
     const toBox=p.boxS-car.s;
-    if(toBox<72&&toBox>-5)p.phase='WORKING_APPROACH';
+    if(toBox<120&&toBox>-8)p.phase='WORKING_APPROACH';
   }
 
   if(p.phase==='WORKING_APPROACH'){
     const toBox=p.boxS-car.s;
-    const u=clamp(1-toBox/68,0,1);
+    const u=clamp(1-toBox/105,0,1);
     lane=t.fastLane+(t.workingLane-t.fastLane)*u;
-    speed=Math.min(t.speedLimit,Math.sqrt(Math.max(0,2*Math.max(4,car.spec.brake*.42)*Math.max(0,toBox))));
+    speed=Math.min(8.5,Math.sqrt(Math.max(0,2*Math.max(4,car.spec.brake*.58)*Math.max(0,toBox))));
     const occupied=sameTeamService(car,cars);
     if(occupied&&toBox<10){
       p.phase='QUEUE';p.queue=true;
-    }else if(Math.abs(toBox)<1.1&&car.v<1.4){
+    }else if(toBox<1.5&&toBox>-2.8&&car.v<1.8){
       p.phase='SERVICE';p.serviceTimer=3.2+(car.id%4)*.35;p.queue=false;
       emit?.('PIT_SERVICE',car,`${car.name} IN THE BOX`);
     }
