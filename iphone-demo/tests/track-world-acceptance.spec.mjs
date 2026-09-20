@@ -102,3 +102,32 @@ test('TRK-05: visual asphalt edges follow the physical corridor and grass stays 
   expect(result.minRoadY-result.grassY).toBeGreaterThan(.04);
   expect(result.maxRoadY-result.minRoadY).toBeLessThan(1e-7);
 });
+
+test('VIS-01: rendered tyres contact the asphalt instead of floating above it',async({page})=>{
+  await page.goto('/iphone-demo/index.html?runtimeTest=1',{waitUntil:'domcontentloaded'});
+  await page.waitForFunction(()=>!!window.__RACING_WORLD__&&!!window.__RACING_RACE__);
+  const result=await page.evaluate(()=>{
+    window.__RACING_LIFECYCLE__.pauseForTest();
+    const world=window.__RACING_WORLD__,snap=window.__RACING_RACE__.snapshot();
+    world.update(snap);
+    let maxContactError=0,minBodyBottom=Infinity,wheelCount=0;
+    for(const group of world.carGroups.values()){
+      for(const child of group.children){
+        if(child.geometry?.type==='CylinderGeometry'){
+          wheelCount++;
+          const r=child.geometry.parameters?.radiusTop??world.worldGeometry.wheelRadius;
+          const bottom=group.position.y+child.position.y-r;
+          maxContactError=Math.max(maxContactError,Math.abs(bottom-world.worldGeometry.roadY));
+        }else if(child.geometry?.type==='BoxGeometry'){
+          const h=child.geometry.parameters?.height??0;
+          minBodyBottom=Math.min(minBodyBottom,group.position.y+child.position.y-h*.5*child.scale.y);
+        }
+      }
+    }
+    return{maxContactError,minBodyBottom,wheelCount,roadY:world.worldGeometry.roadY,carBaseY:world.worldGeometry.carBaseY};
+  });
+  expect(result.wheelCount).toBe(24*4);
+  expect(result.maxContactError).toBeLessThan(1e-6);
+  expect(result.minBodyBottom).toBeGreaterThan(result.roadY+.05);
+  expect(result.carBaseY).toBeCloseTo(.04,8);
+});
