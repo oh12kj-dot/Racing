@@ -19,7 +19,8 @@ function fastLaneBlocked(car,cars,track){
   return false;
 }
 function sameTeamService(car,cars){return cars.find(o=>o!==car&&!o.retired&&!o.finished&&o.teamId===car.teamId&&['SERVICE','QUEUE'].includes(o.pit.phase));}
-function brakeEnvelope(car,dist,target){const a=Math.max(4,car.spec.brake*.72);return Math.sqrt(Math.max(target*target,target*target+2*a*Math.max(0,dist)));}
+function pitApproachDecel(car){return clamp(car.spec.brake*.20,3.2,6.5);}
+function brakeEnvelope(car,dist,target){const a=pitApproachDecel(car);return Math.sqrt(Math.max(target*target,target*target+2*a*Math.max(0,dist)));}
 export function maybeRequestPit(car,track,emit,decision=null){
   if(car.pit.requested)return;
   const urgent=needsPit(car)&&car.lap>=1;
