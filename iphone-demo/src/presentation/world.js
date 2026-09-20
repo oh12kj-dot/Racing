@@ -67,7 +67,7 @@ export function createWorld(container,track,cars){
   for(const car of cars){const m=carMesh(car);m.traverse(o=>{if(o.isMesh){o.castShadow=true;o.receiveShadow=true;}});carGroups.set(car.id,m);scene.add(m);}
   const startQ=track.sample(0,0),gantry=new THREE.Mesh(new THREE.BoxGeometry(18,.55,.45),new THREE.MeshStandardMaterial({color:0x181a1d}));
   gantry.position.set(startQ.x,6.5,startQ.z);gantry.rotation.y=startQ.heading;scene.add(gantry);
-  function update(snapshot){for(const car of snapshot.cars){const q=track.sample(car.s,car.lane),m=carGroups.get(car.id);if(!m)continue;m.position.set(q.x,.08,q.z);m.rotation.y=q.heading-Math.atan2(car.laneV,Math.max(5,car.v));m.visible=!car.retired;}}
+  function update(snapshot){for(const car of snapshot.cars){const q=track.sample(car.s,car.lane),m=carGroups.get(car.id);if(!m)continue;m.position.set(q.x,.08,q.z);m.rotation.y=Number.isFinite(car.yaw)?car.yaw:q.heading;m.visible=!car.retired;}}
   function resize(){renderer.setSize(container.clientWidth,container.clientHeight,false);renderer.setPixelRatio(Math.min(devicePixelRatio||1,2));}
   return{scene,renderer,carGroups,update,resize};
 }
