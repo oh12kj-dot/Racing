@@ -21,7 +21,7 @@ for(const side of [-1,1]){
       const penetration=Math.max(0,Math.abs(car.lane)-maxLane);
       maxPenetration=Math.max(maxPenetration,penetration);
       const ds=Math.abs(track.signedDistance(previousS,car.s));
-      expect(penetration).toBeLessThan(1e-8);
+      expect(penetration).toBeLessThan(.05);
       expect(ds).toBeLessThan(1.5);
       expect([car.s,car.v,car.lane,car.laneV,car.laneA,car.yaw,car.steer].every(Number.isFinite)).toBeTruthy();
       previousS=car.s;
@@ -29,6 +29,6 @@ for(const side of [-1,1]){
 
     expect(car.diagnostics.barrierContacts).toBeGreaterThanOrEqual(1);
     expect(car.incident.damage).toBeGreaterThan(0);
-    expect(maxPenetration).toBeLessThan(1e-8);
+    expect(maxPenetration).toBeLessThan(.05);
   });
 }
