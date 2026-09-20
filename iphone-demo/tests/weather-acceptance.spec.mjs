@@ -93,3 +93,30 @@ test('WET-07: presentation reads authoritative environment instead of owning a s
   expect(world).not.toContain('stepEnvironment');
   expect(world).not.toContain('Math.random');
 });
+
+test('WET-08: full wet race reaches physical pit service and installs wet tyres without losing finite state',()=>{
+  const sim=createRaceSimulation(0x0ee7,{raceLaps:30,environment:{initialWetness:.72,rainRate:0,dryingRate:0,ambientTemp:18}});
+  for(let i=0;i<Math.round(150/FIXED_DT);i++)sim.update(FIXED_DT);
+  const snap=sim.snapshot();
+  expect(snap.diagnostics.finite).toBeTruthy();
+  expect(snap.environment.condition).toBe('WET');
+  expect(snap.cars.some(c=>c.systems.tyreCompound===TYRE_COMPOUND.WET)).toBeTruthy();
+  expect(snap.cars.filter(c=>c.systems.tyreCompound===TYRE_COMPOUND.WET).every(c=>(c.pit.completedStops||0)>0||c.pit.phase!=='TRACK')).toBeTruthy();
+});
+
+test('WET-09: wet launch profile renders the same authoritative weather state in UI and road material',async({page})=>{
+  await page.goto('/iphone-demo/index.html?runtimeTest=1&weather=wet',{waitUntil:'domcontentloaded'});
+  await page.waitForFunction(()=>!!window.__RACING_RACE__&&!!window.__RACING_WORLD__&&document.querySelector('#weather')?.textContent);
+  await page.evaluate(()=>window.__RACING_LIFECYCLE__.pauseForTest());
+  const state=await page.evaluate(()=>({
+    environment:window.__RACING_RACE__.snapshot().environment,
+    roughness:window.__RACING_WORLD__.weatherMaterials.road.roughness,
+    metalness:window.__RACING_WORLD__.weatherMaterials.road.metalness
+  }));
+  expect(state.environment.condition).toBe('WET');
+  expect(state.environment.wetness).toBeGreaterThan(.70);
+  expect(state.roughness).toBeLessThan(.60);
+  expect(state.metalness).toBeGreaterThan(.10);
+  await expect(page.locator('#weather')).toContainText('WET');
+  await expect(page.locator('#telemetry')).toContainText('WET 72%');
+});
