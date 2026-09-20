@@ -29,6 +29,11 @@ export function cornerSpeedLimit(spec,curvature,grip=1,aeroFactor=1){
 export function accelerationAt(spec,speed){
   return interpBand(spec.accel,speed/Math.max(1,spec.top));
 }
+export function steerForLateralAccel(car,desiredAccel){
+  const maxSteer=car.spec.maxSteer??.52;
+  const speedSq=Math.max(4,car.v*car.v);
+  return clamp(Math.atan((desiredAccel*car.spec.wheelbase)/speedSq),-maxSteer,maxSteer);
+}
 function gearFor(spec,speed){
   const count=Math.max(1,spec.gears||6);
   if(speed<1)return 1;
@@ -51,7 +56,7 @@ export function createVehicleState(entry,s,lap=-1){
     systems:createSystems(entry.type),
     timing:createTiming(),
     aeroTraffic:{wake:0,dragFactor:1,downforceFactor:1,sourceId:null},
-    diagnostics:{barrierContacts:0,recoveries:0,maxForceUsage:0,maxYawRate:0,barrierActive:false},
+    diagnostics:{barrierContacts:0,recoveries:0,maxForceUsage:0,maxYawRate:0,maxSteerRate:0,barrierActive:false},
     blueFlag:false,
     retired:false,finished:false,
     lastS:s,
@@ -63,11 +68,21 @@ export function stepVehicle(car,track,control,dt){
   car.throttle=clamp(control.throttle||0,0,1);
   car.brake=clamp(control.brake||0,0,1);
 
+  const maxSteer=spec.maxSteer??.52;
+  const steerRate=Math.max(.5,spec.steerRate??3.5);
+  const wantedSteer=clamp(control.steer||0,-maxSteer,maxSteer);
+  const priorSteer=car.steer;
+  car.steer+=clamp(wantedSteer-car.steer,-steerRate*dt,steerRate*dt);
+  car.steer=clamp(car.steer,-maxSteer,maxSteer);
+  car.diagnostics.maxSteerRate=Math.max(car.diagnostics.maxSteerRate,Math.abs(car.steer-priorSteer)/Math.max(1e-4,dt));
+
   const grip=car.systems?.grip??1;
   const aeroFactor=car.aeroTraffic?.downforceFactor??1;
   const tyreLat=tyreLateralAccel(spec,car.v,grip,aeroFactor);
   const maxLat=Math.min(spec.laneChangeG*9.81,tyreLat);
-  const wantedA=clamp(control.laneAccel||0,-maxLat,maxLat);
+  const speedSq=Math.max(1,car.v*car.v);
+  const steeringAccel=speedSq/Math.max(1.5,spec.wheelbase)*Math.tan(car.steer);
+  const wantedA=clamp(steeringAccel,-maxLat,maxLat);
   const jerk=maxLat*3.8;
   car.laneA+=clamp(wantedA-car.laneA,-jerk*dt,jerk*dt);
   car.laneA=clamp(car.laneA,-maxLat,maxLat);
@@ -119,6 +134,4 @@ export function stepVehicle(car,track,control,dt){
   car.yaw=nextYaw;
   car.gear=gearFor(spec,car.v);
   car.diagnostics.maxYawRate=Math.max(car.diagnostics.maxYawRate,Math.abs(car.yawRate));
-
-  car.steer=clamp(Math.atan2(spec.wheelbase*Math.tan(slipYaw),Math.max(2,car.v*.12)),-.52,.52);
 }
