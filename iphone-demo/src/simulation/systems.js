@@ -31,7 +31,10 @@ export function gripFactor(car){
   const tempPenalty=Math.abs(s.tyreTemp-92)/125;
   const wearPenalty=Math.max(0,s.tyreWear-.18)*.24;
   const damagePenalty=(car.incident?.damage||0)*.10;
-  return clamp(1.015-tempPenalty-wearPenalty-damagePenalty,.76,1.02);
+  const slipAngle=Math.abs(car.tyre?.slipAngle||0);
+  const slipRatio=Math.abs(car.tyre?.slipRatio||0);
+  const slidePenalty=Math.max(0,slipAngle-.10)*.22+Math.max(0,slipRatio-.10)*.18;
+  return clamp(1.015-tempPenalty-wearPenalty-damagePenalty-slidePenalty,.76,1.02);
 }
 
 export function stepSystems(car,dt){
@@ -42,9 +45,11 @@ export function stepSystems(car,dt){
   s.fuelUsed+=fuelUse;
 
   const latLoad=Math.min(1.5,Math.abs(car.laneA)/(Math.max(1,car.spec.laneChangeG*9.81)));
-  const slip=Math.min(2,Math.abs(car.laneV)/3.6);
-  s.tyreWear=clamp(s.tyreWear+km*(PROFILE[car.type]?.wear||.009)*(1+latLoad*.8+slip*.25),0,1);
-  const tyreTarget=76+car.v*.19+latLoad*17+Math.abs(car.brake)*8;
+  const slipAngle=Math.min(2.5,Math.abs(car.tyre?.slipAngle||0)/.10);
+  const slipRatio=Math.min(2.5,Math.abs(car.tyre?.slipRatio||0)/.10);
+  const slipEnergy=slipAngle*.65+slipRatio*.55;
+  s.tyreWear=clamp(s.tyreWear+km*(PROFILE[car.type]?.wear||.009)*(1+latLoad*.72+slipEnergy*.34),0,1);
+  const tyreTarget=76+car.v*.19+latLoad*15+slipEnergy*8+Math.abs(car.brake)*6;
   s.tyreTemp+=clamp(tyreTarget-s.tyreTemp,-18,18)*dt*.18;
   const brakeTarget=170+car.brake*720+car.v*1.8;
   s.brakeTemp+=clamp(brakeTarget-s.brakeTemp,-260,260)*dt*.28;
@@ -68,4 +73,5 @@ export function serviceSystems(car){
   s.grip=1;
   s.serviceCount++;
   if(car.incident)car.incident.damage=Math.max(0,car.incident.damage-.32);
+  if(car.tyre){car.tyre.slipRatio=0;car.tyre.slipAngle=0;}
 }
