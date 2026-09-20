@@ -38,13 +38,20 @@ test('PIT: retired same-team queue car cannot block the active car forever',()=>
   expect(active.pit.phase).toBe('WORKING_APPROACH');
 });
 
-test('RACE: a car cannot be classified finished while still physically in the pit sequence',()=>{
+test('RACE: finish requires completed race distance and a physically completed pit sequence',()=>{
   const sim=createRaceSimulation(0x9090,{raceLaps:1});
+  for(const c of sim.cars.slice(1))c.retired=true;
   for(let i=0;i<Math.round(5/FIXED_DT);i++)sim.update(FIXED_DT);
   const car=sim.cars[0];
-  car.lap=0;car.pit.served=true;car.pit.phase='SERVICE';car.pit.serviceTimer=100;
+
+  car.lap=0;car.pit.served=true;car.pit.phase='TRACK';
   sim.update(FIXED_DT);
   expect(car.finished).toBeFalsy();
+
+  car.lap=1;car.pit.phase='SERVICE';car.pit.serviceTimer=100;
+  sim.update(FIXED_DT);
+  expect(car.finished).toBeFalsy();
+
   car.pit.phase='TRACK';
   sim.update(FIXED_DT);
   expect(car.finished).toBeTruthy();
