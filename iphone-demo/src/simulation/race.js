@@ -1,6 +1,6 @@
 import {buildEntrants,FIXED_DT,RACE_LAPS} from '../config.js';
 import {createTrack} from './track.js';
-import {createVehicleState,stepVehicle,cornerSpeedLimit,steerForLateralAccel} from './vehicle.js';
+import {createVehicleState,stepVehicle,cornerSpeedLimit,steerForLateralAccel,tyreLongitudinalAccel} from './vehicle.js';
 import {planRacecraft} from './racecraft.js';
 import {maybeRequestPit,planPit} from './pit.js';
 import {createRng} from './random.js';
@@ -12,6 +12,13 @@ import {evaluatePitStrategy} from './strategy.js';
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 
+function physicalBrakeCapability(car,speed,grip,aeroFactor){
+  const spec=car.spec;
+  const unloaded=tyreLongitudinalAccel(spec,speed,grip,aeroFactor,0);
+  const requested=Math.min(spec.brake,unloaded);
+  const transfer=clamp((requested/9.81)*(spec.cgHeight??.42)/Math.max(1.8,spec.wheelbase),0,.30);
+  return Math.min(spec.brake,tyreLongitudinalAccel(spec,speed,grip,aeroFactor,transfer));
+}
 function speedEnvelope(car,track){
   let limit=car.spec.top;
   const grip=(car.systems?.grip??1);
@@ -20,7 +27,8 @@ function speedEnvelope(car,track){
   for(const d of look){
     const k=track.curvature(car.s+d);
     const vc=cornerSpeedLimit(car.spec,k,grip,aeroFactor);
-    const braking=Math.max(5,car.spec.brake*.76*Math.max(.78,grip));
+    const brakeSpeed=clamp((Math.max(car.v,vc)+vc)*.5,vc,car.spec.top);
+    const braking=Math.max(5,physicalBrakeCapability(car,brakeSpeed,grip,aeroFactor)*.82);
     const allowed=Math.sqrt(Math.max(vc*vc,vc*vc+2*braking*d));
     limit=Math.min(limit,allowed);
   }
@@ -225,7 +233,12 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
   function stateHash(){
     const values=[Math.round(time*60),raceControl.flag];
     for(const c of [...cars].sort((a,b)=>a.id-b.id)){
-      values.push(c.id,c.lap,Math.round(c.s*1000),Math.round(c.v*1000),Math.round(c.lane*1000),Math.round(c.yaw*1e5),Math.round(c.steer*1e5),c.gear,Math.round(c.systems.fuel*1000),Math.round(c.systems.tyreWear*1e6),c.strategy?.reason??'NONE',c.pit.phase,c.finished?1:0,c.retired?1:0);
+      values.push(
+        c.id,c.lap,Math.round(c.s*1000),Math.round(c.v*1000),Math.round(c.lane*1000),Math.round(c.yaw*1e5),Math.round(c.steer*1e5),c.gear,
+        Math.round(c.systems.fuel*1000),Math.round(c.systems.tyreWear*1e6),Math.round(c.systems.tyreTemp*1000),Math.round(c.systems.grip*1e6),
+        Math.round((c.tyre?.slipRatio??0)*1e6),Math.round((c.tyre?.slipAngle??0)*1e6),Math.round((c.tyre?.loadTransfer??0)*1e6),
+        c.strategy?.reason??'NONE',c.pit.phase,c.finished?1:0,c.retired?1:0
+      );
     }
     return fnv1a(values);
   }
@@ -241,7 +254,10 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
       session:'RACE',time,greenAt,flag:raceControl.flag,running,finished,winnerId,RACE_LAPS:raceLaps,track,cars,events,
       order,classification,fastestLap,leader:lead,lap:Math.min(raceLaps,Math.max(0,(lead?.lap??-1)+1)),stateHash:stateHash(),
       diagnostics:{
-        finite:cars.every(c=>[c.s,c.v,c.lane,c.laneV,c.yaw,c.yawRate,c.steer,c.gear,c.systems.fuel,c.systems.tyreWear].every(Number.isFinite)),
+        finite:cars.every(c=>[
+          c.s,c.v,c.lane,c.laneV,c.yaw,c.yawRate,c.steer,c.gear,c.systems.fuel,c.systems.tyreWear,c.systems.tyreTemp,c.systems.grip,
+          c.tyre?.slipRatio??0,c.tyre?.slipAngle??0,c.tyre?.loadTransfer??0,c.tyre?.longitudinalAccel??0,c.tyre?.forceUsage??0
+        ].every(Number.isFinite)),
         maxSpeedKph:Math.max(...cars.map(c=>c.v*3.6)),
         pitCars:cars.filter(c=>c.pit.phase!=='TRACK').length,
         contacts:totalContacts,
@@ -250,6 +266,9 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
         maxForceUsage:Math.max(...cars.map(c=>c.diagnostics.maxForceUsage)),
         maxYawRate:Math.max(...cars.map(c=>c.diagnostics.maxYawRate)),
         maxSteerRate:Math.max(...cars.map(c=>c.diagnostics.maxSteerRate)),
+        maxSlipRatio:Math.max(...cars.map(c=>c.diagnostics.maxSlipRatio||0)),
+        maxSlipAngle:Math.max(...cars.map(c=>c.diagnostics.maxSlipAngle||0)),
+        maxLoadTransfer:Math.max(...cars.map(c=>c.diagnostics.maxLoadTransfer||0)),
         maxWake:Math.max(...cars.map(c=>c.aeroTraffic?.wake||0)),
         blueFlags:cars.filter(c=>c.blueFlag).length
       }
