@@ -1,6 +1,6 @@
 import {buildEntrants,FIXED_DT,RACE_LAPS} from '../config.js';
 import {createTrack} from './track.js';
-import {createVehicleState,stepVehicle,cornerSpeedLimit} from './vehicle.js';
+import {createVehicleState,stepVehicle,cornerSpeedLimit,steerForLateralAccel} from './vehicle.js';
 import {planRacecraft} from './racecraft.js';
 import {maybeRequestPit,planPit} from './pit.js';
 import {createRng} from './random.js';
@@ -38,8 +38,9 @@ function controlFor(car,targetSpeed,targetLane){
   const laneError=targetLane-car.lane;
   const maxLat=car.spec.laneChangeG*9.81;
   const desiredLaneV=clamp(laneError*1.5,-4.2,4.2);
-  const laneAccel=clamp(laneError*2.4+(desiredLaneV-car.laneV)*2.1,-maxLat,maxLat);
-  return{throttle,brake,laneAccel};
+  const desiredLatAccel=clamp(laneError*2.4+(desiredLaneV-car.laneV)*2.1,-maxLat,maxLat);
+  const steer=steerForLateralAccel(car,desiredLatAccel);
+  return{throttle,brake,steer};
 }
 function fnv1a(values){
   let h=2166136261>>>0;
@@ -136,7 +137,7 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
 
       if(time<greenAt+car.reaction){
         car.targetSpeed=0;car.targetLane=car.lane;
-        stepVehicle(car,track,{throttle:0,brake:1,laneAccel:0},dt);stepSystems(car,dt);continue;
+        stepVehicle(car,track,{throttle:0,brake:1,steer:0},dt);stepSystems(car,dt);continue;
       }
 
       car.strategy=evaluatePitStrategy(car,track,raceLaps);
@@ -194,7 +195,7 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
   function stateHash(){
     const values=[Math.round(time*60),raceControl.flag];
     for(const c of [...cars].sort((a,b)=>a.id-b.id)){
-      values.push(c.id,c.lap,Math.round(c.s*1000),Math.round(c.v*1000),Math.round(c.lane*1000),Math.round(c.yaw*1e5),c.gear,Math.round(c.systems.fuel*1000),Math.round(c.systems.tyreWear*1e6),c.strategy?.reason??'NONE',c.pit.phase,c.finished?1:0,c.retired?1:0);
+      values.push(c.id,c.lap,Math.round(c.s*1000),Math.round(c.v*1000),Math.round(c.lane*1000),Math.round(c.yaw*1e5),Math.round(c.steer*1e5),c.gear,Math.round(c.systems.fuel*1000),Math.round(c.systems.tyreWear*1e6),c.strategy?.reason??'NONE',c.pit.phase,c.finished?1:0,c.retired?1:0);
     }
     return fnv1a(values);
   }
@@ -205,7 +206,7 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
       session:'RACE',time,greenAt,flag:raceControl.flag,running,finished,winnerId,RACE_LAPS:raceLaps,track,cars,events,
       order,leader:lead,lap:Math.max(0,lead?.lap??0),stateHash:stateHash(),
       diagnostics:{
-        finite:cars.every(c=>[c.s,c.v,c.lane,c.laneV,c.yaw,c.yawRate,c.gear,c.systems.fuel,c.systems.tyreWear].every(Number.isFinite)),
+        finite:cars.every(c=>[c.s,c.v,c.lane,c.laneV,c.yaw,c.yawRate,c.steer,c.gear,c.systems.fuel,c.systems.tyreWear].every(Number.isFinite)),
         maxSpeedKph:Math.max(...cars.map(c=>c.v*3.6)),
         pitCars:cars.filter(c=>c.pit.phase!=='TRACK').length,
         contacts:totalContacts,
@@ -213,6 +214,7 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
         recoveries:cars.reduce((n,c)=>n+c.diagnostics.recoveries,0),
         maxForceUsage:Math.max(...cars.map(c=>c.diagnostics.maxForceUsage)),
         maxYawRate:Math.max(...cars.map(c=>c.diagnostics.maxYawRate)),
+        maxSteerRate:Math.max(...cars.map(c=>c.diagnostics.maxSteerRate)),
         maxWake:Math.max(...cars.map(c=>c.aeroTraffic?.wake||0)),
         blueFlags:cars.filter(c=>c.blueFlag).length
       }
