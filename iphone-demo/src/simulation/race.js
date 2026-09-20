@@ -227,7 +227,7 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
     for(const c of [...cars].sort((a,b)=>a.id-b.id)){
       values.push(c.id,c.lap,Math.round(c.s*1000),Math.round(c.v*1000),Math.round(c.lane*1000),Math.round(c.yaw*1e5),Math.round(c.steer*1e5),c.gear,Math.round(c.systems.fuel*1000),Math.round(c.systems.tyreWear*1e6),c.strategy?.reason??'NONE',c.pit.phase,c.finished?1:0,c.retired?1:0);
     }
-    return h.toString(16).padStart(8,'0');
+    return fnv1a(values);
   }
 
   function snapshot(){
