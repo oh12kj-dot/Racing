@@ -9,24 +9,25 @@ Simulation and presentation are intentionally separated so the renderer/UI canno
 ### Simulation authorities
 
 - `src/simulation/track.js` — circuit geometry, widths, track/world coordinates and pit coordinates
+- `src/simulation/environment.js` — deterministic weather/wetness/visibility state and SLICK/WET condition functions
 - `src/simulation/vehicle.js` — longitudinal/lateral vehicle physics, tyre-force sharing, load transfer, steering, yaw, gears, damage-performance effects and barrier response
 - `src/simulation/racecraft.js` — attack/defend/pass/yield/hazard tactical intent
 - `src/simulation/traffic-aero.js` — draft drag reduction and dirty-air downforce loss
-- `src/simulation/systems.js` — fuel, tyre wear/temperature, slip-driven degradation, thermal state and deterministic mechanical reliability
-- `src/simulation/strategy.js` — reason-coded pit/service decisions only; it does not own tactical lane choice
-- `src/simulation/pit.js` — physical pit approach, limiter, fast lane, working lane, queue, service, release and merge
+- `src/simulation/systems.js` — fuel, tyre compound/wear/temperature, wet-grip/slip degradation, thermal state and deterministic mechanical reliability
+- `src/simulation/strategy.js` — reason-coded pit/service decisions including weather tyre intent; it does not own tactical lane choice
+- `src/simulation/pit.js` — physical pit approach, limiter, fast lane, working lane, queue, service, tyre-change application, release and merge
 - `src/simulation/timing.js` — lap and sector timing
 - `src/simulation/race-control.js` — GREEN/YELLOW/VSC/SAFETY_CAR/CHEQUERED authority and blue-flag context
-- `src/simulation/race.js` — deterministic fixed-step orchestration, classification, contacts, radio events and authoritative state hash
+- `src/simulation/race.js` — deterministic fixed-step orchestration, environment stepping, classification, contacts, radio events and authoritative state hash
 
 ### Presentation/platform
 
-- `src/presentation/world.js` — Three.js world and vehicle rendering only
+- `src/presentation/world.js` — Three.js world and vehicle rendering; wet-road/sky/fog presentation reads authoritative environment state only
 - `src/presentation/camera.js` — AUTO/TV/FOLLOW/ONBOARD/PIT/HELI spectator cameras
-- `src/presentation/ui.js` — touch UI, authoritative classification display, reliability telemetry and radio
+- `src/presentation/ui.js` — touch UI, authoritative classification, tyre/weather/reliability telemetry and radio
 - `src/presentation/audio.js` — optional tracked-car engine tone
 - `src/presentation/performance.js` — frame/simulation/render and renderer-load diagnostics
-- `app.js` — application shell, fixed-step accumulator, lifecycle/WebGL recovery and test hooks
+- `app.js` — application shell, fixed-step accumulator, lifecycle/WebGL recovery, deterministic weather launch profiles and test hooks
 
 ## Run
 
@@ -34,11 +35,21 @@ Open the app through an HTTP(S) server at:
 
 `/iphone-demo/index.html`
 
-`index.html` currently resolves Three.js through its import map, so normal browser module/CORS rules apply.
+Deterministic weather launch profiles are available for manual/iPhone inspection:
+
+- dry/default: `/iphone-demo/index.html`
+- established wet track: `/iphone-demo/index.html?weather=wet`
+- developing rain: `/iphone-demo/index.html?weather=rain`
 
 For automated/manual deterministic stepping use:
 
 `/iphone-demo/index.html?runtimeTest=1`
+
+The query options can be combined, for example:
+
+`/iphone-demo/index.html?runtimeTest=1&weather=wet`
+
+`index.html` currently resolves Three.js through its import map, so normal browser module/CORS rules apply.
 
 Useful runtime hooks include:
 
@@ -62,6 +73,12 @@ The current clean build includes:
 - steering input → vehicle-physics lateral acceleration, with steering-rate/jerk/friction limits
 - yaw/yaw-rate and gear state
 - deterministic fixed simulation step and authoritative state hashing
+- one authoritative environment state with evolving wetness, rainfall intensity, visibility and ambient temperature
+- SLICK/WET tyre compounds with continuous weather-dependent grip and different temperature targets
+- wetness acting through tyre grip, cornering and braking physics rather than direct speed caps
+- weather-aware strategy with hysteresis to avoid rapid SLICK/WET oscillation
+- compound changes applied only during physical pit service; weather strategy never directly changes pose/lane/speed
+- wet-road material, darker environment and visibility/fog presentation driven by the same simulation environment snapshot
 - draft as drag reduction and dirty air as downforce reduction; no direct wake speed boost
 - staged racecraft: SETUP → COMMIT → ALONGSIDE → COMPLETE/ABORT
 - inside/outside attacks, switchback intent, multiclass passing and safe parallel running
@@ -73,7 +90,7 @@ The current clean build includes:
 - deterministic reliability model: damage/thermal/load stress → derate → mechanical failure; no random DNF assignment
 - physical post-failure coast/deceleration before retirement, with observable failure events and telemetry
 - fuel, tyre wear/temperature, brake temperature and engine/thermal state
-- reason-coded pit strategy for planned stops, tyres, fuel, engine/mechanical risk and damage
+- reason-coded pit strategy for planned stops, tyres, weather, fuel, engine/mechanical risk and damage
 - physical pit sequence: approach → entry → fast lane → working approach → queue/service → release → exit → merge
 - progressive braking to pit limiter, box lateral/longitudinal capture, same-team queueing, parallel team service and safe release
 - event-key radio deduplication, including protection against repeated `BOX THIS LAP`
@@ -85,7 +102,7 @@ The current clean build includes:
 - VSC pace control that does not artificially bunch the pack and safety-car catch-up that excludes the incident car from queue formation
 - spectator AUTO/TV/FOLLOW/ONBOARD/PIT/HELI cameras
 - iPhone-sized touch UI, vehicle selection, visibility pause/resume and WebGL context recovery
-- tracked-car engine temperature, mechanical stress, power derate and failure telemetry
+- tracked-car tyre compound/wetness, engine temperature, mechanical stress, power derate and failure telemetry
 - performance diagnostics for simulation/main/render time, renderer load, long-frame rate and memory where available
 
 ## Acceptance/regression coverage
@@ -95,6 +112,12 @@ The browser suite includes dedicated contracts for:
 - 24-car finite state over 60 simulated minutes
 - anti-101-km/h fixed-speed regression
 - class ordering, progressive braking, combined friction usage, load transfer and tyre slip behaviour
+- wet slick braking/corner degradation and wet-tyre advantage under wet conditions
+- dry-track disadvantage for wet tyres and compound-change hysteresis
+- weather strategy intent without direct pose/lane/speed mutation
+- compound changes only during pit service
+- deterministic environment evolution and deterministic race state under identical weather inputs
+- presentation reading simulation weather rather than running a second visual weather model
 - steering authority/rate and deterministic replay hash
 - straight/multiclass passing, safe side-by-side running, convergence veto, inside/outside attacks, switchback and one-move defense
 - blue flags without abrupt stop/teleport
@@ -110,4 +133,4 @@ The browser suite includes dedicated contracts for:
 
 ## Remaining fidelity work
 
-This is a working clean race spectator application, but it is not intended to claim final real-world fidelity in every subsystem. Further work should deepen the existing single authorities rather than add wrapper controllers. High-value future areas include weather/wet-track behaviour and tyre compounds, red-flag/restart procedure, richer fuel/hybrid/energy deployment and strategy, more detailed component-specific reliability/damage, production vehicle/environment assets, and broader calibrated real-world performance validation.
+This is a working clean race spectator application, but it is not intended to claim final real-world fidelity in every subsystem. Further work should deepen the existing single authorities rather than add wrapper controllers. High-value future areas include red-flag/restart procedure, richer weather forecasting/racing-line drying and standing-water effects, intermediate tyre compounds where rules require them, richer fuel/hybrid/energy deployment and strategy, more detailed component-specific reliability/damage, production vehicle/environment assets, and broader calibrated real-world performance validation.
