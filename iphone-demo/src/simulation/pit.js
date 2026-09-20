@@ -77,11 +77,12 @@ export function planPit(car,cars,track,dt,emit){
     lane=t.fastLane+(t.workingLane-t.fastLane)*u;
     speed=Math.min(p.missedCount?6.5:8.5,Math.sqrt(Math.max(0,2*Math.max(4,car.spec.brake*.58)*Math.max(0,toBox))));
     const occupied=sameTeamService(car,cars);
+    const laterallyCaptured=Math.abs(car.lane-t.workingLane)<1.15;
     if(toBox<-2.8){
       p.missedCount=(p.missedCount||0)+1;p.phase='FAST_LANE_EXIT';p.queue=false;
       emit?.('PIT_MISSED',car,`${car.name} MISSED THE BOX`);
     }else if(occupied&&toBox<10){p.phase='QUEUE';p.queue=true;}
-    else if(Math.abs(toBox)<1.5&&car.v<1.8){
+    else if(Math.abs(toBox)<1.5&&car.v<1.8&&laterallyCaptured){
       p.phase='SERVICE';p.serviceTimer=3.2+(car.id%4)*.35;p.queue=false;p.missedCount=0;p.serviceApplied=false;
       emit?.('PIT_SERVICE',car,`${car.name} IN THE BOX`);
     }
