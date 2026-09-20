@@ -75,6 +75,7 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
     c.targetLane=c.lane;
     c.reaction=.12+rng.range(0,.28);
     c.driver={mistakeTimer:0,mistakeDuration:0,steerBias:0,lift:0};
+    c.incident.redRecoveryTimer=0;
     return c;
   });
   const events=[],eventKeys=new Map();
@@ -141,7 +142,7 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
     if(!running||finished)return;
     time+=dt;
     stepEnvironment(environment,dt);
-    raceControl.update(time,cars,track,emit);
+    raceControl.update(time,cars,track,emit,environment);
 
     for(const car of cars)car.aeroTraffic=computeTrafficAero(car,cars,track);
 
@@ -175,7 +176,12 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
 
       if(raceControl.isCaution()){
         targetSpeed=Math.min(targetSpeed,raceControl.targetFor(car,cars,track));
-        source=source.startsWith('PIT:')?source:`${raceControl.flag}_CONTROL`;
+        if(raceControl.flag==='RED'){
+          targetLane=car.lane;
+          source='RED_CONTROL';
+        }else{
+          source=source.startsWith('PIT:')?source:`${raceControl.flag}_CONTROL`;
+        }
       }
       if(car.systems.failed){
         targetSpeed=0;
@@ -198,6 +204,15 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
       }else if(car.incident.damage>.93&&car.v<2){
         car.retired=true;
         emit('RETIRE',car,`${car.name} RETIRES`,`RETIRE:${car.id}`);
+      }else if(raceControl.flag==='RED'&&raceControl.incidentIds.includes(car.id)&&car.v<1.2){
+        car.incident.redRecoveryTimer=(car.incident.redRecoveryTimer||0)+dt;
+        if(car.incident.redRecoveryTimer>=6){
+          car.retired=true;
+          car.diagnostics.recoveries++;
+          emit('RECOVERY_RETIRE',car,`${car.name} REMOVED UNDER RED FLAG`,`RED_RECOVERY:${car.id}`);
+        }
+      }else if(raceControl.flag!=='RED'){
+        car.incident.redRecoveryTimer=0;
       }
 
       if(car.lap>=raceLaps&&!car.finished&&car.pit.served&&car.pit.phase==='TRACK'){
@@ -206,7 +221,7 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
       }
     }
 
-    physicalContacts();raceControl.update(time,cars,track,emit);
+    physicalContacts();raceControl.update(time,cars,track,emit,environment);
     if(!finished&&winnerId!=null&&cars.filter(c=>!c.finished&&!c.retired).length===0)finished=true;
   }
 
@@ -251,6 +266,7 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
   function stateHash(){
     const values=[
       Math.round(time*60),raceControl.flag,Math.round(raceControl.cautionUntil*60),raceControl.incidentId??-1,
+      raceControl.restartPhase,Math.round((raceControl.restartStartedAt||0)*60),[...raceControl.incidentIds].sort((a,b)=>a-b).join(','),
       Math.round(environment.wetness*1e6),Math.round(environment.rainRate*1e6),Math.round(environment.visibility*1e6),Math.round(environment.ambientTemp*100)
     ];
     for(const c of [...cars].sort((a,b)=>a.id-b.id)){
@@ -259,7 +275,7 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
         Math.round(c.systems.fuel*1000),Math.round(c.systems.tyreWear*1e6),Math.round(c.systems.tyreTemp*1000),Math.round(c.systems.grip*1e6),c.systems.tyreCompound,
         Math.round(c.systems.mechanicalStress*1e6),Math.round(c.systems.powerDerate*1e6),c.systems.failed?1:0,c.systems.failureReason??'NONE',
         Math.round((c.tyre?.slipRatio??0)*1e6),Math.round((c.tyre?.slipAngle??0)*1e6),Math.round((c.tyre?.loadTransfer??0)*1e6),
-        c.strategy?.reason??'NONE',c.pit.phase,c.finished?1:0,c.retired?1:0
+        Math.round((c.incident.redRecoveryTimer||0)*1000),c.strategy?.reason??'NONE',c.pit.phase,c.finished?1:0,c.retired?1:0
       );
     }
     return fnv1a(values);
@@ -273,12 +289,12 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
       if(fastestLap==null||car.timing.bestLap<fastestLap.time)fastestLap={carId:car.id,time:car.timing.bestLap};
     }
     return{
-      session:'RACE',time,greenAt,flag:raceControl.flag,running,finished,winnerId,RACE_LAPS:raceLaps,track,cars,events,environment:environmentState,
+      session:'RACE',time,greenAt,flag:raceControl.flag,restartPhase:raceControl.restartPhase,running,finished,winnerId,RACE_LAPS:raceLaps,track,cars,events,environment:environmentState,
       order,classification,fastestLap,leader:lead,lap:Math.min(raceLaps,Math.max(0,(lead?.lap??-1)+1)),stateHash:stateHash(),
       diagnostics:{
         finite:cars.every(c=>[
           c.s,c.v,c.lane,c.laneV,c.yaw,c.yawRate,c.steer,c.gear,c.systems.fuel,c.systems.tyreWear,c.systems.tyreTemp,c.systems.grip,
-          c.systems.mechanicalStress,c.systems.powerDerate,
+          c.systems.mechanicalStress,c.systems.powerDerate,c.incident.redRecoveryTimer||0,
           c.tyre?.slipRatio??0,c.tyre?.slipAngle??0,c.tyre?.loadTransfer??0,c.tyre?.longitudinalAccel??0,c.tyre?.forceUsage??0
         ].every(Number.isFinite))&&[environment.wetness,environment.rainRate,environment.visibility,environment.ambientTemp].every(Number.isFinite),
         maxSpeedKph:Math.max(...cars.map(c=>c.v*3.6)),
@@ -297,6 +313,8 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
         failedCars:cars.filter(c=>c.systems.failed).length,
         wetness:environment.wetness,
         wetTyreCars:cars.filter(c=>c.systems.tyreCompound==='WET').length,
+        redFlag:raceControl.flag==='RED',
+        restartPhase:raceControl.restartPhase,
         maxWake:Math.max(...cars.map(c=>c.aeroTraffic?.wake||0)),
         blueFlags:cars.filter(c=>c.blueFlag).length
       }
