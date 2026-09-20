@@ -87,11 +87,11 @@ Do not add a new `vNN-*` file for ordinary feature work. Modify the stable `runt
 
 When a historical entry point must remain for compatibility, prefer a thin re-export to the authoritative stable module instead of copying the implementation. `v10-settings.js`, `v10-circuits.js`, and `v16-ui.js` intentionally follow this pattern; defaults, circuit definitions, and the v16 UI implementation must not be duplicated back into those files.
 
-Stable runtime modules should import their implementation providers directly instead of routing out through a historical compatibility entry point and back into `runtime/`. Compatibility shims remain available for legacy callers, but should not add an extra hop to the active runtime path.
+Stable runtime modules should import their implementation providers directly instead of routing out through a historical compatibility entry point and back into `runtime/`. Compatibility shims with callers remain available for legacy callers, but should not add an extra hop to the active runtime path.
 
 ### Internal compatibility-hop cleanup
 
-The cleanup is deliberately conservative: compatibility files stay in place, while small runtime modules bypass a verified one-line re-export when the provider is known exactly. No formulas, thresholds, timing, update order, state transitions or random behaviour are changed by these redirects.
+The cleanup is deliberately conservative: compatibility files with callers stay in place, while small runtime modules bypass a verified one-line re-export when the provider is known exactly. An internal runtime shim may be removed only after the compatibility regression test proves zero source references across `iphone-demo`, `tests`, and `view-engineering`, and Browser/iPhone CI remains green. No formulas, thresholds, timing, update order, state transitions or random behaviour are changed by these redirects or retirements.
 
 Current direct runtime paths include:
 
