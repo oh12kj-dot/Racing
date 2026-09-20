@@ -10,7 +10,7 @@ function safeLat(a,b){return (a.width+b.width)*.5+.45;}
 function laneAvailable(car,candidate,cars,track,horizon=1.25){
   if(Math.abs(candidate)>track.sample(car.s).halfWidth-car.width*.55-.35)return false;
   for(const o of cars){
-    if(o===car||o.retired||o.pit.phase!=='TRACK')continue;
+    if(o===car||o.retired||o.finished||o.pit.phase!=='TRACK')continue;
     const d=signedDelta(track,car,o);
     if(Math.abs(d)>16)continue;
     const futureSelf=candidate+(car.laneV||0)*horizon*.25;
@@ -24,7 +24,7 @@ function fasterAdvantage(a,b){return a.spec.pace>b.spec.pace+.02||a.spec.top>b.s
 export function planRacecraft(car,cars,track,time){
   const ideal=track.idealLane(car.s);
   const state=car.racecraft;
-  const nearby=cars.filter(o=>o!==car&&!o.retired&&o.pit.phase==='TRACK').map(o=>({o,d:signedDelta(track,car,o)}));
+  const nearby=cars.filter(o=>o!==car&&!o.retired&&!o.finished&&o.pit.phase==='TRACK').map(o=>({o,d:signedDelta(track,car,o)}));
   const ahead=nearby.filter(x=>x.d>0&&x.d<130).sort((a,b)=>a.d-b.d);
   const behind=nearby.filter(x=>x.d<0&&x.d>-45).sort((a,b)=>b.d-a.d);
 
@@ -55,7 +55,7 @@ export function planRacecraft(car,cars,track,time){
   const committed=state.state==='COMMIT'&&time<state.commitUntil;
   const target=committed?cars.find(x=>x.id===state.targetId):null;
 
-  if(committed&&target){
+  if(committed&&target&&!target.finished&&!target.retired){
     const d=signedDelta(track,car,target);
     if(d<-(car.length+target.length)*.55-5){state.state='COMPLETE';state.targetId=null;state.commitUntil=time+.8;}
     else{targetLane=state.lane;reason='PASS_COMMIT';}
@@ -88,7 +88,7 @@ export function planRacecraft(car,cars,track,time){
   }
   if(state.defenseUsed&&time>(state.defenseResetAt||0)&&behind.length===0)state.defenseUsed=false;
 
-  const activeTarget=state.targetId!=null?cars.find(x=>x.id===state.targetId):null;
+  const activeTarget=state.targetId!=null?cars.find(x=>x.id===state.targetId&&!x.finished&&!x.retired):null;
   for(const x of ahead.slice(0,4)){
     const other=x.o;
     const body=(car.length+other.length)*.5;
@@ -119,7 +119,7 @@ export function planRacecraft(car,cars,track,time){
   }
 
   for(const o of cars){
-    if(o===car||o.retired||o.pit.phase!=='TRACK')continue;
+    if(o===car||o.retired||o.finished||o.pit.phase!=='TRACK')continue;
     const d=signedDelta(track,car,o);
     if(Math.abs(d)>(car.length+o.length)*.55+2.5)continue;
     const sepNow=car.lane-o.lane;
