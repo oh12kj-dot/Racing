@@ -20,10 +20,48 @@ function laneAvailable(car,candidate,cars,track,horizon=1.25){
   return true;
 }
 function fasterAdvantage(a,b){return a.spec.pace>b.spec.pace+.02||a.spec.top>b.spec.top+3;}
+function ensureState(state){
+  state.state??='RESET';
+  state.targetId??=null;
+  state.commitUntil??=0;
+  state.setupUntil??=0;
+  state.switchUntil??=0;
+  state.attackKind??=null;
+  state.lane??=0;
+  state.defenseUsed??=false;
+  state.alongsideAt??=0;
+  return state;
+}
+function resetPass(state,next='RESET'){
+  state.state=next;state.targetId=null;state.attackKind=null;state.setupUntil=0;state.switchUntil=0;state.alongsideAt=0;
+}
+function attackChoice(car,front,cars,track){
+  const k=track.curvature(car.s+35);
+  const cornerLoad=Math.min(1.5,Math.abs(k)*92);
+  const insideSign=k>=0?1:-1;
+  const clearance=safeLat(car,front)+.72;
+  const candidate=(sign)=>clamp(front.lane+sign*clearance,-6.35,6.35);
+  const valid=(lane)=>Math.abs(lane-front.lane)>=safeLat(car,front)*.94&&laneAvailable(car,lane,cars,track);
+  const inside=candidate(insideSign),outside=candidate(-insideSign);
+
+  if(cornerLoad>.34){
+    if(valid(inside))return{lane:inside,kind:'INSIDE',cornerLoad};
+    if(valid(outside))return{lane:outside,kind:'OUTSIDE',cornerLoad};
+  }
+
+  const naturalSide=front.lane>=0?-1:1;
+  const straight=[candidate(naturalSide),candidate(-naturalSide),clamp(car.lane+naturalSide*2.8,-6.35,6.35)];
+  const lane=straight.find(valid);
+  return lane==null?null:{lane,kind:'STRAIGHT',cornerLoad};
+}
+function activeTargetFor(state,cars){
+  if(state.targetId==null)return null;
+  return cars.find(c=>c.id===state.targetId&&!c.finished&&!c.retired&&c.pit.phase==='TRACK')??null;
+}
 
 export function planRacecraft(car,cars,track,time){
   const ideal=track.idealLane(car.s);
-  const state=car.racecraft;
+  const state=ensureState(car.racecraft);
   const nearby=cars.filter(o=>o!==car&&!o.retired&&!o.finished&&o.pit.phase==='TRACK').map(o=>({o,d:signedDelta(track,car,o)}));
   const ahead=nearby.filter(x=>x.d>0&&x.d<130).sort((a,b)=>a.d-b.d);
   const behind=nearby.filter(x=>x.d<0&&x.d>-45).sort((a,b)=>b.d-a.d);
@@ -46,37 +84,85 @@ export function planRacecraft(car,cars,track,time){
       targetSpeed=Math.min(targetSpeed,Math.max(0,hazard.o.v-2));
       reason='HAZARD_BRAKE';
     }
-    return{targetLane,targetSpeed,reason,state:state.state};
+    state.state='SPECIAL';
+    return{targetLane,targetSpeed,reason,state:state.state,attackKind:state.attackKind};
   }
 
-  if(car.blueFlag){state.state='YIELD';state.targetId=null;targetLane=ideal;reason='BLUE_FLAG_PREDICTABLE';}
+  if(car.blueFlag){
+    resetPass(state,'YIELD');targetLane=ideal;reason='BLUE_FLAG_PREDICTABLE';
+  }else if(state.state==='YIELD'||state.state==='SPECIAL'){
+    state.state='RESET';
+  }
+  if((state.state==='COMPLETE'||state.state==='ABORT')&&time>=state.commitUntil)resetPass(state);
 
-  const front=ahead.find(x=>Math.abs(x.o.lane-car.lane)<3.6);
-  const committed=state.state==='COMMIT'&&time<state.commitUntil;
-  const target=committed?cars.find(x=>x.id===state.targetId):null;
+  let activeTarget=activeTargetFor(state,cars);
+  if(state.targetId!=null&&!activeTarget&&['SETUP','COMMIT','ALONGSIDE','SWITCHBACK'].includes(state.state))resetPass(state);
+  activeTarget=activeTargetFor(state,cars);
 
-  if(committed&&target&&!target.finished&&!target.retired){
-    const d=signedDelta(track,car,target);
-    if(d<-(car.length+target.length)*.55-5){state.state='COMPLETE';state.targetId=null;state.commitUntil=time+.8;}
-    else{targetLane=state.lane;reason='PASS_COMMIT';}
-  }else if(front&&!car.blueFlag){
-    const closing=car.v-front.o.v;
-    const faster=(car.spec.pace-front.o.spec.pace)>.025||(car.spec.top-front.o.spec.top)>3;
-    const straightLoad=Math.min(1,Math.abs(track.curvature(car.s+25))*85);
-    const gap=front.d;
-    const canAttack=gap<62&&closing>.6&&straightLoad<.72&&(faster||closing>1.8);
-    if(canAttack){
-      const side=front.o.lane>=0?-1:1;
-      const candidates=[front.o.lane+side*3.0,front.o.lane-side*3.0,car.lane+side*2.6];
-      const choice=candidates.find(l=>laneAvailable(car,l,cars,track));
-      if(choice!=null){
-        state.state='COMMIT';state.targetId=front.o.id;state.lane=clamp(choice,-6.4,6.4);state.commitUntil=time+3.2;
-        targetLane=state.lane;reason=faster?'MULTICLASS_PASS':'ATTACK';
+  if(state.state==='SETUP'&&activeTarget&&!car.blueFlag){
+    const d=signedDelta(track,car,activeTarget);
+    targetLane=state.lane;reason=fasterAdvantage(car,activeTarget)?'MULTICLASS_PASS':'ATTACK';
+    if(time>=state.setupUntil||d<18){
+      state.state='COMMIT';state.commitUntil=time+3.4;
+      reason=`PASS_COMMIT_${state.attackKind||'STRAIGHT'}`;
+    }
+  }
+
+  if((state.state==='COMMIT'||state.state==='ALONGSIDE')&&activeTarget&&!car.blueFlag){
+    const d=signedDelta(track,car,activeTarget);
+    const body=(car.length+activeTarget.length)*.5;
+    const lateral=Math.abs(car.lane-activeTarget.lane);
+    const safe=safeLat(car,activeTarget);
+    if(d<-(body*.55+5)){
+      state.state='COMPLETE';state.targetId=null;state.commitUntil=time+.8;state.attackKind=null;
+      targetLane=ideal;reason='PASS_COMPLETE';
+      activeTarget=null;
+    }else{
+      targetLane=state.lane;
+      if(Math.abs(d)<=body*.72&&lateral>=safe*.82){
+        if(state.state!=='ALONGSIDE')state.alongsideAt=time;
+        state.state='ALONGSIDE';reason=`PASS_ALONGSIDE_${state.attackKind||'STRAIGHT'}`;
+      }else reason=`PASS_COMMIT_${state.attackKind||'STRAIGHT'}`;
+
+      const k=track.curvature(car.s+12),insideSign=k>=0?1:-1;
+      const lostInside=state.state==='ALONGSIDE'&&state.attackKind==='INSIDE'&&Math.abs(k)>.0055&&
+        d>body*.52&&d<14&&car.v+1<activeTarget.v&&time-(state.alongsideAt||time)>.25;
+      if(lostInside){
+        const crossLane=clamp(ideal-insideSign*2.15,-5.4,5.4);
+        if(laneAvailable(car,crossLane,cars,track,.8)){
+          state.state='SWITCHBACK';state.attackKind='SWITCHBACK';state.lane=crossLane;state.switchUntil=time+1.25;
+          targetLane=crossLane;reason='SWITCHBACK_EXIT';
+        }
       }
     }
   }
 
-  if(!front&&!committed&&!car.blueFlag&&behind.length){
+  if(state.state==='SWITCHBACK'&&activeTarget&&!car.blueFlag){
+    targetLane=state.lane;reason='SWITCHBACK_EXIT';
+    if(time>=state.switchUntil){state.state='COMMIT';state.commitUntil=time+2.2;}
+  }
+
+  const passActive=['SETUP','COMMIT','ALONGSIDE','SWITCHBACK'].includes(state.state)&&activeTarget;
+  const front=ahead.find(x=>Math.abs(x.o.lane-car.lane)<3.6);
+  if(!passActive&&front&&!car.blueFlag&&state.state!=='COMPLETE'&&state.state!=='ABORT'){
+    const closing=car.v-front.o.v;
+    const faster=fasterAdvantage(car,front.o);
+    const cornerLoad=Math.min(1.5,Math.abs(track.curvature(car.s+35))*92);
+    const gap=front.d;
+    const straightAttack=gap<62&&closing>.6&&cornerLoad<.72&&(faster||closing>1.8);
+    const brakingAttack=gap<31&&closing>.5&&cornerLoad>=.34&&cornerLoad<1.35&&(faster||closing>1.5);
+    if(straightAttack||brakingAttack){
+      const choice=attackChoice(car,front.o,cars,track);
+      if(choice){
+        state.state='SETUP';state.targetId=front.o.id;state.lane=choice.lane;state.attackKind=faster?'MULTICLASS':choice.kind;
+        if(!faster)state.attackKind=choice.kind;
+        state.setupUntil=time+(brakingAttack?.36:.58);state.commitUntil=0;
+        targetLane=state.lane;reason=faster?'MULTICLASS_PASS':'ATTACK';activeTarget=front.o;
+      }
+    }
+  }
+
+  if(!front&&!passActive&&!car.blueFlag&&behind.length){
     const attacker=behind[0];
     const similarClass=Math.abs(car.spec.pace-attacker.o.spec.pace)<.08;
     const closing=attacker.o.v-car.v;
@@ -88,7 +174,7 @@ export function planRacecraft(car,cars,track,time){
   }
   if(state.defenseUsed&&time>(state.defenseResetAt||0)&&behind.length===0)state.defenseUsed=false;
 
-  const activeTarget=state.targetId!=null?cars.find(x=>x.id===state.targetId&&!x.finished&&!x.retired):null;
+  activeTarget=activeTargetFor(state,cars);
   for(const x of ahead.slice(0,4)){
     const other=x.o;
     const body=(car.length+other.length)*.5;
@@ -113,7 +199,7 @@ export function planRacecraft(car,cars,track,time){
       if(ttc<1.15&&currentLat<safe*.86){targetSpeed=Math.min(targetSpeed,other.v+Math.max(0,(currentLat/safe-.55)*4));reason='PASS_BUILD_OVERLAP';}
       if(ttc<.55&&currentLat<safe*.68){
         targetSpeed=Math.min(targetSpeed,Math.max(0,other.v-2));reason='PASS_ABORT_SAFETY';
-        state.state='ABORT';state.targetId=null;state.commitUntil=time+.7;targetLane=car.lane;
+        state.state='ABORT';state.targetId=null;state.attackKind=null;state.commitUntil=time+.7;targetLane=car.lane;
       }
     }
   }
@@ -136,5 +222,5 @@ export function planRacecraft(car,cars,track,time){
     }
   }
 
-  return{targetLane,targetSpeed,reason,state:state.state};
+  return{targetLane,targetSpeed,reason,state:state.state,attackKind:state.attackKind};
 }
