@@ -41,13 +41,44 @@ export function createUI(root,callbacks={}){
   root.querySelector('[data-act="next"]').addEventListener('click',()=>callbacks.onNext?.());
   root.querySelector('[data-act="audio"]').addEventListener('click',()=>callbacks.onAudio?.());
 
+  const rowNodes=new Map();
+  els.board.addEventListener('click',event=>{
+    const row=event.target.closest?.('.lb-row[data-id]');
+    if(row&&els.board.contains(row))callbacks.onSelect?.(Number(row.dataset.id));
+  });
+
+  function ensureRow(car){
+    let item=rowNodes.get(car.id);
+    if(item)return item;
+    const node=document.createElement('div');
+    node.className='lb-row';node.dataset.id=String(car.id);
+    node.innerHTML='<div class="lb-pos"></div><div><div class="lb-name"></div><div class="lb-class"></div></div><div class="lb-speed"></div><div class="gap"></div>';
+    item={
+      node,
+      pos:node.querySelector('.lb-pos'),name:node.querySelector('.lb-name'),klass:node.querySelector('.lb-class'),
+      speed:node.querySelector('.lb-speed'),gap:node.querySelector('.gap')
+    };
+    rowNodes.set(car.id,item);
+    return item;
+  }
+
+  function syncRowOrder(order){
+    const desired=order.map(c=>String(c.id));
+    const current=[...els.board.children].map(n=>n.dataset.id);
+    if(desired.length===current.length&&desired.every((id,i)=>id===current[i]))return;
+    const fragment=document.createDocumentFragment();
+    for(const car of order)fragment.appendChild(ensureRow(car).node);
+    els.board.replaceChildren(fragment);
+  }
+
   function update(snapshot,cameraState){
     els.flag.textContent=snapshot.flag;els.flag.dataset.flag=snapshot.flag;
     els.lap.textContent=`LAP ${Math.min(snapshot.RACE_LAPS,Math.max(0,snapshot.lap))}/${snapshot.RACE_LAPS}`;
     els.clock.textContent=fmtTime(snapshot.time);els.camera.textContent=cameraState?.mode||'AUTO';
     const rows=new Map((snapshot.classification||[]).map(row=>[row.carId,row]));
-    els.board.innerHTML=snapshot.order.map((c,i)=>{
-      const row=rows.get(c.id);
+    syncRowOrder(snapshot.order);
+    for(let i=0;i<snapshot.order.length;i++){
+      const c=snapshot.order[i],item=ensureRow(c),row=rows.get(c.id);
       const gap=fmtDelta(row,'gapToLeaderMeters','gapToLeaderSeconds',i===0);
       const interval=fmtDelta(row,'intervalMeters','intervalSeconds',i===0);
       const status=row?.status??'--';
@@ -55,13 +86,13 @@ export function createUI(root,callbacks={}){
       const overall=row?.overallPosition??i+1;
       const classPosition=row?.classPosition??'--';
       const pitStops=row?.pitStops??0;
-      return `<div class="lb-row ${cameraState?.tracked?.id===c.id?'active':''}" data-id="${c.id}">
-        <div class="lb-pos">${overall}</div>
-        <div><div class="lb-name">${c.number} ${c.name}</div><div class="lb-class">${c.spec.label} P${classPosition} · ${statusLabel} · INT ${interval} · PITS ${pitStops}</div></div>
-        <div>${Math.round(c.v*3.6)}</div><div class="gap">${gap}</div>
-      </div>`;
-    }).join('');
-    els.board.querySelectorAll('[data-id]').forEach(r=>r.addEventListener('click',()=>callbacks.onSelect?.(Number(r.dataset.id))));
+      item.node.classList.toggle('active',cameraState?.tracked?.id===c.id);
+      item.pos.textContent=String(overall);
+      item.name.textContent=`${c.number} ${c.name}`;
+      item.klass.textContent=`${c.spec.label} P${classPosition} · ${statusLabel} · INT ${interval} · PITS ${pitStops}`;
+      item.speed.textContent=String(Math.round(c.v*3.6));
+      item.gap.textContent=gap;
+    }
     const car=cameraState?.tracked;
     if(car){
       const sys=car.systems;
