@@ -207,14 +207,14 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
       }else if(car.incident.damage>.93&&car.v<2){
         car.retired=true;
         emit('RETIRE',car,`${car.name} RETIRES`,`RETIRE:${car.id}`);
-      }else if(raceControl.flag==='RED'&&raceControl.incidentIds.includes(car.id)&&car.v<1.2){
+      }else if(raceControl.fieldControlled(cars)&&raceControl.incidentIds.includes(car.id)&&car.v<1.2){
         car.incident.redRecoveryTimer=(car.incident.redRecoveryTimer||0)+dt;
         if(car.incident.redRecoveryTimer>=6){
           car.retired=true;
           car.diagnostics.recoveries++;
           emit('RECOVERY_RETIRE',car,`${car.name} REMOVED UNDER RED FLAG`,`RED_RECOVERY:${car.id}`);
         }
-      }else if(raceControl.flag!=='RED'){
+      }else if(raceControl.flag!=='RED'||!raceControl.fieldControlled(cars)){
         car.incident.redRecoveryTimer=0;
       }
 
