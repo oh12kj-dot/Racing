@@ -35,7 +35,7 @@ export function evaluatePitStrategy(car,track,raceLaps,environment=null){
   else if(!car.pit.served&&car.lap>=car.pit.plannedLap)reason=PIT_REASON.PLANNED;
 
   const request=reason!==PIT_REASON.NONE&&car.lap>=1;
-  const tyreService=reason===PIT_REASON.TYRES||reason===PIT_REASON.PLANNED||reason===PIT_REASON.WEATHER;
+  const tyreService=weatherStop||reason===PIT_REASON.TYRES||reason===PIT_REASON.PLANNED;
   return{
     request,
     reason,
