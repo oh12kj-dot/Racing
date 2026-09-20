@@ -79,8 +79,10 @@ test('RACE-05: incident triggers physical yellow control without teleport',()=>{
 });
 
 test('desktop UI boots and presentation-only camera change preserves state',async({page})=>{
-  await page.goto('/iphone-demo/index.html?runtimeTest=1',{waitUntil:'domcontentloaded'});await page.waitForFunction(()=>!!window.__RACING__);
+  await page.goto('/iphone-demo/index.html?runtimeTest=1',{waitUntil:'domcontentloaded'});await page.waitForFunction(()=>!!window.__RACING__&&!!window.__RACING_LIFECYCLE__);
   expect(await page.evaluate(()=>document.querySelectorAll('canvas').length)).toBe(1);expect(await page.evaluate(()=>window.__RACING_RACE__.cars.length)).toBe(24);
-  const hash=await page.evaluate(()=>window.__RACING_RACE__.stateHash());await page.locator('button[data-cam="FOLLOW"]').click();await expect.poll(()=>page.evaluate(()=>window.__RACING__.director.mode)).toBe('FOLLOW');
+  await page.evaluate(()=>window.__RACING_LIFECYCLE__.pauseForTest());
+  const hash=await page.evaluate(()=>window.__RACING_RACE__.stateHash());
+  await page.locator('button[data-cam="FOLLOW"]').click();await expect.poll(()=>page.evaluate(()=>window.__RACING__.director.mode)).toBe('FOLLOW');
   expect(await page.evaluate(()=>window.__RACING_RACE__.stateHash())).toBe(hash);
 });
