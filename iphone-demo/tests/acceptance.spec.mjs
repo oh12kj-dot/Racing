@@ -6,6 +6,7 @@ import {createRaceSimulation} from '../src/simulation/race.js';
 import {createTrack} from '../src/simulation/track.js';
 import {createVehicleState,cornerSpeedLimit} from '../src/simulation/vehicle.js';
 import {planRacecraft} from '../src/simulation/racecraft.js';
+import {aeroEffectFor} from '../src/simulation/aero.js';
 import {buildEntrants,FIXED_DT,VEHICLE_CLASSES} from '../src/config.js';
 
 const appRoot=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
@@ -17,6 +18,7 @@ test('architecture gate: no versioned behavior or qualifying runtime',()=>{
   expect(files.some(f=>/[/\\]v\d+[-_]/i.test(f))).toBeFalsy();
   const src=files.filter(f=>f.endsWith('.js')).map(f=>fs.readFileSync(f,'utf8')).join('\n');
   expect(src).not.toMatch(/\bQUALIFYING\b|\bQUALIFY\b/);
+  expect(src).not.toMatch(/draft[^\n]{0,80}\bv\s*\+=/i);
   expect(fs.existsSync(path.join(appRoot,'runtime'))).toBeFalsy();
 });
 
@@ -31,11 +33,23 @@ test('PHY/TRK: class ordering, friction envelope and roundtrip',()=>{
   expect(snap.diagnostics.finite).toBeTruthy();expect(snap.diagnostics.maxForceUsage).toBeLessThanOrEqual(1.000001);expect(snap.diagnostics.recoveries).toBe(0);
 });
 
+test('PHY-AERO: draft reduces drag while dirty air reduces downforce without direct speed boost',()=>{
+  const track=createTrack(),entries=buildEntrants();
+  const follower=createVehicleState(entries[0],200,1),leader=createVehicleState(entries[1],220,1);
+  follower.v=72;leader.v=70;follower.lane=0;leader.lane=.2;
+  const effect=aeroEffectFor(follower,[follower,leader],track);
+  expect(effect.leaderId).toBe(leader.id);expect(effect.draftStrength).toBeGreaterThan(.2);expect(effect.dirtyAirStrength).toBeGreaterThan(.1);
+  expect(effect.dragFactor).toBeLessThan(1);expect(effect.downforceFactor).toBeLessThan(1);
+  expect(cornerSpeedLimit(follower.spec,.012,1,effect.downforceFactor)).toBeLessThan(cornerSpeedLimit(follower.spec,.012,1,1));
+  follower.lane=6.5;const clean=aeroEffectFor(follower,[follower,leader],track);expect(clean.draftStrength).toBeLessThan(.05);expect(clean.dragFactor).toBeCloseTo(1,5);
+});
+
 test('PHY-01: 24-car state remains finite for 60 simulated minutes',()=>{
   test.setTimeout(240000);
   const sim=createRaceSimulation(0x7a11,{raceLaps:500});const steps=Math.round(3600/FIXED_DT);
   for(let i=0;i<steps;i++){sim.update(FIXED_DT);if(i%3600===0)expect(sim.snapshot().diagnostics.finite).toBeTruthy();}
   const snap=sim.snapshot();expect(snap.time).toBeGreaterThan(3599);expect(snap.diagnostics.finite).toBeTruthy();expect(snap.diagnostics.maxForceUsage).toBeLessThanOrEqual(1.000001);
+  expect(snap.cars.every(c=>Number.isFinite(c.yaw)&&Number.isFinite(c.yawRate)&&Number.isInteger(c.gear)&&c.gear>=1&&c.gear<=c.spec.gears)).toBeTruthy();
 });
 
 test('REG-SPEED-101: green running is not locked around 101 km/h',()=>{
