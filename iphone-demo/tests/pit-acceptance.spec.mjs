@@ -34,7 +34,11 @@ test('PIT-06/07/08/09: capture is physical, teams service in parallel and same-t
   planPit(a,[a,same,b],track,FIXED_DT);
   expect(a.pit.phase).toBe('WORKING_APPROACH');
 
-  a.s=a.pit.boxS+.8;a.v=1.0;b.s=b.pit.boxS+.8;b.v=1.0;
+  a.s=a.pit.boxS+.8;a.v=1.0;a.lane=track.pit.fastLane;
+  planPit(a,[a,same,b],track,FIXED_DT);
+  expect(a.pit.phase).toBe('WORKING_APPROACH');
+
+  a.lane=track.pit.workingLane;b.s=b.pit.boxS+.8;b.v=1.0;b.lane=track.pit.workingLane;
   planPit(a,[a,same,b],track,FIXED_DT);
   planPit(b,[a,same,b],track,FIXED_DT);
   expect(a.pit.phase).toBe('SERVICE');
@@ -82,7 +86,13 @@ test('PIT-03/04/05/11/12: full pit transit is continuous, corridor-bound and lim
     expect([car.s,car.lane,car.v,car.yaw,car.steer].every(Number.isFinite)).toBeTruthy();
 
     if(car.pit.phase==='FAST_LANE'||car.pit.phase==='FAST_LANE_EXIT')expect(Math.abs(car.lane-track.pit.fastLane)).toBeLessThan(2.3);
-    if(['WORKING_APPROACH','QUEUE','SERVICE','RELEASE_WAIT','WORKING_EXIT'].includes(car.pit.phase))expect(car.lane).toBeLessThan(track.pit.fastLane+1.2);
+    if(['WORKING_APPROACH','QUEUE','WORKING_EXIT'].includes(car.pit.phase)){
+      const inner=Math.min(track.pit.fastLane,track.pit.workingLane)-1.2;
+      const outer=Math.max(track.pit.fastLane,track.pit.workingLane)+2.3;
+      expect(car.lane).toBeGreaterThan(inner);
+      expect(car.lane).toBeLessThan(outer);
+    }
+    if(['SERVICE','RELEASE_WAIT'].includes(car.pit.phase))expect(Math.abs(car.lane-track.pit.workingLane)).toBeLessThan(1.15);
     if(car.s>=track.pit.speedLine&&car.s<track.pit.limiterEnd&&car.pit.phase!=='TRACK'){
       sawLimiter=true;
       expect(car.targetSpeed).toBeLessThanOrEqual(track.pit.speedLimit+1e-9);
