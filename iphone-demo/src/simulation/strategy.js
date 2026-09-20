@@ -11,9 +11,13 @@ export function evaluatePitStrategy(car,track,raceLaps){
   const s=car.systems;
   const remainingLaps=Math.max(0,raceLaps-1-Math.max(0,car.lap));
   const projectedFuel=s.burnPerKm*(track.total/1000)*remainingLaps*1.08;
+  const damage=car.incident?.damage||0;
+  const lastServicedDamage=car.pit.lastServiceDamage??0;
+  const newDamage=Math.max(0,damage-lastServicedDamage);
+  const damageStop=damage>.48&&(!car.pit.served||damage>.82||newDamage>.12);
   let reason=PIT_REASON.NONE;
 
-  if((car.incident?.damage||0)>.48)reason=PIT_REASON.DAMAGE;
+  if(damageStop)reason=PIT_REASON.DAMAGE;
   else if(s.engineTemp>112)reason=PIT_REASON.ENGINE;
   else if(s.fuel<Math.max(8,s.fuelCapacity*.12)||s.fuel<projectedFuel)reason=PIT_REASON.FUEL;
   else if(s.tyreWear>.58)reason=PIT_REASON.TYRES;
