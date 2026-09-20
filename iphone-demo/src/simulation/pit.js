@@ -6,10 +6,10 @@ function passed(prev,current,mark){
   if(prev<=current)return prev<mark&&current>=mark;
   return mark>prev||mark<=current;
 }
-function boxFor(car,track){return track.pit.boxStart+(car.teamId%12)*track.pit.boxSpacing;}
+function boxFor(car,track){return track.pit.boxStart+car.teamId*track.pit.boxSpacing;}
 function fastLaneBlocked(car,cars,track){
   for(const o of cars){
-    if(o===car||o.retired)continue;
+    if(o===car||o.retired||o.finished)continue;
     if(!['FAST_LANE','FAST_LANE_EXIT','PIT_ENTRY','MERGE'].includes(o.pit.phase))continue;
     let d=o.s-car.s;
     if(d>track.total*.5)d-=track.total;if(d<-track.total*.5)d+=track.total;
@@ -18,7 +18,7 @@ function fastLaneBlocked(car,cars,track){
   }
   return false;
 }
-function sameTeamService(car,cars){return cars.find(o=>o!==car&&o.teamId===car.teamId&&['SERVICE','QUEUE'].includes(o.pit.phase));}
+function sameTeamService(car,cars){return cars.find(o=>o!==car&&!o.retired&&!o.finished&&o.teamId===car.teamId&&['SERVICE','QUEUE'].includes(o.pit.phase));}
 function brakeEnvelope(car,dist,target){const a=Math.max(4,car.spec.brake*.72);return Math.sqrt(Math.max(target*target,target*target+2*a*Math.max(0,dist)));}
 export function maybeRequestPit(car,track,emit,decision=null){
   if(car.pit.requested)return;
