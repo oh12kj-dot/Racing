@@ -41,7 +41,10 @@ function speedEnvelope(car,track){
 function controlFor(car,targetSpeed,targetLane){
   const speedError=targetSpeed-car.v;
   let throttle=0,brake=0;
-  if(speedError>1.2)throttle=clamp(speedError/12,0,1);
+  if(targetSpeed<=.25){
+    throttle=0;
+    brake=car.v>.05?clamp(.25+car.v/3.5,.25,1):0;
+  }else if(speedError>1.2)throttle=clamp(speedError/12,0,1);
   else if(speedError<-.05)brake=clamp(-speedError/3.2,0,1);
   else throttle=clamp((speedError+.5)/2,0,.35);
 
