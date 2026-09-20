@@ -7,16 +7,18 @@ import {createRng} from './random.js';
 import {stepSystems} from './systems.js';
 import {updateTiming} from './timing.js';
 import {createRaceControl} from './race-control.js';
+import {computeTrafficAero} from './traffic-aero.js';
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 
 function speedEnvelope(car,track){
   let limit=car.spec.top;
   const grip=(car.systems?.grip??1);
+  const aeroFactor=car.aeroTraffic?.downforceFactor??1;
   const look=[0,18,36,58,82,110];
   for(const d of look){
     const k=track.curvature(car.s+d);
-    const vc=cornerSpeedLimit(car.spec,k,grip);
+    const vc=cornerSpeedLimit(car.spec,k,grip,aeroFactor);
     const braking=Math.max(5,car.spec.brake*.76*Math.max(.78,grip));
     const allowed=Math.sqrt(Math.max(vc*vc,vc*vc+2*braking*d));
     limit=Math.min(limit,allowed);
@@ -54,6 +56,7 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
   const cars=entrants.map((e,i)=>{
     const s=track.wrapS(-i*8.2);
     const c=createVehicleState(e,s,-1);
+    c.yaw=track.sample(s).heading;
     c.lane=(i%2?1:-1)*(1.25+(Math.floor(i/2)%2)*.55);
     c.targetLane=c.lane;
     c.reaction=.12+rng.range(0,.28);
@@ -125,6 +128,8 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
     time+=dt;
     raceControl.update(time,cars,track,emit);
 
+    for(const car of cars)car.aeroTraffic=computeTrafficAero(car,cars,track);
+
     for(const car of cars){
       if(car.retired||car.finished)continue;
 
@@ -187,7 +192,7 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
   function stateHash(){
     const values=[Math.round(time*60),raceControl.flag];
     for(const c of [...cars].sort((a,b)=>a.id-b.id)){
-      values.push(c.id,c.lap,Math.round(c.s*1000),Math.round(c.v*1000),Math.round(c.lane*1000),Math.round(c.systems.fuel*1000),Math.round(c.systems.tyreWear*1e6),c.pit.phase,c.finished?1:0,c.retired?1:0);
+      values.push(c.id,c.lap,Math.round(c.s*1000),Math.round(c.v*1000),Math.round(c.lane*1000),Math.round(c.yaw*1e5),c.gear,Math.round(c.systems.fuel*1000),Math.round(c.systems.tyreWear*1e6),c.pit.phase,c.finished?1:0,c.retired?1:0);
     }
     return fnv1a(values);
   }
@@ -198,13 +203,15 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
       session:'RACE',time,greenAt,flag:raceControl.flag,running,finished,winnerId,RACE_LAPS:raceLaps,track,cars,events,
       order,leader:lead,lap:Math.max(0,lead?.lap??0),stateHash:stateHash(),
       diagnostics:{
-        finite:cars.every(c=>[c.s,c.v,c.lane,c.laneV,c.systems.fuel,c.systems.tyreWear].every(Number.isFinite)),
+        finite:cars.every(c=>[c.s,c.v,c.lane,c.laneV,c.yaw,c.yawRate,c.gear,c.systems.fuel,c.systems.tyreWear].every(Number.isFinite)),
         maxSpeedKph:Math.max(...cars.map(c=>c.v*3.6)),
         pitCars:cars.filter(c=>c.pit.phase!=='TRACK').length,
         contacts:totalContacts,
         barrierContacts:cars.reduce((n,c)=>n+c.diagnostics.barrierContacts,0),
         recoveries:cars.reduce((n,c)=>n+c.diagnostics.recoveries,0),
         maxForceUsage:Math.max(...cars.map(c=>c.diagnostics.maxForceUsage)),
+        maxYawRate:Math.max(...cars.map(c=>c.diagnostics.maxYawRate)),
+        maxWake:Math.max(...cars.map(c=>c.aeroTraffic?.wake||0)),
         blueFlags:cars.filter(c=>c.blueFlag).length
       }
     };

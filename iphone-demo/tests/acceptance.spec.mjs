@@ -6,6 +6,7 @@ import {createRaceSimulation} from '../src/simulation/race.js';
 import {createTrack} from '../src/simulation/track.js';
 import {createVehicleState,cornerSpeedLimit} from '../src/simulation/vehicle.js';
 import {planRacecraft} from '../src/simulation/racecraft.js';
+import {computeTrafficAero} from '../src/simulation/traffic-aero.js';
 import {buildEntrants,FIXED_DT,VEHICLE_CLASSES} from '../src/config.js';
 
 const appRoot=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
@@ -36,6 +37,22 @@ test('PHY-01: 24-car state remains finite for 60 simulated minutes',()=>{
   const sim=createRaceSimulation(0x7a11,{raceLaps:500});const steps=Math.round(3600/FIXED_DT);
   for(let i=0;i<steps;i++){sim.update(FIXED_DT);if(i%3600===0)expect(sim.snapshot().diagnostics.finite).toBeTruthy();}
   const snap=sim.snapshot();expect(snap.time).toBeGreaterThan(3599);expect(snap.diagnostics.finite).toBeTruthy();expect(snap.diagnostics.maxForceUsage).toBeLessThanOrEqual(1.000001);
+  expect(Number.isFinite(snap.diagnostics.maxYawRate)).toBeTruthy();
+});
+
+test('AERO: draft reduces drag while dirty air only reduces aero when aligned in a wake',()=>{
+  const track=createTrack(),entries=buildEntrants();
+  const follower=createVehicleState(entries[0],100,1),leader=createVehicleState(entries[1],118,1);
+  follower.v=60;leader.v=58;follower.lane=0;leader.lane=0;
+  const aligned=computeTrafficAero(follower,[follower,leader],track);
+  expect(aligned.sourceId).toBe(leader.id);expect(aligned.dragFactor).toBeLessThan(1);expect(aligned.downforceFactor).toBeLessThan(1);
+  leader.lane=5;
+  const offset=computeTrafficAero(follower,[follower,leader],track);
+  expect(offset.dragFactor).toBe(1);expect(offset.downforceFactor).toBe(1);
+  leader.lane=0;leader.s=170;
+  const distant=computeTrafficAero(follower,[follower,leader],track);
+  expect(distant.dragFactor).toBe(1);expect(distant.downforceFactor).toBe(1);
+  expect(VEHICLE_CLASSES.formula.dirtyAirLoss).toBeGreaterThan(VEHICLE_CLASSES.gt.dirtyAirLoss);
 });
 
 test('REG-SPEED-101: green running is not locked around 101 km/h',()=>{
