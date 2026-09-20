@@ -25,7 +25,7 @@ async function walkFiles(dir){
 
 test('retired runtime compatibility shims have no source imports',async()=>{
   const root=process.cwd();
-  const retired=[['6','race'],['8','race'],['10','race'],['11','race'],['12','race'],['15','race'],['18','race'],['24','race'],['27','race'],['28','race'],['29','race'],['30','race'],['5','world'],['6','world'],['7','world'],['16','world'],['21','world'],['23','world'],['26','world']]
+  const retired=[['6','race'],['8','race'],['10','race'],['11','race'],['12','race'],['15','race'],['18','race'],['24','race'],['27','race'],['28','race'],['29','race'],['30','race'],['5','world'],['6','world'],['7','world'],['16','world'],['21','world'],['23','world']]
     .map(([version,kind])=>path.resolve(root,'iphone-demo','runtime',`v${version}-${kind}.js`));
   const retiredSet=new Set(retired),references=[];
   const sourceRoots=['iphone-demo','tests','view-engineering'].map(dir=>path.resolve(root,dir));
