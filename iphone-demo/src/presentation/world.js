@@ -54,14 +54,21 @@ export function createWorld(container,track,cars){
   sun.shadow.mapSize.set(1024,1024);sun.shadow.camera.left=-220;sun.shadow.camera.right=220;sun.shadow.camera.top=220;sun.shadow.camera.bottom=-220;scene.add(sun);
   const grass=new THREE.Mesh(new THREE.PlaneGeometry(760,620),new THREE.MeshStandardMaterial({color:0x496b3f,roughness:1}));
   grass.rotation.x=-Math.PI/2;grass.position.y=-.035;grass.receiveShadow=true;scene.add(grass);
-  const road=new THREE.Mesh(roadGeometry(track,0,track.total,15.2,900),new THREE.MeshStandardMaterial({color:0x25282c,roughness:.93,metalness:.02}));road.receiveShadow=true;scene.add(road);
+  const mainRoadWidth=track.sample(0).halfWidth*2;
+  const road=new THREE.Mesh(roadGeometry(track,0,track.total,mainRoadWidth,900),new THREE.MeshStandardMaterial({color:0x25282c,roughness:.93,metalness:.02}));road.receiveShadow=true;scene.add(road);
   scene.add(lineGeometry(track,7.1,0xffffff,.75),lineGeometry(track,-7.1,0xffffff,.75),lineGeometry(track,0,0x202225,.25));
-  const pit=track.pit;
-  const pitRoad=new THREE.Mesh(roadGeometry(track,pit.entryStart,pit.mergeEnd,7.2,260,(pit.fastLane+pit.workingLane)*.5),new THREE.MeshStandardMaterial({color:0x2c3035,roughness:.9}));pitRoad.receiveShadow=true;scene.add(pitRoad);
+  const pit=track.pit,pitRoadWidth=7.2,pitRoadCenter=(pit.fastLane+pit.workingLane)*.5;
+  const pitRoad=new THREE.Mesh(roadGeometry(track,pit.entryStart,pit.mergeEnd,pitRoadWidth,260,pitRoadCenter),new THREE.MeshStandardMaterial({color:0x2c3035,roughness:.9}));pitRoad.receiveShadow=true;scene.add(pitRoad);
   const wallMat=new THREE.MeshStandardMaterial({color:0xd6d7d8,roughness:.65});
-  for(let i=0;i<12;i++){
-    const s=pit.boxStart+i*pit.boxSpacing,q=track.sample(s,pit.workingLane-4.4);
-    const box=new THREE.Mesh(new THREE.BoxGeometry(4.5,2.6,5.2),wallMat);box.position.set(q.x,1.3,q.z);box.rotation.y=q.heading;scene.add(box);
+  const garages=new Map();
+  const teamCount=cars.reduce((max,car)=>Math.max(max,Number.isFinite(car.teamId)?car.teamId:-1),-1)+1;
+  const garageLateral=pit.workingLane-4.4,garageWidth=4.5,garageDepth=5.2;
+  for(let teamId=0;teamId<teamCount;teamId++){
+    const s=pit.boxStart+teamId*pit.boxSpacing,q=track.sample(s,garageLateral);
+    const mesh=new THREE.Mesh(new THREE.BoxGeometry(garageWidth,2.6,garageDepth),wallMat);
+    mesh.position.set(q.x,1.3,q.z);mesh.rotation.y=q.heading;
+    mesh.userData={kind:'pit-garage',teamId,boxS:s,lateral:garageLateral};scene.add(mesh);
+    garages.set(teamId,{mesh,teamId,s,lateral:garageLateral,width:garageWidth,depth:garageDepth});
   }
   const carGroups=new Map();
   for(const car of cars){const m=carMesh(car);m.traverse(o=>{if(o.isMesh){o.castShadow=true;o.receiveShadow=true;}});carGroups.set(car.id,m);scene.add(m);}
@@ -69,5 +76,5 @@ export function createWorld(container,track,cars){
   gantry.position.set(startQ.x,6.5,startQ.z);gantry.rotation.y=startQ.heading;scene.add(gantry);
   function update(snapshot){for(const car of snapshot.cars){const q=track.sample(car.s,car.lane),m=carGroups.get(car.id);if(!m)continue;m.position.set(q.x,.08,q.z);m.rotation.y=Number.isFinite(car.yaw)?car.yaw:q.heading;m.visible=!car.retired;}}
   function resize(){renderer.setSize(container.clientWidth,container.clientHeight,false);renderer.setPixelRatio(Math.min(devicePixelRatio||1,2));}
-  return{scene,renderer,carGroups,update,resize};
+  return{scene,renderer,carGroups,garages,worldGeometry:{mainRoadWidth,pitRoadWidth,pitRoadCenter,garageLateral},update,resize};
 }
