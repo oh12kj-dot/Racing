@@ -70,7 +70,6 @@ test('UI reliability: an active mechanical failure is visibly labelled without c
     car.systems.failed=true;car.systems.failureReason='OVERHEAT';car.systems.powerDerate=1;
     return car.id;
   });
-  await page.evaluate(()=>window.__RACING__.ui.update(window.__RACING_RACE__.snapshot(),window.__RACING__.director.state));
   const row=page.locator(`.lb-row[data-id="${carId}"]`);
   await expect(row.locator('.lb-class')).toContainText('FAIL');
   await row.click();
