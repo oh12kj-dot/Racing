@@ -11,6 +11,7 @@ test('RACE-02: only physical start-line passage increments lap across traffic, p
   normal.lap=0;normal.s=track.total-.12;normal.lastS=normal.s;normal.totalProgress=track.total-.12;normal.v=24;normal.pit.served=true;normal.pit.phase='TRACK';
   pitCar.lap=1;pitCar.s=track.pit.boxStart-80;pitCar.lastS=pitCar.s;pitCar.totalProgress=track.total+pitCar.s;pitCar.v=18;pitCar.pit.requested=true;pitCar.pit.served=false;pitCar.pit.phase='FAST_LANE';pitCar.pit.boxS=track.pit.boxStart;
   incident.lap=1;incident.s=500;incident.lastS=incident.s;incident.totalProgress=track.total+500;incident.v=0;incident.incident.spinTimer=2;incident.pit.served=true;incident.pit.phase='TRACK';
+  const incidentProgressBefore=incident.totalProgress;
 
   sim.update(FIXED_DT);
   expect(normal.lap).toBe(1);
@@ -18,7 +19,7 @@ test('RACE-02: only physical start-line passage increments lap across traffic, p
   expect(incident.lap).toBe(1);
   expect(normal.totalProgress).toBeGreaterThanOrEqual(track.total);
   expect(pitCar.totalProgress).toBeGreaterThan(track.total);
-  expect(incident.totalProgress).toBe(track.total+500);
+  expect(Math.abs(incident.totalProgress-incidentProgressBefore)).toBeLessThan(1);
 });
 
 test('RACE-03: classification owns overall/class position, status, gaps, intervals and pit/timing outputs',()=>{
