@@ -2,7 +2,7 @@ import {test,expect} from '@playwright/test';
 import {FIXED_DT,buildEntrants} from '../src/config.js';
 import {createTrack} from '../src/simulation/track.js';
 import {createVehicleState} from '../src/simulation/vehicle.js';
-import {contactManifold} from '../src/simulation/contact.js';
+import {contactManifold,resolveContactImpulse} from '../src/simulation/contact.js';
 import {createRaceSimulation} from '../src/simulation/race.js';
 
 function pair(){
@@ -58,4 +58,52 @@ test('COL-09: race contact counter ignores diagonal clearance but counts genuine
   a.totalProgress=a.s;b.totalProgress=b.s;
   sim.update(FIXED_DT);
   expect(sim.snapshot().diagnostics.contacts).toBe(1);
+});
+
+test('COL-10: rear impact impulse respects vehicle mass and conserves longitudinal momentum',()=>{
+  const {track,a,b}=pair();
+  a.s=300;b.s=303;a.lane=0;b.lane=0;a.v=50;b.v=28;a.laneV=0;b.laneV=0;
+  const contact=contactManifold(a,b,track);
+  expect(contact.hit).toBeTruthy();
+  expect(Math.abs(contact.normalLong)).toBeGreaterThan(.9);
+  const momentumBefore=a.mass*a.v+b.mass*b.v;
+  const closingBefore=a.v-b.v;
+  const result=resolveContactImpulse(a,b,contact,{separationGain:0});
+  const momentumAfter=a.mass*a.v+b.mass*b.v;
+  expect(result.applied).toBeTruthy();
+  expect(result.impactSpeed).toBeGreaterThan(20);
+  expect(momentumAfter).toBeCloseTo(momentumBefore,6);
+  expect(a.v).toBeLessThan(50);
+  expect(b.v).toBeGreaterThan(28);
+  expect(a.v-b.v).toBeLessThan(closingBefore);
+});
+
+test('COL-11: side-by-side body contact resolves laterally without arbitrary forward-speed averaging',()=>{
+  const {track,a,b}=pair();
+  a.s=300;b.s=300;a.lane=-.8;b.lane=.8;a.v=52;b.v=52;a.laneV=1.2;b.laneV=-1.0;
+  const contact=contactManifold(a,b,track);
+  expect(contact.hit).toBeTruthy();
+  expect(Math.abs(contact.normalLat)).toBeGreaterThan(.9);
+  const forwardA=a.v,forwardB=b.v;
+  const result=resolveContactImpulse(a,b,contact);
+  expect(result.applied).toBeTruthy();
+  expect(a.v).toBeCloseTo(forwardA,9);
+  expect(b.v).toBeCloseTo(forwardB,9);
+  expect(a.laneV).toBeLessThan(1.2);
+  expect(b.laneV).toBeGreaterThan(-1.0);
+});
+
+test('COL-12: contact response is deterministic and never creates non-finite velocity',()=>{
+  const setup=()=>{
+    const p=pair();
+    p.a.s=300;p.b.s=302.7;p.a.lane=-.35;p.b.lane=.35;
+    p.a.v=47;p.b.v=31;p.a.laneV=.7;p.b.laneV=-.4;
+    return p;
+  };
+  const x=setup(),y=setup();
+  const rx=resolveContactImpulse(x.a,x.b,contactManifold(x.a,x.b,x.track));
+  const ry=resolveContactImpulse(y.a,y.b,contactManifold(y.a,y.b,y.track));
+  expect(rx).toEqual(ry);
+  expect([x.a.v,x.b.v,x.a.laneV,x.b.laneV].every(Number.isFinite)).toBeTruthy();
+  expect(x.a.v).toBeGreaterThanOrEqual(0);expect(x.b.v).toBeGreaterThanOrEqual(0);
 });
