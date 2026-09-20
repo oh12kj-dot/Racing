@@ -35,7 +35,7 @@ export function createUI(root,callbacks={}){
 
   function update(snapshot,cameraState){
     els.flag.textContent=snapshot.flag;els.flag.dataset.flag=snapshot.flag;
-    els.lap.textContent=`LAP ${Math.min(snapshot.RACE_LAPS,Math.max(0,snapshot.lap)+1)}/${snapshot.RACE_LAPS}`;
+    els.lap.textContent=`LAP ${Math.min(snapshot.RACE_LAPS,Math.max(0,snapshot.lap))}/${snapshot.RACE_LAPS}`;
     els.clock.textContent=fmtTime(snapshot.time);els.camera.textContent=cameraState?.mode||'AUTO';
     const leaderProgress=snapshot.order[0]?.totalProgress||0;
     els.board.innerHTML=snapshot.order.map((c,i)=>{
@@ -51,9 +51,10 @@ export function createUI(root,callbacks={}){
     const car=cameraState?.tracked;
     if(car){
       const sys=car.systems;
+      const displayLap=car.lap<0?0:Math.min(snapshot.RACE_LAPS,car.lap+1);
       els.tele.innerHTML=`<div class="muted">${car.number} ${car.name} · ${car.spec.label}${car.blueFlag?' · BLUE FLAG':''}</div>
         <div class="big">${Math.round(car.v*3.6)} <span class="muted">km/h</span></div>
-        <div class="muted">L${Math.max(0,car.lap)+1} · ${car.pit.phase} · ${car.racecraft.state}</div>
+        <div class="muted">L${displayLap} · ${car.pit.phase} · ${car.racecraft.state}</div>
         <div class="muted">FUEL ${sys.fuel.toFixed(1)}L · TYRE ${Math.round(sys.tyreWear*100)}% · ${Math.round(sys.tyreTemp)}°C</div>
         <div class="muted">LAST ${fmtTime(car.timing.lastLap)} · BEST ${fmtTime(car.timing.bestLap)}</div>`;
     }
