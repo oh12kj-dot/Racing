@@ -22,7 +22,11 @@ export function createSystems(type){
     engineTemp:88,
     grip:1,
     fuelUsed:0,
-    serviceCount:0
+    serviceCount:0,
+    mechanicalStress:0,
+    powerDerate:0,
+    failed:false,
+    failureReason:null
   };
 }
 
@@ -39,6 +43,7 @@ export function gripFactor(car){
 
 export function stepSystems(car,dt){
   const s=car.systems;
+  const damage=clamp(car.incident?.damage||0,0,1);
   const km=car.v*dt/1000;
   const fuelUse=km*s.burnPerKm*(.72+.45*car.throttle);
   s.fuel=Math.max(0,s.fuel-fuelUse);
@@ -53,14 +58,27 @@ export function stepSystems(car,dt){
   s.tyreTemp+=clamp(tyreTarget-s.tyreTemp,-18,18)*dt*.18;
   const brakeTarget=170+car.brake*720+car.v*1.8;
   s.brakeTemp+=clamp(brakeTarget-s.brakeTemp,-260,260)*dt*.28;
-  const engineTarget=84+car.throttle*23+Math.max(0,car.v-60)*.08;
+  const engineTarget=84+car.throttle*23+Math.max(0,car.v-60)*.08+damage*18;
   s.engineTemp+=clamp(engineTarget-s.engineTemp,-12,12)*dt*.08;
+
+  const heatStress=Math.max(0,s.engineTemp-108)/20;
+  const damageStress=Math.max(0,damage-.40)*(.25+.75*car.throttle);
+  const stressGain=heatStress*.0045+damageStress*.0015;
+  const stressRecovery=heatStress<.08&&damageStress<.03?.0012:0;
+  s.mechanicalStress=clamp(s.mechanicalStress+(stressGain-stressRecovery)*dt,0,1.2);
+  s.powerDerate=clamp(Math.max(0,s.mechanicalStress-.25)*.55+Math.max(0,s.engineTemp-110)*.012,0,.48);
+  if(!s.failed&&(s.engineTemp>132||s.mechanicalStress>=.98)){
+    s.failed=true;
+    s.failureReason=s.engineTemp>132?'OVERHEAT':'MECHANICAL_STRESS';
+    s.powerDerate=1;
+  }
+  if(s.failed)s.powerDerate=1;
   s.grip=gripFactor(car);
 }
 
 export function needsPit(car){
   const s=car.systems;
-  return s.tyreWear>.58||s.fuel<Math.max(8,s.fuelCapacity*.12)||s.engineTemp>112;
+  return s.tyreWear>.58||s.fuel<Math.max(8,s.fuelCapacity*.12)||s.engineTemp>112||s.mechanicalStress>.45||s.powerDerate>.12;
 }
 
 export function serviceSystems(car){
@@ -70,6 +88,8 @@ export function serviceSystems(car){
   s.tyreTemp=80;
   s.brakeTemp=Math.min(s.brakeTemp,260);
   s.engineTemp=Math.min(s.engineTemp,94);
+  s.mechanicalStress=Math.max(0,s.mechanicalStress-.35);
+  s.powerDerate=s.failed?1:0;
   s.grip=1;
   s.serviceCount++;
   if(car.incident)car.incident.damage=Math.max(0,car.incident.damage-.32);
