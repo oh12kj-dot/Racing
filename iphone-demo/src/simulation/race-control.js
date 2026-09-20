@@ -21,10 +21,14 @@ function blockedTrack(stopped,track){
   return false;
 }
 function cautionFacts(time,cars,track,environment=null){
-  const hazards=cars.filter(c=>!c.retired&&!c.finished&&c.pit.phase==='TRACK'&&c.lap>=0&&
-    (c.incident.spinTimer>.8||(time>12&&c.v<3)));
+  const hazards=cars.filter(c=>{
+    if(c.retired||c.finished||c.pit.phase!=='TRACK'||c.lap<0)return false;
+    const movingIncident=c.incident.spinTimer>.8;
+    const stoppedCause=(c.incident.damage||0)>.05||c.systems?.failed||c.incident.spinTimer>0;
+    return movingIncident||(time>12&&c.v<3&&stoppedCause);
+  });
   const stopped=hazards.filter(c=>time>12&&c.v<3);
-  const severe=stopped.find(c=>(c.incident.damage||0)>=.55);
+  const severe=stopped.find(c=>(c.incident.damage||0)>=.55||c.systems?.failed);
   const lowVisibility=(environment?.visibility??1)<.42;
   const blocked=blockedTrack(stopped,track);
   let desired='GREEN',primary=null;
