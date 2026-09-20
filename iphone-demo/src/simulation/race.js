@@ -194,19 +194,52 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
     });
   }
 
+  function classificationFor(order){
+    const classSeen=new Map(),lead=order[0];
+    return order.map((car,index)=>{
+      const classPosition=(classSeen.get(car.type)||0)+1;
+      classSeen.set(car.type,classPosition);
+      const previous=index>0?order[index-1]:null;
+      const liveDistanceGap=!car.retired&&!(car.finished&&lead?.finished);
+      const liveInterval=!car.retired&&previous&&!previous.retired&&!(car.finished&&previous.finished);
+      return{
+        carId:car.id,
+        overallPosition:index+1,
+        classPosition,
+        className:car.spec.label,
+        completedLaps:Math.max(0,car.lap),
+        currentLap:car.lap<0?0:Math.min(raceLaps,car.lap+1),
+        status:car.retired?'RETIRED':car.finished?'FINISHED':car.pit.phase==='TRACK'?'RUNNING':'PIT',
+        pitStops:car.pit.completedStops||0,
+        currentLapTime:car.lap<0||car.timing.lapStart==null?null:Math.max(0,time-car.timing.lapStart),
+        lastLap:car.timing.lastLap,
+        bestLap:car.timing.bestLap,
+        gapToLeaderMeters:index===0?0:(liveDistanceGap?Math.max(0,(lead?.totalProgress??car.totalProgress)-car.totalProgress):null),
+        intervalMeters:index===0?0:(liveInterval?Math.max(0,previous.totalProgress-car.totalProgress):null),
+        gapToLeaderSeconds:index===0?0:(car.finished&&lead?.finished?Math.max(0,car.finishTime-lead.finishTime):null),
+        intervalSeconds:index===0?0:(car.finished&&previous?.finished?Math.max(0,car.finishTime-previous.finishTime):null)
+      };
+    });
+  }
+
   function stateHash(){
     const values=[Math.round(time*60),raceControl.flag];
     for(const c of [...cars].sort((a,b)=>a.id-b.id)){
       values.push(c.id,c.lap,Math.round(c.s*1000),Math.round(c.v*1000),Math.round(c.lane*1000),Math.round(c.yaw*1e5),Math.round(c.steer*1e5),c.gear,Math.round(c.systems.fuel*1000),Math.round(c.systems.tyreWear*1e6),c.strategy?.reason??'NONE',c.pit.phase,c.finished?1:0,c.retired?1:0);
     }
-    return fnv1a(values);
+    return h.toString(16).padStart(8,'0');
   }
 
   function snapshot(){
-    const order=standings(),lead=order[0];
+    const order=standings(),lead=order[0],classification=classificationFor(order);
+    let fastestLap=null;
+    for(const car of cars){
+      if(!Number.isFinite(car.timing.bestLap))continue;
+      if(fastestLap==null||car.timing.bestLap<fastestLap.time)fastestLap={carId:car.id,time:car.timing.bestLap};
+    }
     return{
       session:'RACE',time,greenAt,flag:raceControl.flag,running,finished,winnerId,RACE_LAPS:raceLaps,track,cars,events,
-      order,leader:lead,lap:Math.min(raceLaps,Math.max(0,(lead?.lap??-1)+1)),stateHash:stateHash(),
+      order,classification,fastestLap,leader:lead,lap:Math.min(raceLaps,Math.max(0,(lead?.lap??-1)+1)),stateHash:stateHash(),
       diagnostics:{
         finite:cars.every(c=>[c.s,c.v,c.lane,c.laneV,c.yaw,c.yawRate,c.steer,c.gear,c.systems.fuel,c.systems.tyreWear].every(Number.isFinite)),
         maxSpeedKph:Math.max(...cars.map(c=>c.v*3.6)),
