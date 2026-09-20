@@ -1,3 +1,5 @@
+import {TYRE_COMPOUND,tyreIdealTemperature,tyreWeatherGrip} from './environment.js';
+
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 
 const PROFILE={
@@ -18,6 +20,7 @@ export function createSystems(type){
     burnPerKm:p.burn,
     tyreWear:0,
     tyreTemp:82,
+    tyreCompound:TYRE_COMPOUND.SLICK,
     brakeTemp:310,
     engineTemp:88,
     grip:1,
@@ -30,20 +33,26 @@ export function createSystems(type){
   };
 }
 
-export function gripFactor(car){
+export function gripFactor(car,environment=null){
   const s=car.systems;
-  const tempPenalty=Math.abs(s.tyreTemp-92)/125;
+  const wetness=clamp(environment?.wetness??0,0,1);
+  const compound=s.tyreCompound||TYRE_COMPOUND.SLICK;
+  const idealTemp=tyreIdealTemperature(compound,wetness);
+  const tempPenalty=Math.abs(s.tyreTemp-idealTemp)/(compound===TYRE_COMPOUND.WET?105:125);
   const wearPenalty=Math.max(0,s.tyreWear-.18)*.24;
   const damagePenalty=(car.incident?.damage||0)*.10;
   const slipAngle=Math.abs(car.tyre?.slipAngle||0);
   const slipRatio=Math.abs(car.tyre?.slipRatio||0);
   const slidePenalty=Math.max(0,slipAngle-.10)*.22+Math.max(0,slipRatio-.10)*.18;
-  return clamp(1.015-tempPenalty-wearPenalty-damagePenalty-slidePenalty,.76,1.02);
+  const tyreState=clamp(1.015-tempPenalty-wearPenalty-damagePenalty-slidePenalty,.74,1.02);
+  return clamp(tyreState*tyreWeatherGrip(compound,wetness),.46,1.02);
 }
 
-export function stepSystems(car,dt){
+export function stepSystems(car,dt,environment=null){
   const s=car.systems;
   const damage=clamp(car.incident?.damage||0,0,1);
+  const wetness=clamp(environment?.wetness??0,0,1);
+  const compound=s.tyreCompound||TYRE_COMPOUND.SLICK;
   const km=car.v*dt/1000;
   const fuelUse=km*s.burnPerKm*(.72+.45*car.throttle);
   s.fuel=Math.max(0,s.fuel-fuelUse);
@@ -53,12 +62,15 @@ export function stepSystems(car,dt){
   const slipAngle=Math.min(2.5,Math.abs(car.tyre?.slipAngle||0)/.10);
   const slipRatio=Math.min(2.5,Math.abs(car.tyre?.slipRatio||0)/.10);
   const slipEnergy=slipAngle*.65+slipRatio*.55;
-  s.tyreWear=clamp(s.tyreWear+km*(PROFILE[car.type]?.wear||.009)*(1+latLoad*.72+slipEnergy*.34),0,1);
-  const tyreTarget=76+car.v*.19+latLoad*15+slipEnergy*8+Math.abs(car.brake)*6;
+  const compoundWear=compound===TYRE_COMPOUND.WET?1+(1-wetness)*.45:1+wetness*.18;
+  s.tyreWear=clamp(s.tyreWear+km*(PROFILE[car.type]?.wear||.009)*(1+latLoad*.72+slipEnergy*.34)*compoundWear,0,1);
+  const baseTyreTemp=compound===TYRE_COMPOUND.WET?64:76;
+  const tyreTarget=baseTyreTemp+car.v*.19+latLoad*15+slipEnergy*8+Math.abs(car.brake)*6-wetness*12;
   s.tyreTemp+=clamp(tyreTarget-s.tyreTemp,-18,18)*dt*.18;
-  const brakeTarget=170+car.brake*720+car.v*1.8;
+  const brakeTarget=170+car.brake*720+car.v*1.8-wetness*35;
   s.brakeTemp+=clamp(brakeTarget-s.brakeTemp,-260,260)*dt*.28;
-  const engineTarget=84+car.throttle*23+Math.max(0,car.v-60)*.08+damage*18;
+  const ambientEffect=((environment?.ambientTemp??24)-24)*.10;
+  const engineTarget=84+car.throttle*23+Math.max(0,car.v-60)*.08+damage*18+ambientEffect;
   s.engineTemp+=clamp(engineTarget-s.engineTemp,-12,12)*dt*.08;
 
   const heatStress=Math.max(0,s.engineTemp-108)/20;
@@ -73,7 +85,7 @@ export function stepSystems(car,dt){
     s.powerDerate=1;
   }
   if(s.failed)s.powerDerate=1;
-  s.grip=gripFactor(car);
+  s.grip=gripFactor(car,environment);
 }
 
 export function needsPit(car){
@@ -81,11 +93,12 @@ export function needsPit(car){
   return s.tyreWear>.58||s.fuel<Math.max(8,s.fuelCapacity*.12)||s.engineTemp>112||s.mechanicalStress>.45||s.powerDerate>.12;
 }
 
-export function serviceSystems(car){
+export function serviceSystems(car,servicePlan=null){
   const s=car.systems;
+  if(servicePlan?.tyreCompound===TYRE_COMPOUND.WET||servicePlan?.tyreCompound===TYRE_COMPOUND.SLICK)s.tyreCompound=servicePlan.tyreCompound;
   s.fuel=Math.min(s.fuelCapacity,Math.max(s.fuel,s.fuelCapacity*.82));
   s.tyreWear=0;
-  s.tyreTemp=80;
+  s.tyreTemp=s.tyreCompound===TYRE_COMPOUND.WET?70:80;
   s.brakeTemp=Math.min(s.brakeTemp,260);
   s.engineTemp=Math.min(s.engineTemp,94);
   s.mechanicalStress=Math.max(0,s.mechanicalStress-.35);
