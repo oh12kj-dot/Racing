@@ -33,6 +33,7 @@ button.primary{background:var(--accent);color:#111;font-weight:800;border:0;padd
 .flag[data-flag="GREEN"]{color:#80ff7a}
 .flag[data-flag="YELLOW"],.flag[data-flag="VSC"]{color:#ffe34a}
 .flag[data-flag="SAFETY_CAR"]{color:#ffad4a}
+.flag[data-flag="RED"]{color:#ff5353}
 .flag[data-flag="CHEQUERED"]{color:#f5f7f8}
 .leaderboard{position:absolute;top:72px;left:max(12px,env(safe-area-inset-left));width:min(320px,42vw);max-height:62vh;overflow:auto;background:var(--panel);border:1px solid var(--line);backdrop-filter:blur(16px);border-radius:14px;pointer-events:auto}
 .lb-row{display:grid;grid-template-columns:28px 1fr 54px 58px;gap:6px;align-items:center;padding:8px 10px;border-bottom:1px solid rgba(255,255,255,.06);font-size:12px}
