@@ -69,6 +69,9 @@ export function createRaceControl(){
     restartPhase:'NONE',
     restartStartedAt:0,
     isCaution(){return ['YELLOW','VSC','SAFETY_CAR','RED'].includes(this.flag);},
+    fieldControlled(cars){
+      return this.flag==='RED'&&allRunningCarsStopped(cars,new Set(this.incidentIds));
+    },
     transition(flag,time,hazard,emit,incidentIds=null){
       if(flag===this.flag){
         if(flag!=='GREEN'&&flag!=='CHEQUERED')this.cautionUntil=Math.max(this.cautionUntil,time+(MIN_DURATION[flag]||0));
