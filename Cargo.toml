@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = ["crates/sim-math", "crates/sim-track", "crates/sim-vehicle", "crates/sim-line", "crates/sim-driver", "crates/sim-core", "crates/sim-wasm"]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.85"
+license = "UNLICENSED"
+
+# 決定性のためのビルド設定。変更する場合は ADR を起票すること。
+# codegen-units = 1 と lto によりコード生成を安定させ、
+# 同一バイナリでのビット一致再現性を担保する。
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"

@@ -1,0 +1,23 @@
+[package]
+name = "sim-driver"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Driver AI: perception, decision, planner, and controller producing ControlInput only."
+
+# 依存は sim-math + sim-track + sim-line + sim-vehicle のみ。物理エンジン crate も
+# 乱数 crate も使わない（DECISIONS.md ADR-0005）。乱数は sim_math::Rng の明示派生のみ。
+# sim-core / sim-wasm には dev-dependency も含めて依存しない（ARCHITECTURE.md §2 の
+# 依存グラフは一方向・循環禁止）。実物理の閉ループ検証は TASK-2-3 が担当する。
+[dependencies]
+sim-math = { path = "../sim-math" }
+sim-track = { path = "../sim-track", default-features = false }
+sim-vehicle = { path = "../sim-vehicle", default-features = false }
+sim-line = { path = "../sim-line", default-features = false }
+
+[features]
+# 既定で serde を有効化し、下流（sim-core）が JSON ローダを使えるようにする。
+# --no-default-features で serde/serde_json の外部依存が落ちる（WASM / FFI 向け）。
+default = ["serde"]
+serde = ["sim-track/serde", "sim-vehicle/serde", "sim-line/serde"]

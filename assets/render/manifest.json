@@ -1,0 +1,50 @@
+{
+  "version": 3,
+  "vehicles": {
+    "gt": {
+      "url": "https://cdn.3dassets.dev/assets/14834/v1/model.glb",
+      "source": "https://3dassets.dev/assets/endurance-and-gt-paddock-front-engine-gt-coupe-ff0949d7",
+      "license": "CC0-1.0",
+      "fitToCar": true,
+      "teamTint": 0.34
+    },
+    "touring": {
+      "url": "https://cdn.3dassets.dev/assets/14836/v1/model.glb",
+      "source": "https://3dassets.dev/assets/endurance-and-gt-paddock-touring-saloon-6a1eafc8",
+      "license": "CC0-1.0",
+      "fitToCar": true,
+      "teamTint": 0.36
+    },
+    "supercar": {
+      "url": "https://cdn.3dassets.dev/assets/14833/v1/model.glb",
+      "source": "https://3dassets.dev/assets/endurance-and-gt-paddock-mid-engine-gt-coupe-0cbb6f3a",
+      "license": "CC0-1.0",
+      "fitToCar": true,
+      "teamTint": 0.32
+    }
+  },
+  "trackside": {
+    "pitWheelTrolley": {
+      "url": "https://cdn.3dassets.dev/assets/15226/v1/model.glb",
+      "source": "https://3dassets.dev/assets/grand-prix-circuit-and-open-wheel-wheel-trolley-37220a66",
+      "license": "CC0-1.0",
+      "mode": "pitBoxes",
+      "scale": 1,
+      "sideOffset": 3.75,
+      "alongOffset": -2.55,
+      "yOffset": 0.05
+    },
+    "marshalPost": {
+      "url": "https://cdn.3dassets.dev/assets/14883/v1/model.glb",
+      "source": "https://3dassets.dev/assets/endurance-and-gt-paddock-lit-marshal-post-e517a35e",
+      "license": "CC0-1.0",
+      "mode": "trackFractions",
+      "scale": 1,
+      "fractions": [0.08, 0.27, 0.46, 0.67, 0.84],
+      "sides": [-1, 1, -1, 1, -1],
+      "lateral": 30.5,
+      "yOffset": 0.04
+    }
+  },
+  "notes": "CC0 web-optimized GLB upgrades are used where the source silhouette matches the simulated class. Formula/prototype/hyper classes intentionally retain the procedural fallback until a suitable class-correct asset is available. Physics/collision dimensions remain simulation-owned; trackside GLBs are visual-only."
+}

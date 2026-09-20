@@ -1,0 +1,89 @@
+name: Publish Racing Game Static
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: racing-static-publish
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    outputs:
+      site_sha: ${{ steps.publish.outputs.site_sha }}
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+      - name: Install runtime Three.js
+        run: npm install --omit=dev --no-audit --no-fund
+      - name: Assemble self-contained static site
+        shell: bash
+        run: |
+          SITE="$RUNNER_TEMP/racing-site"
+          rm -rf "$SITE"
+          mkdir -p "$SITE/assets" "$SITE/node_modules"
+          cp -R iphone-demo "$SITE/iphone-demo"
+          cp -R assets/render "$SITE/assets/render"
+          cp -R node_modules/three "$SITE/node_modules/three"
+          cat > "$SITE/index.html" <<'HTML'
+          <!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="0; url=./iphone-demo/index.html"><title>Racing 3D</title><script>location.replace('./iphone-demo/index.html');</script></head><body><a href="./iphone-demo/index.html">Racing 3Dを起動</a></body></html>
+          HTML
+          touch "$SITE/.nojekyll"
+      - name: Publish gh-pages branch
+        id: publish
+        shell: bash
+        run: |
+          SITE="$RUNNER_TEMP/racing-site"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan gh-pages
+          git rm -rf .
+          cp -a "$SITE/." .
+          git add -A
+          git commit -m "deploy: racing static build ${GITHUB_SHA}"
+          SITE_SHA="$(git rev-parse HEAD)"
+          git push --force origin HEAD:gh-pages
+          echo "site_sha=$SITE_SHA" >> "$GITHUB_OUTPUT"
+
+  remote-smoke:
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: master
+      - run: npm install --no-audit --no-fund
+      - run: npx playwright install --with-deps chromium
+      - name: Verify immutable rawgithack production build boots
+        env:
+          SITE_SHA: ${{ needs.publish.outputs.site_sha }}
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { chromium } from '@playwright/test';
+          const sha=process.env.SITE_SHA;
+          const url=`https://rawcdn.githack.com/oh12kj-dot/Racing/${sha}/iphone-demo/index.html?runtimeTest=1`;
+          const browser=await chromium.launch({headless:true});
+          const context=await browser.newContext();
+          await context.addCookies([{name:'__Http-phish',value:'1',domain:'rawcdn.githack.com',path:'/',secure:true,httpOnly:true,sameSite:'Lax'}]);
+          const page=await context.newPage();
+          page.on('console',m=>console.log(`[browser:${m.type()}] ${m.text()}`));
+          page.on('pageerror',e=>console.log(`[pageerror] ${e.message}`));
+          page.on('requestfailed',r=>console.log(`[requestfailed] ${r.url()} :: ${r.failure()?.errorText||''}`));
+          const response=await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000});
+          console.log(`[navigate] status=${response?.status()} type=${response?.headers()?.['content-type']||''} url=${page.url()}`);
+          await page.waitForFunction(()=>!!(window.__RACING_RACE__&&window.__RACING_WORLD__&&window.__RACING_REGRESSION_MONITOR__)||document.querySelector('#status')?.textContent==='ERROR',null,{timeout:45000});
+          const state=await page.evaluate(()=>({ready:!!(window.__RACING_RACE__&&window.__RACING_WORLD__&&window.__RACING_REGRESSION_MONITOR__),status:document.querySelector('#status')?.textContent||'',error:document.querySelector('#error')?.textContent||'',three:window.__RACING_THREE_SOURCE__||null}));
+          console.log(JSON.stringify({url,state},null,2));
+          await browser.close();
+          if(!state.ready||state.status==='ERROR')throw new Error(state.error||`Remote boot failed: ${state.status||'NO_STATUS'}`);
+          if(state.three?.kind!=='local-npm')throw new Error(`Expected bundled Three.js, got ${JSON.stringify(state.three)}`);
+          NODE
