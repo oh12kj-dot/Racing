@@ -8,6 +8,25 @@ function intersects(a,b,c,d){
   return ab1*ab2<0&&cd1*cd2<0;
 }
 
+test('TRK-01: track/world roundtrip remains accurate across the full driving corridor',()=>{
+  const track=createTrack();
+  const laterals=[-6,-3,0,3,6];
+  for(let i=0;i<128;i++){
+    const s=track.total*(i+.37)/128;
+    for(const lateral of laterals){
+      const p=track.sample(s,lateral);
+      const back=track.worldToTrack(p.x,p.z);
+      const reconstructed=track.sample(back.s,back.lateral);
+      const ds=Math.abs(track.signedDistance(s,back.s));
+      const dl=Math.abs(lateral-back.lateral);
+      const worldError=Math.hypot(p.x-reconstructed.x,p.z-reconstructed.z);
+      expect(ds).toBeLessThan(.04);
+      expect(dl).toBeLessThan(.04);
+      expect(worldError).toBeLessThan(.04);
+    }
+  }
+});
+
 test('TRK-02/03: centerline has no accidental self-intersection and usable width stays valid',()=>{
   const track=createTrack(),count=320;
   const pts=Array.from({length:count},(_,i)=>track.sample(track.total*i/count));
@@ -54,4 +73,30 @@ test('TRK-04/06: every logical team box has one aligned garage outside driveable
     expect(g.mainClearance).toBeGreaterThan(0);
     expect(g.s).toBeLessThan(result.exitStart);
   }
+});
+
+test('TRK-05: visual asphalt edges follow the physical corridor and grass stays below the road surface',async({page})=>{
+  await page.goto('/iphone-demo/index.html?runtimeTest=1',{waitUntil:'domcontentloaded'});
+  await page.waitForFunction(()=>!!window.__RACING_WORLD__&&!!window.__RACING_RACE__);
+  const result=await page.evaluate(()=>{
+    window.__RACING_LIFECYCLE__.pauseForTest();
+    const world=window.__RACING_WORLD__,track=window.__RACING_RACE__.track;
+    const grass=world.scene.children.find(o=>o.isMesh&&o.material?.color?.getHex?.()===0x496b3f);
+    const road=world.scene.children.find(o=>o.isMesh&&o.material?.color?.getHex?.()===0x25282c);
+    if(!grass||!road)return{missing:true};
+    const pos=road.geometry.getAttribute('position');
+    let maxEdgeError=0,minRoadY=Infinity,maxRoadY=-Infinity;
+    for(let i=0;i<pos.count;i++){
+      const y=pos.getY(i);minRoadY=Math.min(minRoadY,y);maxRoadY=Math.max(maxRoadY,y);
+      if(i%60!==0&&i%60!==1)continue;
+      const back=track.worldToTrack(pos.getX(i),pos.getZ(i));
+      const halfWidth=track.sample(back.s).halfWidth;
+      maxEdgeError=Math.max(maxEdgeError,Math.abs(Math.abs(back.lateral)-halfWidth));
+    }
+    return{missing:false,maxEdgeError,minRoadY,maxRoadY,grassY:grass.position.y};
+  });
+  expect(result.missing).toBeFalsy();
+  expect(result.maxEdgeError).toBeLessThan(.12);
+  expect(result.minRoadY-result.grassY).toBeGreaterThan(.04);
+  expect(result.maxRoadY-result.minRoadY).toBeLessThan(1e-7);
 });
