@@ -75,3 +75,23 @@ test('UI reliability: an active mechanical failure is visibly labelled without c
   await row.click();
   await expect(page.locator('#telemetry')).toContainText('FAIL OVERHEAT');
 });
+
+test('UI race control: red-stop and safety-car restart phases are visibly distinct',async({page})=>{
+  await page.goto('/iphone-demo/index.html?runtimeTest=1',{waitUntil:'domcontentloaded'});
+  await page.waitForFunction(()=>!!window.__RACING_RACE__&&!!window.__RACING_LIFECYCLE__&&document.querySelectorAll('.lb-row').length===24);
+  await page.evaluate(()=>window.__RACING_LIFECYCLE__.pauseForTest());
+  await page.evaluate(()=>{
+    const sim=window.__RACING_RACE__;
+    sim.raceControl.flag='RED';sim.raceControl.restartPhase='RED_STOP';
+  });
+  await page.evaluate(()=>window.__RACING_TEST_TICK__(1/60));
+  await expect(page.locator('#flag')).toHaveText('RED');
+  await expect(page.locator('#procedure')).toHaveText('STOP UNDER RED');
+  await page.evaluate(()=>{
+    const sim=window.__RACING_RACE__;
+    sim.raceControl.flag='SAFETY_CAR';sim.raceControl.restartPhase='SC_FORMATION';
+  });
+  await page.evaluate(()=>window.__RACING_TEST_TICK__(1/60));
+  await expect(page.locator('#flag')).toHaveText('SAFETY_CAR');
+  await expect(page.locator('#procedure')).toHaveText('SC RESTART FORMATION');
+});
