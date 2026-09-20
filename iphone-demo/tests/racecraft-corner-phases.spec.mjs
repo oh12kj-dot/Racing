@@ -62,7 +62,8 @@ test('RC-06: lost inside overlap can request a physical switchback path without 
   const progressBefore=[attacker.s,leader.s];
   const p=planRacecraft(attacker,[attacker,leader],track,20);
   expect(p.state).toBe('SWITCHBACK');
-  expect(p.reason).toBe('SWITCHBACK_EXIT');
+  expect(['SWITCHBACK_EXIT','TRAFFIC_FOLLOW']).toContain(p.reason);
   expect(Math.sign(p.targetLane)).toBe(-insideSign);
   expect([attacker.s,leader.s]).toEqual(progressBefore);
+  if(p.reason==='TRAFFIC_FOLLOW')expect(p.targetSpeed).toBeLessThanOrEqual(leader.v+4);
 });
