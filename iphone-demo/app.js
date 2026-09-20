@@ -10,6 +10,7 @@ const viewport=document.querySelector('#viewport');
 const boot=document.querySelector('#boot');
 const watchButton=document.querySelector('#watchButton');
 const bootStatus=document.querySelector('#bootStatus');
+const query=new URLSearchParams(location.search);
 
 let sim,world,director,ui,audio,perf;
 let started=false,last=performance.now(),acc=0,raf=0,tickIndex=0;
@@ -24,6 +25,12 @@ const lifecycle={
   diagnostics(){return{owner:'runtime-lifecycle-v1',paused:this.paused,reason:this.reason,resumeCount:this.resumeCount,contextLosses:this.contextLosses,contextRestores:this.contextRestores};}
 };
 
+function environmentFromQuery(){
+  const mode=(query.get('weather')||'').toLowerCase();
+  if(mode==='wet')return{initialWetness:.72,rainRate:0,dryingRate:0,ambientTemp:18};
+  if(mode==='rain')return{initialWetness:.10,rainRate:.68,dryingRate:.25,ambientTemp:17};
+  return null;
+}
 function stepSimulation(seconds){
   if(lifecycle.paused)return{...sim.snapshot(),paused:true,idx:tickIndex};
   const steps=Math.max(1,Math.round(seconds/FIXED_DT));
@@ -31,7 +38,8 @@ function stepSimulation(seconds){
   return{...sim.snapshot(),paused:false,idx:tickIndex};
 }
 function init(){
-  sim=createRaceSimulation();
+  const environment=environmentFromQuery();
+  sim=environment?createRaceSimulation(undefined,{environment}):createRaceSimulation();
   world=createWorld(viewport,sim.track,sim.cars);
   director=createCameraDirector(world,sim.track);
   world.camera=director.camera;
@@ -50,7 +58,7 @@ function init(){
   const cam=director.update(snap);
   ui.update(snap,cam);
   world.renderer.render(world.scene,director.camera);
-  bootStatus.textContent='READY · 24 CARS · DETERMINISTIC CORE';
+  bootStatus.textContent=`READY · 24 CARS · ${snap.environment.condition} · DETERMINISTIC CORE`;
 
   world.renderer.domElement.addEventListener('webglcontextlost',e=>{e.preventDefault();lifecycle.contextLosses++;lifecycle.pause('webgl-context-lost');});
   world.renderer.domElement.addEventListener('webglcontextrestored',()=>{lifecycle.contextRestores++;lifecycle.resume();});
@@ -112,7 +120,7 @@ window.addEventListener('pagehide',()=>cancelAnimationFrame(raf),{once:true});
 
 try{
   init();
-  if(new URLSearchParams(location.search).has('runtimeTest')){
+  if(query.has('runtimeTest')){
     started=true;boot.classList.add('hidden');
   }
   raf=requestAnimationFrame(frame);
