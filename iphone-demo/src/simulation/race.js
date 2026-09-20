@@ -8,6 +8,7 @@ import {stepSystems} from './systems.js';
 import {updateTiming} from './timing.js';
 import {createRaceControl} from './race-control.js';
 import {computeTrafficAero} from './traffic-aero.js';
+import {evaluatePitStrategy} from './strategy.js';
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 
@@ -138,7 +139,8 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
         stepVehicle(car,track,{throttle:0,brake:1,laneAccel:0},dt);stepSystems(car,dt);continue;
       }
 
-      maybeRequestPit(car,track,(type,c,text)=>emit(type,c,text,`${type}:${c.id}:${c.pit.plannedLap}`));
+      car.strategy=evaluatePitStrategy(car,track,raceLaps);
+      maybeRequestPit(car,track,(type,c,text)=>emit(type,c,text,`${type}:${c.id}:${c.pit.plannedLap}:${c.strategy.reason}`),car.strategy);
       const pitPlan=planPit(car,cars,track,dt,(type,c,text)=>emit(type,c,text,`${type}:${c.id}:${c.lap}`));
 
       let targetSpeed=speedEnvelope(car,track),targetLane=track.idealLane(car.s),source='PHYSICS_LINE';
@@ -192,7 +194,7 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
   function stateHash(){
     const values=[Math.round(time*60),raceControl.flag];
     for(const c of [...cars].sort((a,b)=>a.id-b.id)){
-      values.push(c.id,c.lap,Math.round(c.s*1000),Math.round(c.v*1000),Math.round(c.lane*1000),Math.round(c.yaw*1e5),c.gear,Math.round(c.systems.fuel*1000),Math.round(c.systems.tyreWear*1e6),c.pit.phase,c.finished?1:0,c.retired?1:0);
+      values.push(c.id,c.lap,Math.round(c.s*1000),Math.round(c.v*1000),Math.round(c.lane*1000),Math.round(c.yaw*1e5),c.gear,Math.round(c.systems.fuel*1000),Math.round(c.systems.tyreWear*1e6),c.strategy?.reason??'NONE',c.pit.phase,c.finished?1:0,c.retired?1:0);
     }
     return fnv1a(values);
   }

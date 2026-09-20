@@ -20,14 +20,19 @@ function fastLaneBlocked(car,cars,track){
 }
 function sameTeamService(car,cars){return cars.find(o=>o!==car&&o.teamId===car.teamId&&['SERVICE','QUEUE'].includes(o.pit.phase));}
 function brakeEnvelope(car,dist,target){const a=Math.max(4,car.spec.brake*.72);return Math.sqrt(Math.max(target*target,target*target+2*a*Math.max(0,dist)));}
-export function maybeRequestPit(car,track,emit){
+export function maybeRequestPit(car,track,emit,decision=null){
   if(car.pit.requested)return;
   const urgent=needsPit(car)&&car.lap>=1;
-  if(car.pit.served&&!urgent)return;
   const planned=!car.pit.served&&car.lap>=car.pit.plannedLap;
-  if(!planned&&!urgent)return;
+  const request=decision?.request??(planned||urgent);
+  if(!request)return;
   const d=track.forwardDistance(car.s,track.pit.entryStart);
-  if(d<520){car.pit.requested=true;car.pit.phase='PIT_APPROACH';emit?.('PIT_CALL',car,`BOX THIS LAP — ${car.name}`);}
+  if(d<520){
+    car.pit.requested=true;
+    car.pit.requestReason=decision?.reason??(urgent?'SYSTEM_LIMIT':'PLANNED_STOP');
+    car.pit.phase='PIT_APPROACH';
+    emit?.('PIT_CALL',car,`BOX THIS LAP — ${car.name}`);
+  }
 }
 export function planPit(car,cars,track,dt,emit){
   const p=car.pit,t=track.pit;

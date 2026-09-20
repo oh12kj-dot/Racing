@@ -7,6 +7,7 @@ import {createTrack} from '../src/simulation/track.js';
 import {createVehicleState,cornerSpeedLimit} from '../src/simulation/vehicle.js';
 import {planRacecraft} from '../src/simulation/racecraft.js';
 import {computeTrafficAero} from '../src/simulation/traffic-aero.js';
+import {evaluatePitStrategy,PIT_REASON} from '../src/simulation/strategy.js';
 import {buildEntrants,FIXED_DT,VEHICLE_CLASSES} from '../src/config.js';
 
 const appRoot=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
@@ -53,6 +54,19 @@ test('AERO: draft reduces drag while dirty air only reduces aero when aligned in
   const distant=computeTrafficAero(follower,[follower,leader],track);
   expect(distant.dragFactor).toBe(1);expect(distant.downforceFactor).toBe(1);
   expect(VEHICLE_CLASSES.formula.dirtyAirLoss).toBeGreaterThan(VEHICLE_CLASSES.gt.dirtyAirLoss);
+});
+
+test('STRATEGY: pit requests are reason-coded and never write tactical lane intent',()=>{
+  const track=createTrack(),car=createVehicleState(buildEntrants()[0],100,1);
+  car.targetLane=1.25;car.pit.plannedLap=3;
+  let decision=evaluatePitStrategy(car,track,8);
+  expect(decision.request).toBeFalsy();expect(decision.reason).toBe(PIT_REASON.NONE);expect(car.targetLane).toBe(1.25);
+  car.systems.tyreWear=.7;
+  decision=evaluatePitStrategy(car,track,8);
+  expect(decision.request).toBeTruthy();expect(decision.reason).toBe(PIT_REASON.TYRES);expect(car.targetLane).toBe(1.25);
+  car.systems.tyreWear=0;car.lap=3;
+  decision=evaluatePitStrategy(car,track,8);
+  expect(decision.reason).toBe(PIT_REASON.PLANNED);
 });
 
 test('REG-SPEED-101: green running is not locked around 101 km/h',()=>{
