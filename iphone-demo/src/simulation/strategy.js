@@ -15,10 +15,11 @@ export function evaluatePitStrategy(car,track,raceLaps){
   const lastServicedDamage=car.pit.lastServiceDamage??0;
   const newDamage=Math.max(0,damage-lastServicedDamage);
   const damageStop=damage>.48&&(!car.pit.served||damage>.82||newDamage>.12);
+  const mechanicalRisk=s.engineTemp>112||s.mechanicalStress>.45||s.powerDerate>.12;
   let reason=PIT_REASON.NONE;
 
   if(damageStop)reason=PIT_REASON.DAMAGE;
-  else if(s.engineTemp>112)reason=PIT_REASON.ENGINE;
+  else if(mechanicalRisk&&!s.failed)reason=PIT_REASON.ENGINE;
   else if(s.fuel<Math.max(8,s.fuelCapacity*.12)||s.fuel<projectedFuel)reason=PIT_REASON.FUEL;
   else if(s.tyreWear>.58)reason=PIT_REASON.TYRES;
   else if(!car.pit.served&&car.lap>=car.pit.plannedLap)reason=PIT_REASON.PLANNED;
