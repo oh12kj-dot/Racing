@@ -23,7 +23,7 @@ function controlFor(car,targetSpeed,targetLane){
   const speedError=targetSpeed-car.v;
   let throttle=0,brake=0;
   if(speedError>1.2)throttle=clamp(speedError/12,0,1);
-  else if(speedError<-.5)brake=clamp(-speedError/10,0,1);
+  else if(speedError<-.05)brake=clamp(-speedError/3.2,0,1);
   else throttle=clamp((speedError+.5)/2,0,.35);
 
   const laneError=targetLane-car.lane;
