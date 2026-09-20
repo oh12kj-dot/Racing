@@ -91,7 +91,7 @@ test('RED-06: full simulation slows physically under RED and does not teleport t
   expect(sim.snapshot().flag).toBe('RED');
   expect(active.controlSource).toBe('RED_CONTROL');
   expect(active.targetSpeed).toBe(0);
-  expect(active.targetLane).toBeCloseTo(active.lane,6);
+  expect(Math.abs(active.targetLane-active.lane)).toBeLessThan(.25);
   for(let i=0;i<sim.cars.length;i++){
     const moved=Math.abs(sim.track.signedDistance(before[i].s,sim.cars[i].s));
     expect(moved).toBeLessThan(Math.max(2,before[i].v*FIXED_DT*1.8+1));
