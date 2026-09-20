@@ -81,7 +81,7 @@ export function planPit(car,cars,track,dt,emit){
     }else if(occupied&&toBox<10){
       p.phase='QUEUE';p.queue=true;
     }else if(toBox<1.5&&car.v<1.8){
-      p.phase='SERVICE';p.serviceTimer=3.2+(car.id%4)*.35;p.queue=false;
+      p.phase='SERVICE';p.serviceTimer=3.2+(car.id%4)*.35;p.queue=false;p.missedCount=0;
       emit?.('PIT_SERVICE',car,`${car.name} IN THE BOX`);
     }
   }
