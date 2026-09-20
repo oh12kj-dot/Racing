@@ -170,9 +170,9 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
         targetLane=clamp(car.lane+Math.sin(time*4.5+car.id)*.55,-6.2,6.2);source='INCIDENT_SPIN';
       }
 
-      if(raceControl.flag==='YELLOW'){
+      if(raceControl.isCaution()){
         targetSpeed=Math.min(targetSpeed,raceControl.targetFor(car,cars,track));
-        source=source.startsWith('PIT:')?source:'YELLOW_CONTROL';
+        source=source.startsWith('PIT:')?source:`${raceControl.flag}_CONTROL`;
       }
 
       car.targetSpeed=Number.isFinite(targetSpeed)?targetSpeed:car.spec.top;car.targetLane=targetLane;car.controlSource=source;
@@ -231,7 +231,7 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
   }
 
   function stateHash(){
-    const values=[Math.round(time*60),raceControl.flag];
+    const values=[Math.round(time*60),raceControl.flag,Math.round(raceControl.cautionUntil*60),raceControl.incidentId??-1];
     for(const c of [...cars].sort((a,b)=>a.id-b.id)){
       values.push(
         c.id,c.lap,Math.round(c.s*1000),Math.round(c.v*1000),Math.round(c.lane*1000),Math.round(c.yaw*1e5),Math.round(c.steer*1e5),c.gear,
