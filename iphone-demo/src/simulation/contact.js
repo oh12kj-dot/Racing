@@ -56,7 +56,7 @@ export function contactManifold(a,b,track){
 }
 
 export function resolveContactImpulse(a,b,contact,options={}){
-  if(!contact?.hit)return{applied:false,impactSpeed:0,impulse:0,deltaVA:0,deltaVB:0};
+  if(!contact?.hit)return{applied:false,impactSpeed:0,impulse:0,deltaVA:0,deltaVB:0,deltaYawRateA:0,deltaYawRateB:0};
   const massA=Math.max(1,a.mass||a.spec?.mass||1000),massB=Math.max(1,b.mass||b.spec?.mass||1000);
   const invA=1/massA,invB=1/massB;
   const nLong=contact.normalLong||0,nLat=contact.normalLat||0;
@@ -70,15 +70,34 @@ export function resolveContactImpulse(a,b,contact,options={}){
   // not create an artificial launch.
   const separationTarget=Math.min(options.maxSeparationSpeed??1.8,(contact.penetration||0)*(options.separationGain??2.6));
   const neededDelta=Math.max(0,separationTarget-relativeNormal);
-  if(neededDelta<=1e-8)return{applied:false,impactSpeed,impulse:0,deltaVA:0,deltaVB:0,relativeNormal};
+  if(neededDelta<=1e-8)return{applied:false,impactSpeed,impulse:0,deltaVA:0,deltaVB:0,deltaYawRateA:0,deltaYawRateB:0,relativeNormal};
   const bounce=impactSpeed*restitution;
   const impulse=(neededDelta+bounce)/(invA+invB);
 
   const beforeA=a.v||0,beforeB=b.v||0,beforeLatA=a.laneV||0,beforeLatB=b.laneV||0;
+  const beforeYawA=a.yawRate||0,beforeYawB=b.yawRate||0;
   a.v=Math.max(0,beforeA-impulse*nLong*invA);
   b.v=Math.max(0,beforeB+impulse*nLong*invB);
   a.laneV=beforeLatA-impulse*nLat*invA;
   b.laneV=beforeLatB+impulse*nLat*invB;
+
+  // Angular response comes from the lateral impulse acting away from each car's
+  // centre of mass. A door-to-door touch at the same longitudinal station has
+  // essentially no yaw lever; an oblique front/rear hit can create rotation.
+  const lengthA=Math.max(1,a.length||a.spec?.length||4.5),lengthB=Math.max(1,b.length||b.spec?.length||4.5);
+  const widthA=Math.max(.8,a.width||a.spec?.width||2),widthB=Math.max(.8,b.width||b.spec?.width||2);
+  const inertiaA=massA*(lengthA*lengthA+widthA*widthA)/12;
+  const inertiaB=massB*(lengthB*lengthB+widthB*widthB)/12;
+  const leverA=clamp((contact.longitudinal||0)*.5,-lengthA*.5,lengthA*.5);
+  const leverB=clamp(-(contact.longitudinal||0)*.5,-lengthB*.5,lengthB*.5);
+  const lateralImpulse=impulse*nLat;
+  const maxYawKick=Math.max(.5,options.maxYawKick??4.5);
+  const rawYawA=leverA*(-lateralImpulse)/Math.max(1,inertiaA);
+  const rawYawB=leverB*( lateralImpulse)/Math.max(1,inertiaB);
+  const yawKickA=clamp(rawYawA,-maxYawKick,maxYawKick);
+  const yawKickB=clamp(rawYawB,-maxYawKick,maxYawKick);
+  a.yawRate=clamp(beforeYawA+yawKickA,-6,6);
+  b.yawRate=clamp(beforeYawB+yawKickB,-6,6);
 
   return{
     applied:true,
@@ -90,6 +109,8 @@ export function resolveContactImpulse(a,b,contact,options={}){
     deltaVA:a.v-beforeA,
     deltaVB:b.v-beforeB,
     deltaLatA:a.laneV-beforeLatA,
-    deltaLatB:b.laneV-beforeLatB
+    deltaLatB:b.laneV-beforeLatB,
+    deltaYawRateA:a.yawRate-beforeYawA,
+    deltaYawRateB:b.yawRate-beforeYawB
   };
 }
