@@ -61,7 +61,7 @@ test('INC-02: oblique lateral impulse away from the centre of mass creates physi
   expect(Math.abs(response.deltaYawRateA)).toBeGreaterThan(.65);
   expect(Math.abs(response.deltaYawRateB)).toBeGreaterThan(.65);
   const yawBefore=a.yaw,rateBefore=Math.abs(a.yawRate);
-  a.incident.spinTimer=2;
+  a.incident.spinTimer=2;a.incident.yawTransient=true;
   for(let i=0;i<30;i++)stepVehicle(a,track,{throttle:0,brake:.2,steer:0},FIXED_DT);
   expect(Math.abs(a.yaw-yawBefore)).toBeGreaterThan(.1);
   expect(Math.abs(a.yawRate)).toBeLessThan(rateBefore);
@@ -86,6 +86,7 @@ test('INC-04: race contact triggers spin state from yaw impulse and vehicle phys
   expect(sim.snapshot().diagnostics.contacts).toBe(1);
   const victim=Math.abs(a.yawRate)>=Math.abs(b.yawRate)?a:b;
   expect(victim.incident.spinTimer).toBeGreaterThan(1);
+  expect(victim.incident.yawTransient).toBeTruthy();
   expect(Math.abs(victim.yawRate)).toBeGreaterThan(.65);
   const yawAfterImpact=victim.yaw;
   sim.update(FIXED_DT);
@@ -93,13 +94,17 @@ test('INC-04: race contact triggers spin state from yaw impulse and vehicle phys
   expect([victim.yaw,victim.yawRate,victim.incident.spinTimer].every(Number.isFinite)).toBeTruthy();
 });
 
-test('INC-05: authoritative hash includes angular velocity and spin state',()=>{
+test('INC-05: authoritative hash includes angular velocity, yaw transient and spin state',()=>{
   const a=createRaceSimulation(0x1ac1005,{raceLaps:40});
   const b=createRaceSimulation(0x1ac1005,{raceLaps:40});
   expect(a.stateHash()).toBe(b.stateHash());
   b.cars[0].yawRate=.5;
   expect(a.stateHash()).not.toBe(b.stateHash());
   b.cars[0].yawRate=0;
+  expect(a.stateHash()).toBe(b.stateHash());
+  b.cars[0].incident.yawTransient=true;
+  expect(a.stateHash()).not.toBe(b.stateHash());
+  b.cars[0].incident.yawTransient=false;
   expect(a.stateHash()).toBe(b.stateHash());
   b.cars[0].incident.spinTimer=1;
   expect(a.stateHash()).not.toBe(b.stateHash());
@@ -136,6 +141,7 @@ test('INC-08: incident state cannot prescribe a synthetic lower target speed',()
   const incident=createRaceSimulation(0x1ac1008,{raceLaps:40});
   const normalCar=configureSoloRace(normal),incidentCar=configureSoloRace(incident);
   incidentCar.incident.spinTimer=.5;
+  incidentCar.yawTransient=true;
   incidentCar.yawRate=.2;
   normal.update(FIXED_DT);incident.update(FIXED_DT);
   expect(incidentCar.controlSource).toBe('INCIDENT_SPIN');
@@ -149,7 +155,7 @@ test('INC-09: spin speed loss comes from body-slip tyre scrub rather than the in
   const aligned=createVehicleState(entry,300,0),sideways=createVehicleState(entry,300,0);
   const heading=track.sample(300).heading;
   for(const car of [aligned,sideways]){
-    car.v=40;car.lane=0;car.laneV=0;car.laneA=0;car.yawRate=0;car.incident.spinTimer=1;
+    car.v=40;car.lane=0;car.laneV=0;car.laneA=0;car.yawRate=0;car.incident.spinTimer=1;car.incident.yawTransient=true;
   }
   aligned.yaw=heading;
   sideways.yaw=heading+Math.PI/2;
@@ -183,10 +189,33 @@ test('INC-12: following traffic evades a spinning car swept corridor instead of 
   const car=createVehicleState(entries[0],300,0),hazard=createVehicleState(entries[1],330,0);
   car.v=42;car.lane=0;car.yaw=track.sample(car.s).heading;car.totalProgress=car.s;
   hazard.v=8;hazard.lane=-1;hazard.laneV=3.2;hazard.yaw=track.sample(hazard.s).heading+Math.PI/2;
-  hazard.incident.spinTimer=2;hazard.totalProgress=hazard.s;
+  hazard.incident.spinTimer=2;hazard.incident.yawTransient=true;hazard.totalProgress=hazard.s;
   const plan=planRacecraft(car,[car,hazard],track,20);
   expect(plan.reason).toBe('HAZARD_EVADE');
   expect(plan.targetLane).toBeLessThan(-4.5);
   expect(plan.targetSpeed).toBeLessThan(car.v);
   expect(plan.targetSpeed).toBeGreaterThanOrEqual(hazard.v);
+});
+
+test('INC-13: recoverable oblique contact creates a damped yaw transient without declaring a spin',()=>{
+  const sim=createRaceSimulation(0x1ac1013,{raceLaps:40});
+  const [a,b,...rest]=sim.cars;
+  for(const car of rest)car.retired=true;
+  a.reaction=-10;b.reaction=-10;a.lap=0;b.lap=0;
+  a.s=300;b.s=303;a.totalProgress=300;b.totalProgress=303;
+  a.lane=-.3;b.lane=.3;a.laneV=1;b.laneV=-1;a.v=40;b.v=40;
+  a.yaw=sim.track.sample(a.s).heading;b.yaw=sim.track.sample(b.s).heading;a.yawRate=0;b.yawRate=0;
+  sim.update(FIXED_DT);
+  expect(sim.snapshot().diagnostics.contacts).toBe(1);
+  expect(a.incident.spinTimer).toBe(0);
+  expect(b.incident.spinTimer).toBe(0);
+  const victim=Math.abs(a.yawRate)>=Math.abs(b.yawRate)?a:b;
+  const other=victim===a?b:a;
+  expect(victim.incident.yawTransient).toBeTruthy();
+  expect(Math.abs(victim.yawRate)).toBeGreaterThan(.12);
+  other.retired=true;
+  for(let i=0;i<120;i++)stepVehicle(victim,sim.track,{throttle:.2,brake:0,steer:0},FIXED_DT);
+  expect(victim.incident.spinTimer).toBe(0);
+  expect(victim.incident.yawTransient).toBeFalsy();
+  expect([victim.v,victim.lane,victim.yaw,victim.yawRate].every(Number.isFinite)).toBeTruthy();
 });
