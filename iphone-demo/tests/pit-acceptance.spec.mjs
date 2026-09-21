@@ -97,7 +97,13 @@ test('PIT-14: pit exit yields physically to unsafe main-track traffic before mer
   car.s=track.pit.mergeStart;car.v=.2;
   plan=planPit(car,[car,traffic],track,FIXED_DT);
   expect(car.pit.phase).toBe('MERGE');
+  // Entry into MERGE starts from the physical fast-lane position; lateral
+  // motion begins continuously after crossing the merge start, not instantly.
+  expect(plan.targetLane).toBeCloseTo(track.pit.fastLane,9);
+  car.s=track.pit.mergeStart+(track.pit.mergeEnd-track.pit.mergeStart)*.5;
+  plan=planPit(car,[car,traffic],track,FIXED_DT);
   expect(plan.targetLane).toBeGreaterThan(track.pit.fastLane);
+  expect(plan.targetLane).toBeLessThan(-2.2);
 });
 
 test('PIT-15: merge completes in the merge corridor instead of cutting straight to the racing line',()=>{
