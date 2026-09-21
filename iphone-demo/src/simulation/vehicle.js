@@ -87,7 +87,7 @@ export function createVehicleState(entry,s,lap=-1){
     incident:{spinTimer:0,yawTransient:false,damage:0},
     systems:createSystems(entry.type),
     timing:createTiming(),
-    tyre:{slipRatio:0,slipAngle:0,loadTransfer:0,longitudinalAccel:0,forceUsage:0},
+    tyre:{slipRatio:0,slipAngle:0,loadTransfer:0,longitudinalAccel:0,lateralForceUsage:0,forceUsage:0},
     aeroTraffic:{wake:0,dragFactor:1,downforceFactor:1,sourceId:null},
     diagnostics:{barrierContacts:0,recoveries:0,maxForceUsage:0,maxYawRate:0,maxSteerRate:0,maxSlipRatio:0,maxSlipAngle:0,maxLoadTransfer:0,barrierActive:false},
     blueFlag:false,
@@ -124,7 +124,14 @@ export function stepVehicle(car,track,control,dt){
   car.laneV=clamp(car.laneV+car.laneA*dt,-5.2,5.2);
   car.lane+=car.laneV*dt;
 
-  const latUse=clamp(Math.abs(car.laneA)/Math.max(1,tyreLat),0,1);
+  // The track coordinate system already bends the trajectory through a corner,
+  // so that centripetal demand must consume the same tyre force budget as an
+  // explicit lane-change acceleration. Otherwise a car could corner at high G
+  // and still use the full longitudinal tyre capacity for braking/drive.
+  const circuitLatAccel=track.curvature(car.s)*car.v*car.v;
+  const totalLatAccel=circuitLatAccel+car.laneA;
+  const latUse=clamp(Math.abs(totalLatAccel)/Math.max(1,tyreLat),0,1);
+  car.tyre.lateralForceUsage=latUse;
   const ratio=car.v/Math.max(1,topSpeed);
   const fuelFactor=(car.systems?.fuel??1)>0?.99:.10;
   const baseDrive=car.throttle*accelerationAt(spec,car.v)*fuelFactor*performance.drive;
