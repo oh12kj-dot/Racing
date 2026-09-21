@@ -38,6 +38,29 @@ function fastLaneBlocked(car,cars,track){
   }
   return false;
 }
+function pitLaneFollowingSpeed(car,cars,track,baseSpeed){
+  let speed=baseSpeed;
+  const phases=new Set(['PIT_ENTRY','FAST_LANE','WORKING_APPROACH','WORKING_EXIT','FAST_LANE_EXIT','MERGE']);
+  for(const o of cars){
+    if(o===car||o.retired||o.finished||!phases.has(o.pit.phase))continue;
+    const lateralClearance=(car.width+o.width)*.5+.7;
+    if(Math.abs((o.lane||0)-(car.lane||0))>lateralClearance)continue;
+    const d=track.forwardDistance(car.s,o.s);
+    if(d<=0||d>55)continue;
+    const body=(car.length+o.length)*.5;
+    const gap=Math.max(.1,d-body);
+    const closing=Math.max(0,(car.v||0)-(o.v||0));
+    const braking=pitApproachDecel(car);
+    const relativeStop=closing>0?closing*closing/(2*braking):0;
+    const desiredGap=2.5+(car.v||0)*.28+relativeStop;
+    if(gap<desiredGap){
+      const available=Math.max(0,gap-2.5);
+      const allowedClosing=Math.sqrt(Math.max(0,2*braking*available));
+      speed=Math.min(speed,(o.v||0)+allowedClosing);
+    }
+  }
+  return speed;
+}
 function mainTrackMergeBlocked(car,cars,track){
   const mergeLane=-2.2;
   for(const o of cars){
@@ -110,7 +133,7 @@ export function planPit(car,cars,track,dt,emit){
   }
 
   if(p.phase==='FAST_LANE'){
-    lane=t.fastLane;speed=t.speedLimit;
+    lane=t.fastLane;speed=pitLaneFollowingSpeed(car,cars,track,t.speedLimit);
     const toBox=p.boxS-car.s;
     if(toBox<120&&toBox>-8)p.phase='WORKING_APPROACH';
   }
@@ -168,12 +191,12 @@ export function planPit(car,cars,track,dt,emit){
   }
 
   if(p.phase==='FAST_LANE_EXIT'){
-    lane=t.fastLane;speed=t.speedLimit;
+    lane=t.fastLane;speed=pitLaneFollowingSpeed(car,cars,track,t.speedLimit);
     const mergeBlocked=mainTrackMergeBlocked(car,cars,track);
     const holdS=t.mergeStart-4;
     const toHold=holdS-car.s;
     if(mergeBlocked){
-      speed=toHold>0?Math.min(t.speedLimit,brakeEnvelope(car,toHold,0)):0;
+      speed=Math.min(speed,toHold>0?brakeEnvelope(car,toHold,0):0);
     }else if(car.s>=t.mergeStart){
       p.phase='MERGE';
     }
@@ -181,9 +204,10 @@ export function planPit(car,cars,track,dt,emit){
 
   if(p.phase==='MERGE'){
     const u=clamp((car.s-t.mergeStart)/Math.max(1,t.mergeEnd-t.mergeStart),0,1);
-    const mergeLane=-2.2+(track.idealLane(car.s)+2.2)*u;
+    const mergeLane=-2.2;
     lane=t.fastLane+(mergeLane-t.fastLane)*u;
-    speed=car.s<t.limiterEnd?t.speedLimit:Infinity;
+    const baseSpeed=car.s<t.limiterEnd?t.speedLimit:Infinity;
+    speed=pitLaneFollowingSpeed(car,cars,track,baseSpeed);
     if(car.s>=t.mergeEnd){
       p.phase='TRACK';p.requested=false;p.servicePlan=null;
       if(p.missedCount)emit?.('PIT_RETRY',car,`${car.name} WILL TRY AGAIN NEXT LAP`);
