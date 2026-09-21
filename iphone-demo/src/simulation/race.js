@@ -188,11 +188,12 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
         targetLane=clamp(targetLane+car.driver.steerBias*Math.sin(Math.PI*(1-phase)),-6.2,6.2);
         source='DRIVER_ERROR_INPUT';
       }
-      if(car.incident.spinTimer>0){
-        // Stabilise the current physical corridor; lateral/yaw motion comes from
-        // vehicle state and contact impulse rather than a prescribed sine path.
+      const incidentActive=car.incident.spinTimer>0;
+      if(incidentActive){
+        // Keep the controller from prescribing a spin path or a synthetic speed
+        // decay. The driver lifts; yaw/slip tyre scrub and normal physics decide
+        // how much speed is actually lost.
         targetLane=car.lane;
-        targetSpeed=Math.min(targetSpeed,Math.max(4,car.v*.62));
         source='INCIDENT_SPIN';
         car.incident.spinTimer=Math.max(0,car.incident.spinTimer-dt);
       }
@@ -215,6 +216,7 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
       car.targetSpeed=Number.isFinite(targetSpeed)?targetSpeed:effectiveTopSpeed(car);car.targetLane=targetLane;car.controlSource=source;
       const control=controlFor(car,car.targetSpeed,car.targetLane);
       if(car.driver.mistakeTimer>0&&car.pit.phase==='TRACK')control.throttle*=1-car.driver.lift;
+      if(incidentActive)control.throttle=0;
       const wasFailed=car.systems.failed;
       stepVehicle(car,track,control,dt);stepSystems(car,dt,environment);updateTiming(car,track,time);
       if(!wasFailed&&car.systems.failed){
