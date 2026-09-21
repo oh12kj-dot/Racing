@@ -51,14 +51,15 @@ test('RACECRAFT-CAUTION-03: race control publishes and clears the no-passing res
 test('RACECRAFT-CAUTION-04: high lateral tyre usage consumes following reserve before the low-load car must lift',()=>{
   const track=createTrack(),entries=buildEntrants();
   const entry=entries[0],frontEntry=entries[1];
-  const low=car(entry,100,45,0),lowFront=car(frontEntry,135,32,0);
-  const high=car(entry,100,45,0),highFront=car(frontEntry,135,32,0);
+  // 31 m sits between the two physical stopping-distance thresholds: the
+  // low-load car retains enough longitudinal reserve, while the 90%-loaded tyre
+  // must already reduce closing speed.
+  const low=car(entry,100,45,0),lowFront=car(frontEntry,131,32,0);
+  const high=car(entry,100,45,0),highFront=car(frontEntry,131,32,0);
   low.cautionNoPass=true;high.cautionNoPass=true;
   low.tyre.lateralForceUsage=.10;high.tyre.lateralForceUsage=.90;
   const lowPlan=planRacecraft(low,[low,lowFront],track,20);
   const highPlan=planRacecraft(high,[high,highFront],track,20);
-  // At this gap the low-load car still has enough tyre reserve to leave speed
-  // unconstrained, while the saturated car must already reduce closing speed.
   expect(lowPlan.targetSpeed).toBe(Infinity);
   expect(Number.isFinite(highPlan.targetSpeed)).toBeTruthy();
   expect(highPlan.targetSpeed).toBeLessThan(high.v);
