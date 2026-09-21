@@ -23,6 +23,8 @@ test('RED-10: normal dry race and pit cycles do not falsely escalate to red',()=
             const velocityHeading=sim.track.sample(car.s).heading+Math.atan2(car.laneV,Math.max(4,car.v));
             return{
               id:car.id,
+              lap:car.lap,
+              s:+car.s.toFixed(2),
               v:+car.v.toFixed(3),
               lane:+car.lane.toFixed(3),
               laneV:+car.laneV.toFixed(3),
@@ -33,7 +35,10 @@ test('RED-10: normal dry race and pit cycles do not falsely escalate to red',()=
               bodySlip:+Math.abs(wrapAngle(velocityHeading-car.yaw)).toFixed(3),
               source:car.controlSource
             };
-          })
+          }),
+          recentEvents:sim.events.filter(event=>event.time>snap.time-18).map(event=>({
+            t:+event.time.toFixed(3),type:event.type,carId:event.carId,text:event.text
+          }))
         };
       }
     }
