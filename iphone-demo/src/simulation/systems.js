@@ -33,9 +33,10 @@ export function createSystems(type){
   };
 }
 
-export function gripFactor(car,environment=null){
+export function gripFactor(car,environment=null,surface=null){
   const s=car.systems;
-  const wetness=clamp(environment?.wetness??0,0,1);
+  const wetness=clamp(surface?.wetness??environment?.wetness??0,0,1);
+  const standingWater=clamp(surface?.standingWater??0,0,1);
   const compound=s.tyreCompound||TYRE_COMPOUND.SLICK;
   const idealTemp=tyreIdealTemperature(compound,wetness);
   const tempPenalty=Math.abs(s.tyreTemp-idealTemp)/(compound===TYRE_COMPOUND.WET?105:125);
@@ -45,13 +46,16 @@ export function gripFactor(car,environment=null){
   const slipRatio=Math.abs(car.tyre?.slipRatio||0);
   const slidePenalty=Math.max(0,slipAngle-.10)*.22+Math.max(0,slipRatio-.10)*.18;
   const tyreState=clamp(1.015-tempPenalty-wearPenalty-damagePenalty-slidePenalty,.74,1.02);
-  return clamp(tyreState*tyreWeatherGrip(compound,wetness),.46,1.02);
+  const hydroSpeed=clamp((car.v-22)/45,0,1);
+  const waterPenalty=standingWater*hydroSpeed*(compound===TYRE_COMPOUND.WET?.10:.28);
+  return clamp(tyreState*tyreWeatherGrip(compound,wetness)*(1-waterPenalty),.42,1.02);
 }
 
-export function stepSystems(car,dt,environment=null){
+export function stepSystems(car,dt,environment=null,surface=null){
   const s=car.systems;
   const damage=clamp(car.incident?.damage||0,0,1);
-  const wetness=clamp(environment?.wetness??0,0,1);
+  const wetness=clamp(surface?.wetness??environment?.wetness??0,0,1);
+  const standingWater=clamp(surface?.standingWater??0,0,1);
   const compound=s.tyreCompound||TYRE_COMPOUND.SLICK;
   const km=car.v*dt/1000;
   const fuelUse=km*s.burnPerKm*(.72+.45*car.throttle);
@@ -65,9 +69,9 @@ export function stepSystems(car,dt,environment=null){
   const compoundWear=compound===TYRE_COMPOUND.WET?1+(1-wetness)*.45:1+wetness*.18;
   s.tyreWear=clamp(s.tyreWear+km*(PROFILE[car.type]?.wear||.009)*(1+latLoad*.72+slipEnergy*.34)*compoundWear,0,1);
   const baseTyreTemp=compound===TYRE_COMPOUND.WET?64:76;
-  const tyreTarget=baseTyreTemp+car.v*.19+latLoad*15+slipEnergy*8+Math.abs(car.brake)*6-wetness*12;
+  const tyreTarget=baseTyreTemp+car.v*.19+latLoad*15+slipEnergy*8+Math.abs(car.brake)*6-wetness*12-standingWater*5;
   s.tyreTemp+=clamp(tyreTarget-s.tyreTemp,-18,18)*dt*.18;
-  const brakeTarget=170+car.brake*720+car.v*1.8-wetness*35;
+  const brakeTarget=170+car.brake*720+car.v*1.8-wetness*35-standingWater*18;
   s.brakeTemp+=clamp(brakeTarget-s.brakeTemp,-260,260)*dt*.28;
   const ambientEffect=((environment?.ambientTemp??24)-24)*.10;
   const engineTarget=84+car.throttle*23+Math.max(0,car.v-60)*.08+damage*18+ambientEffect;
@@ -85,7 +89,7 @@ export function stepSystems(car,dt,environment=null){
     s.powerDerate=1;
   }
   if(s.failed)s.powerDerate=1;
-  s.grip=gripFactor(car,environment);
+  s.grip=gripFactor(car,environment,surface);
 }
 
 export function needsPit(car){
