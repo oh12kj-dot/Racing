@@ -122,6 +122,20 @@ test('COL-13: race side contact preserves meaningful forward-speed difference in
   expect(b.incident.spinTimer).toBe(0);
 });
 
+test('COL-15: deep rear overlap with tiny lateral offset keeps a longitudinal contact normal',()=>{
+  const {track,a,b}=pair();
+  a.s=300;b.s=303;a.lane=0;b.lane=.02;a.v=55;b.v=25;a.laneV=.03;b.laneV=-.02;
+  const contact=contactManifold(a,b,track);
+  expect(contact.hit).toBeTruthy();
+  expect(Math.abs(contact.normalLong)).toBeGreaterThan(.9);
+  expect(Math.abs(contact.normalLat)).toBeLessThan(.1);
+  const result=resolveContactImpulse(a,b,contact);
+  expect(result.impactSpeed).toBeGreaterThan(29);
+  expect(result.applied).toBeTruthy();
+  expect(a.v).toBeLessThan(55);
+  expect(b.v).toBeGreaterThan(25);
+});
+
 test('COL-14: large pure rear closing speed alone does not manufacture a spin result',()=>{
   const sim=createRaceSimulation(0xc0111e0,{raceLaps:40});
   const [a,b,...rest]=sim.cars;
