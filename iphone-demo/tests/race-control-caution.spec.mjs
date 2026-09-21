@@ -96,3 +96,22 @@ test('RACE-11: identical hazards produce identical deterministic race-control st
   for(const t of [20,21,25,30]){ra.update(t,a.cars,a.track);rb.update(t,b.cars,b.track);}
   expect({flag:ra.flag,until:ra.cautionUntil,id:ra.incidentId}).toEqual({flag:rb.flag,until:rb.cautionUntil,id:rb.incidentId});
 });
+
+test('RACE-12: safety car cannot release a compressed queue until physical gaps are safe',()=>{
+  const {track,cars}=field(4),rc=createRaceControl();
+  const incident=cars[3];
+  incident.v=0;incident.incident.damage=.7;
+  rc.update(20,cars,track);
+  expect(rc.flag).toBe('SAFETY_CAR');
+  const clearAt=rc.cautionUntil;
+  incident.incident.damage=0;incident.systems.failed=false;
+
+  const live=cars.slice(0,3);
+  for(const [car,s] of [[live[0],520],[live[1],515],[live[2],480]]){car.s=s;car.totalProgress=s;car.v=22;}
+  rc.update(clearAt+.1,cars,track);
+  expect(rc.flag).toBe('SAFETY_CAR');
+
+  for(const [car,s] of [[live[0],520],[live[1],500],[live[2],480]]){car.s=s;car.totalProgress=s;}
+  rc.update(clearAt+.2,cars,track);
+  expect(rc.flag).toBe('GREEN');
+});
