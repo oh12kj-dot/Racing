@@ -35,6 +35,15 @@ function hazardSweep(car,hazard,track,horizon=1.15){
   };
 }
 function fasterAdvantage(a,b){return a.spec.pace>b.spec.pace+.02||a.spec.top>b.spec.top+3;}
+function followingBrakeAuthority(car){
+  const lateralUse=clamp(car.tyre?.lateralForceUsage??0,0,.995);
+  const grip=clamp(car.systems?.grip??1,.45,1.05);
+  const frictionReserve=Math.sqrt(Math.max(0,1-lateralUse*lateralUse));
+  // This is a planning margin only. Vehicle physics remains the force authority.
+  // High lateral tyre usage means the driver needs more distance to shed the same
+  // closing speed, while a straight-line car can keep the usual racing gap.
+  return Math.max(1.2,car.spec.brake*grip*frictionReserve*.78);
+}
 function ensureState(state){
   state.state??='RESET';
   state.targetId??=null;
@@ -217,12 +226,15 @@ export function planRacecraft(car,cars,track,time){
     if(parallel)continue;
 
     if(!passEscape){
-      const desired=body+4.8+car.v*.18+closing*.42;
+      const brakeAuthority=followingBrakeAuthority(car);
+      const relativeStop=closing>0?closing*closing/(2*brakeAuthority):0;
+      const desired=body+4.8+car.v*.18+closing*.42+relativeStop;
       if(x.d<desired){
         const margin=clamp((x.d-body)/Math.max(4,desired-body),0,1);
         targetSpeed=Math.min(targetSpeed,other.v+margin*(fasterAdvantage(car,other)?6:4));reason='TRAFFIC_FOLLOW';
       }
-      if(ttc<1.45)targetSpeed=Math.min(targetSpeed,Math.max(0,other.v-1.2));
+      const brakingTtc=.35+closing/brakeAuthority;
+      if(ttc<Math.max(1.45,brakingTtc))targetSpeed=Math.min(targetSpeed,Math.max(0,other.v-1.2));
     }else{
       if(ttc<1.15&&currentLat<safe*.86){targetSpeed=Math.min(targetSpeed,other.v+Math.max(0,(currentLat/safe-.55)*4));reason='PASS_BUILD_OVERLAP';}
       if(ttc<.55&&currentLat<safe*.68){
