@@ -7,14 +7,34 @@ function passed(prev,current,mark){
   return mark>prev||mark<=current;
 }
 function boxFor(car,track){return track.pit.boxStart+car.teamId*track.pit.boxSpacing;}
+function workingExitClearanceTime(car,track){
+  const distance=38;
+  const target=Math.max(1,track.pit.speedLimit);
+  const accel=Math.max(1.5,car.spec.accel?.low??5);
+  const v0=clamp(car.v||0,0,target);
+  if(v0>=target-.1)return distance/target+.4;
+  const toTarget=(target-v0)/accel;
+  const accelDistance=v0*toTarget+.5*accel*toTarget*toTarget;
+  const travel=accelDistance>=distance
+    ?(-v0+Math.sqrt(Math.max(0,v0*v0+2*accel*distance)))/accel
+    :toTarget+(distance-accelDistance)/target;
+  // Reserve a small physical-car-length margin after the 38 m blend has
+  // completed. This is derived from the exit traversal, not a fixed TTC gate.
+  return travel+.4;
+}
 function fastLaneBlocked(car,cars,track){
+  const clearanceTime=workingExitClearanceTime(car,track);
   for(const o of cars){
     if(o===car||o.retired||o.finished)continue;
     if(!['FAST_LANE','FAST_LANE_EXIT','PIT_ENTRY','MERGE'].includes(o.pit.phase))continue;
     let d=o.s-car.s;
     if(d>track.total*.5)d-=track.total;if(d<-track.total*.5)d+=track.total;
-    if(d<0){const closing=Math.max(.1,o.v-car.v);if(-d<28||(-d)/closing<1.8)return true;}
-    else if(d<10)return true;
+    if(d<0){
+      const body=(car.length+o.length)*.5+2;
+      const usable=Math.max(.1,-d-body);
+      const arrival=usable/Math.max(1,o.v||0);
+      if(-d<28||arrival<clearanceTime)return true;
+    }else if(d<10)return true;
   }
   return false;
 }
