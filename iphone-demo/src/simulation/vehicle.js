@@ -200,15 +200,14 @@ export function stepVehicle(car,track,control,dt){
     const yawAccel=clamp(alignmentError*recoveryGain-car.yawRate*yawDamping,-maxYawAccel,maxYawAccel);
     car.yawRate=clamp(car.yawRate+yawAccel*dt,-6,6);
     car.yaw=wrapAngle(car.yaw+car.yawRate*dt);
-    const nominalYawRate=track.curvature(car.s)*car.v;
+    // The velocity heading rotates both because the circuit curves and because
+    // lateral velocity itself is changing. Subtract both components before
+    // deciding whether contact-induced yaw has settled; the conservative fixed
+    // excess-yaw threshold remains unchanged.
+    const lateralHeadingRate=(car.v*car.laneA-car.laneV*actualLongAccel)/Math.max(16,car.v*car.v+car.laneV*car.laneV);
+    const nominalYawRate=track.curvature(car.s)*car.v+lateralHeadingRate;
     const excessYawRate=car.yawRate-nominalYawRate;
-    // A light contact stops being a special transient once the body is back
-    // within a small geometric catch angle and the remaining excess rotation is
-    // inside the yaw rate the available lateral tyre force can recover. This
-    // scales with speed/grip instead of relying on a fixed angular-rate cutoff.
-    const settledAngle=Math.atan2(.15,Math.max(1.8,spec.wheelbase));
-    const tyreYawAuthority=tyreLat/Math.max(4,car.v);
-    if(!spinning&&Math.abs(alignmentError)<settledAngle&&Math.abs(excessYawRate)<tyreYawAuthority)car.incident.yawTransient=false;
+    if(!spinning&&Math.abs(alignmentError)<.025&&Math.abs(excessYawRate)<.12)car.incident.yawTransient=false;
   }else{
     car.yawRate=wrapAngle(alignedYaw-car.yaw)/Math.max(1e-4,dt);
     car.yaw=alignedYaw;
