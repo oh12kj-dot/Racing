@@ -65,6 +65,33 @@ test('PIT-10: service release waits for unsafe fast-lane traffic and releases wh
   expect(car.pit.phase).toBe('WORKING_EXIT');
 });
 
+test('PIT-14: pit exit yields physically to unsafe main-track traffic before merge',()=>{
+  const track=createTrack(),entries=buildEntrants();
+  const car=createVehicleState(entries[0],track.pit.mergeStart-42,2);
+  const traffic=createVehicleState(entries[3],track.pit.mergeStart-70,2);
+  car.pit.phase='FAST_LANE_EXIT';car.pit.requested=true;car.lane=track.pit.fastLane;car.v=22;
+  traffic.pit.phase='TRACK';traffic.lane=-2.0;traffic.v=50;
+  const beforeTraffic={s:traffic.s,v:traffic.v,lane:traffic.lane};
+  let plan=planPit(car,[car,traffic],track,FIXED_DT);
+  expect(car.pit.phase).toBe('FAST_LANE_EXIT');
+  expect(plan.targetLane).toBe(track.pit.fastLane);
+  expect(plan.targetSpeed).toBeLessThan(track.pit.speedLimit-1);
+  expect({s:traffic.s,v:traffic.v,lane:traffic.lane}).toEqual(beforeTraffic);
+
+  car.s=track.pit.mergeStart-4;car.v=.2;
+  traffic.s=track.pit.mergeStart-24;traffic.v=45;
+  plan=planPit(car,[car,traffic],track,FIXED_DT);
+  expect(car.pit.phase).toBe('FAST_LANE_EXIT');
+  expect(plan.targetSpeed).toBe(0);
+  expect(plan.targetLane).toBe(track.pit.fastLane);
+
+  traffic.s=track.pit.mergeStart+70;traffic.v=45;
+  car.s=track.pit.mergeStart;car.v=.2;
+  plan=planPit(car,[car,traffic],track,FIXED_DT);
+  expect(car.pit.phase).toBe('MERGE');
+  expect(plan.targetLane).toBeGreaterThan(track.pit.fastLane);
+});
+
 test('PIT-03/04/05/11/12: full pit transit is continuous, corridor-bound and limiter-controlled',()=>{
   test.setTimeout(90000);
   const sim=createRaceSimulation(0xabc5,{raceLaps:100}),track=sim.track,car=sim.cars[0];
