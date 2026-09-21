@@ -37,12 +37,16 @@ function cautionFacts(time,cars,track,environment=null){
     const stoppedCause=(c.incident.damage||0)>.05||c.systems?.failed||movingIncident;
     return movingIncident||(time>12&&c.v<3&&stoppedCause);
   });
+  // Sub-3 m/s cars remain hazards for VSC/SC, but a red-flag track blockage
+  // requires cars that are effectively stationary. A car still rolling at
+  // ~10 km/h can clear the corridor and must not by itself complete a red block.
   const stopped=hazards.filter(c=>time>12&&c.v<3);
+  const blockedCars=stopped.filter(c=>c.v<1.2);
   const severe=stopped.find(c=>(c.incident.damage||0)>=.55||c.systems?.failed);
   const lowVisibility=(environment?.visibility??1)<.42;
-  const blocked=blockedTrack(stopped,track);
+  const blocked=blockedTrack(blockedCars,track);
   let desired='GREEN',primary=null;
-  if(blocked||lowVisibility){desired='RED';primary=severe||stopped[0]||hazards[0]||null;}
+  if(blocked||lowVisibility){desired='RED';primary=severe||blockedCars[0]||stopped[0]||hazards[0]||null;}
   else if(severe||stopped.length>=2){desired='SAFETY_CAR';primary=severe||stopped[0];}
   else if(stopped.length){desired='VSC';primary=stopped[0];}
   else if(hazards.length){desired='YELLOW';primary=hazards[0];}
