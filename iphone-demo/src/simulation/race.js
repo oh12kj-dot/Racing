@@ -9,7 +9,7 @@ import {updateTiming} from './timing.js';
 import {createRaceControl} from './race-control.js';
 import {computeTrafficAero} from './traffic-aero.js';
 import {evaluatePitStrategy} from './strategy.js';
-import {createEnvironment,stepEnvironment,environmentSnapshot} from './environment.js';
+import {createEnvironment,stepEnvironment,environmentSnapshot,surfaceConditionAt} from './environment.js';
 import {contactManifold,resolveContactImpulse} from './contact.js';
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
@@ -192,7 +192,7 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
   function update(dt=FIXED_DT){
     if(!running||finished)return;
     time+=dt;
-    stepEnvironment(environment,dt);
+    stepEnvironment(environment,dt,cars,track);
     raceControl.update(time,cars,track,emit,environment);
 
     for(const car of cars)car.aeroTraffic=computeTrafficAero(car,cars,track);
@@ -202,7 +202,10 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
 
       if(time<greenAt+car.reaction){
         car.targetSpeed=0;car.targetLane=car.lane;
-        stepVehicle(car,track,{throttle:0,brake:1,steer:0},dt);stepSystems(car,dt,environment);continue;
+        stepVehicle(car,track,{throttle:0,brake:1,steer:0},dt);
+        const surface=surfaceConditionAt(environment,track,car.s,car.lane);
+        stepSystems(car,dt,environment,surface);
+        continue;
       }
 
       car.strategy=evaluatePitStrategy(car,track,raceLaps,environment);
@@ -249,7 +252,9 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
       if(car.driver.mistakeTimer>0&&car.pit.phase==='TRACK')control.throttle*=1-car.driver.lift;
       if(incidentActive)control.throttle=0;
       const wasFailed=car.systems.failed;
-      stepVehicle(car,track,control,dt);stepSystems(car,dt,environment);updateTiming(car,track,time);
+      stepVehicle(car,track,control,dt);
+      const surface=surfaceConditionAt(environment,track,car.s,car.lane);
+      stepSystems(car,dt,environment,surface);updateTiming(car,track,time);
       if(!wasFailed&&car.systems.failed){
         emit('MECHANICAL_FAILURE',car,`${car.name} POWER UNIT FAILURE — ${car.systems.failureReason}`,`FAILURE:${car.id}`);
       }
@@ -325,6 +330,9 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
       raceControl.restartPhase,Math.round((raceControl.restartStartedAt||0)*60),[...raceControl.incidentIds].sort((a,b)=>a-b).join(','),
       Math.round(environment.wetness*1e6),Math.round(environment.rainRate*1e6),Math.round(environment.visibility*1e6),Math.round(environment.ambientTemp*100)
     ];
+    for(let i=0;i<environment.surfaceLine.length;i++){
+      values.push(Math.round(environment.surfaceLine[i]*1e6),Math.round(environment.surfaceOffLine[i]*1e6));
+    }
     for(const c of [...cars].sort((a,b)=>a.id-b.id)){
       values.push(
         c.id,c.lap,Math.round(c.s*1000),Math.round(c.v*1000),Math.round(c.lane*1000),Math.round(c.yaw*1e5),Math.round(c.yawRate*1e5),Math.round(c.steer*1e5),c.gear,
@@ -352,7 +360,7 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
           c.s,c.v,c.lane,c.laneV,c.yaw,c.yawRate,c.steer,c.gear,c.systems.fuel,c.systems.tyreWear,c.systems.tyreTemp,c.systems.grip,
           c.systems.mechanicalStress,c.systems.powerDerate,c.incident.spinTimer||0,c.incident.redRecoveryTimer||0,
           c.tyre?.slipRatio??0,c.tyre?.slipAngle??0,c.tyre?.loadTransfer??0,c.tyre?.longitudinalAccel??0,c.tyre?.forceUsage??0
-        ].every(Number.isFinite))&&[environment.wetness,environment.rainRate,environment.visibility,environment.ambientTemp].every(Number.isFinite),
+        ].every(Number.isFinite))&&[environment.wetness,environment.rainRate,environment.visibility,environment.ambientTemp,...environment.surfaceLine,...environment.surfaceOffLine].every(Number.isFinite),
         maxSpeedKph:Math.max(...cars.map(c=>c.v*3.6)),
         pitCars:cars.filter(c=>c.pit.phase!=='TRACK').length,
         contacts:totalContacts,
@@ -368,6 +376,9 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
         deratedCars:cars.filter(c=>c.systems.powerDerate>.01&&!c.systems.failed).length,
         failedCars:cars.filter(c=>c.systems.failed).length,
         wetness:environment.wetness,
+        racingLineWetness:environment.racingLineWetness,
+        offLineWetness:environment.offLineWetness,
+        standingWater:environmentState.standingWater,
         wetTyreCars:cars.filter(c=>c.systems.tyreCompound==='WET').length,
         redFlag:raceControl.flag==='RED',
         restartPhase:raceControl.restartPhase,
