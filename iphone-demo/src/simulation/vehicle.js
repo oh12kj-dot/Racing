@@ -143,8 +143,11 @@ export function stepVehicle(car,track,control,dt){
   const tyreForce=clamp(requestedLong,-longCapacity,longCapacity)*tractionEfficiency;
   const drag=0.18*ratio*ratio*G*(car.aeroTraffic?.dragFactor??1)*performance.drag;
   const overspeed=car.v>topSpeed?Math.min(10,(car.v-topSpeed)*2.2):0;
+  const velocityHeading=wrapAngle(track.sample(car.s).heading+Math.atan2(car.laneV,Math.max(4,car.v)));
+  const bodySlip=wrapAngle(velocityHeading-car.yaw);
+  const incidentScrub=(car.incident?.spinTimer||0)>0?Math.min(tyreLong,tyreLat*Math.sin(bodySlip)**2):0;
   const oldV=car.v;
-  const acc=tyreForce-drag-overspeed;
+  const acc=tyreForce-drag-overspeed-incidentScrub;
   car.v=Math.max(0,car.v+acc*dt);
   const actualLongAccel=(car.v-oldV)/Math.max(1e-4,dt);
   car.tyre.longitudinalAccel=actualLongAccel;
