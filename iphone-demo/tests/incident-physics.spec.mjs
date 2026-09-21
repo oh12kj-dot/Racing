@@ -3,6 +3,7 @@ import {FIXED_DT,buildEntrants} from '../src/config.js';
 import {createTrack} from '../src/simulation/track.js';
 import {createVehicleState,stepVehicle} from '../src/simulation/vehicle.js';
 import {contactManifold,resolveContactImpulse} from '../src/simulation/contact.js';
+import {createRaceControl} from '../src/simulation/race-control.js';
 import {createRaceSimulation} from '../src/simulation/race.js';
 
 function vehiclePair(){
@@ -156,4 +157,22 @@ test('INC-09: spin speed loss comes from body-slip tyre scrub rather than the in
   expect(40-aligned.v).toBeLessThan(.05);
   expect(sideways.v).toBeLessThan(aligned.v-.05);
   expect(40-sideways.v).toBeLessThan(1);
+});
+
+test('INC-10: a recovered car is not kept under caution merely because spin time remains',()=>{
+  const track=createTrack(),car=createVehicleState(buildEntrants()[0],500,0),rc=createRaceControl();
+  car.v=24;car.lap=0;car.pit.phase='TRACK';car.incident.spinTimer=3;
+  car.yawRate=.2;car.laneV=.3;car.tyre.slipAngle=.05;
+  rc.update(20,[car],track);
+  expect(rc.flag).toBe('GREEN');
+  expect(rc.incidentIds).toEqual([]);
+});
+
+test('INC-11: race control still reacts to a physically unstable tagged incident',()=>{
+  const track=createTrack(),car=createVehicleState(buildEntrants()[0],500,0),rc=createRaceControl();
+  car.v=24;car.lap=0;car.pit.phase='TRACK';car.incident.spinTimer=3;
+  car.yawRate=1.1;car.laneV=.3;car.tyre.slipAngle=.05;
+  rc.update(20,[car],track);
+  expect(rc.flag).toBe('YELLOW');
+  expect(rc.incidentIds).toEqual([car.id]);
 });
