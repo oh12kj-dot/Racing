@@ -107,3 +107,31 @@ test('COL-12: contact response is deterministic and never creates non-finite vel
   expect([x.a.v,x.b.v,x.a.laneV,x.b.laneV].every(Number.isFinite)).toBeTruthy();
   expect(x.a.v).toBeGreaterThanOrEqual(0);expect(x.b.v).toBeGreaterThanOrEqual(0);
 });
+
+test('COL-13: race side contact preserves meaningful forward-speed difference instead of averaging it away',()=>{
+  const sim=createRaceSimulation(0xc0111df,{raceLaps:40});
+  const [a,b,...rest]=sim.cars;
+  for(const car of rest)car.retired=true;
+  a.reaction=-10;b.reaction=-10;a.lap=0;b.lap=0;
+  a.s=300;b.s=300;a.totalProgress=300;b.totalProgress=300;
+  a.lane=-.75;b.lane=.75;a.laneV=1.5;b.laneV=-1.5;a.v=52;b.v=44;
+  sim.update(FIXED_DT);
+  expect(sim.snapshot().diagnostics.contacts).toBe(1);
+  expect(Math.abs(a.v-b.v)).toBeGreaterThan(6.5);
+  expect(a.incident.spinTimer).toBe(0);
+  expect(b.incident.spinTimer).toBe(0);
+});
+
+test('COL-14: large pure rear closing speed alone does not manufacture a spin result',()=>{
+  const sim=createRaceSimulation(0xc0111e0,{raceLaps:40});
+  const [a,b,...rest]=sim.cars;
+  for(const car of rest)car.retired=true;
+  a.reaction=-10;b.reaction=-10;a.lap=0;b.lap=0;
+  a.s=300;b.s=303;a.totalProgress=300;b.totalProgress=303;
+  a.lane=0;b.lane=0;a.laneV=0;b.laneV=0;a.v=55;b.v=25;
+  sim.update(FIXED_DT);
+  expect(sim.snapshot().diagnostics.contacts).toBe(1);
+  expect(a.incident.spinTimer).toBe(0);
+  expect(b.incident.spinTimer).toBe(0);
+  expect(a.incident.damage+b.incident.damage).toBeGreaterThan(0);
+});
