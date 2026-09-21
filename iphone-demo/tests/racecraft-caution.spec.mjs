@@ -11,7 +11,7 @@ function car(entry,s,v,lane=0){
   return c;
 }
 
-test('RACECRAFT-CAUTION-01: caution cancels attack/defence lane moves while preserving physical following',()=>{
+test('RACECRAFT-CAUTION-01: caution cancels attack/defence lane moves without inventing a racecraft speed cap',()=>{
   const track=createTrack(),entries=buildEntrants();
   const fast=car(entries[0],100,52,0),slow=car(entries.find(e=>e.type==='gt'),130,36,0);
   fast.cautionNoPass=true;
@@ -19,7 +19,7 @@ test('RACECRAFT-CAUTION-01: caution cancels attack/defence lane moves while pres
   expect(plan.targetLane).toBeCloseTo(fast.lane,9);
   expect(plan.state).toBe('CAUTION');
   expect(plan.reason).not.toMatch(/ATTACK|PASS_COMMIT|DEFEND/);
-  expect(Number.isFinite(plan.targetSpeed)).toBeTruthy();
+  expect(plan.targetSpeed).toBe(Infinity);
 });
 
 test('RACECRAFT-CAUTION-02: a moving incident still has priority over the no-passing lane hold',()=>{
