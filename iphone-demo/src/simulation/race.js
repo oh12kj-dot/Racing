@@ -1,6 +1,6 @@
 import {buildEntrants,FIXED_DT,RACE_LAPS} from '../config.js';
 import {createTrack} from './track.js';
-import {createVehicleState,stepVehicle,cornerSpeedLimit,steerForLateralAccel,tyreLongitudinalAccel,effectiveAeroFactor,effectiveTopSpeed} from './vehicle.js';
+import {createVehicleState,stepVehicle,cornerSpeedLimit,steerForLateralAccel,tyreLateralAccel,tyreLongitudinalAccel,effectiveAeroFactor,effectiveTopSpeed} from './vehicle.js';
 import {planRacecraft} from './racecraft.js';
 import {maybeRequestPit,planPit} from './pit.js';
 import {createRng} from './random.js';
@@ -55,6 +55,23 @@ function controlFor(car,targetSpeed,targetLane){
   const desiredLatAccel=clamp(laneError*2.4+(desiredLaneV-car.laneV)*2.1,-maxLat,maxLat);
   const steer=steerForLateralAccel(car,desiredLatAccel);
   return{throttle,brake,steer};
+}
+function yawLossSeverity(car,track){
+  const spec=car.spec;
+  const mass=Math.max(1,car.mass||spec.mass||1000);
+  const length=Math.max(1,car.length||spec.length||4.5);
+  const width=Math.max(.8,car.width||spec.width||2);
+  const inertia=mass*(length*length+width*width)/12;
+  const nominalYawRate=track.curvature(car.s)*car.v;
+  const excessYawRate=(car.yawRate||0)-nominalYawRate;
+  const rotationalEnergy=.5*inertia*excessYawRate*excessYawRate;
+  const grip=car.systems?.grip??1;
+  const lateralAccel=tyreLateralAccel(spec,Math.max(4,car.v),grip,effectiveAeroFactor(car),car.tyre?.loadTransfer??0);
+  const restoringTorque=mass*lateralAccel*Math.max(.8,(spec.wheelbase||2.8)*.5);
+  // Work available over a modest recovery angle. Below this energy the tyre can
+  // catch the yaw as a transient; above it the car has physically lost control.
+  const restoringWork=Math.max(1,restoringTorque*.14);
+  return rotationalEnergy/restoringWork;
 }
 function fnv1a(values){
   let h=2166136261>>>0;
@@ -117,17 +134,22 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
         if(damageA>0)a.incident.damage=clamp(a.incident.damage+damageA,0,1);
         if(damageB>0)b.incident.damage=clamp(b.incident.damage+damageB,0,1);
 
-        // A spin state is a consequence of angular impulse, not an assigned
-        // collision result. Door-to-door contact has almost no yaw lever, while
-        // an oblique front/rear lateral hit can generate a sustained rotation.
         const yawKickA=Math.abs(response.deltaYawRateA||0);
         const yawKickB=Math.abs(response.deltaYawRateB||0);
-        if(yawKickA>.65){
-          const duration=clamp(1.4+yawKickA*.85,1.6,4.6);
+        if(yawKickA>.02)a.incident.yawTransient=true;
+        if(yawKickB>.02)b.incident.yawTransient=true;
+
+        // Contact only supplies angular momentum. Whether that becomes a spin is
+        // decided by rotational energy relative to the tyre's restoring work,
+        // not by a raw velocity-difference or yaw-kick result threshold.
+        const severityA=yawLossSeverity(a,track);
+        const severityB=yawLossSeverity(b,track);
+        if(severityA>.82){
+          const duration=clamp(1.25+Math.sqrt(severityA)*1.10,1.5,4.6);
           a.incident.spinTimer=Math.max(a.incident.spinTimer,duration);
         }
-        if(yawKickB>.65){
-          const duration=clamp(1.4+yawKickB*.85,1.6,4.6);
+        if(severityB>.82){
+          const duration=clamp(1.25+Math.sqrt(severityB)*1.10,1.5,4.6);
           b.incident.spinTimer=Math.max(b.incident.spinTimer,duration);
         }
 
@@ -300,7 +322,7 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
         Math.round(c.systems.fuel*1000),Math.round(c.systems.tyreWear*1e6),Math.round(c.systems.tyreTemp*1000),Math.round(c.systems.grip*1e6),c.systems.tyreCompound,
         Math.round(c.systems.mechanicalStress*1e6),Math.round(c.systems.powerDerate*1e6),c.systems.failed?1:0,c.systems.failureReason??'NONE',
         Math.round((c.tyre?.slipRatio??0)*1e6),Math.round((c.tyre?.slipAngle??0)*1e6),Math.round((c.tyre?.loadTransfer??0)*1e6),
-        Math.round((c.incident.spinTimer||0)*1000),Math.round((c.incident.redRecoveryTimer||0)*1000),c.strategy?.reason??'NONE',c.pit.phase,c.finished?1:0,c.retired?1:0
+        Math.round((c.incident.spinTimer||0)*1000),c.incident.yawTransient?1:0,Math.round((c.incident.redRecoveryTimer||0)*1000),c.strategy?.reason??'NONE',c.pit.phase,c.finished?1:0,c.retired?1:0
       );
     }
     return fnv1a(values);
