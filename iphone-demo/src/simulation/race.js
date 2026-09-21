@@ -10,7 +10,7 @@ import {createRaceControl} from './race-control.js';
 import {computeTrafficAero} from './traffic-aero.js';
 import {evaluatePitStrategy} from './strategy.js';
 import {createEnvironment,stepEnvironment,environmentSnapshot} from './environment.js';
-import {contactManifold} from './contact.js';
+import {contactManifold,resolveContactImpulse} from './contact.js';
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 
@@ -102,20 +102,32 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
         const b=cars[j];
         if(b.retired||b.finished||b.pit.phase==='SERVICE')continue;
         const contact=contactManifold(a,b,track);
-        if(contact.hit){
-          const pair=`${a.id}:${b.id}`;activePairs.add(pair);
-          if(!contactPairs.has(pair))totalContacts++;
-          const dv=Math.abs(a.v-b.v),mean=(a.v+b.v)*.5;
-          a.v=Math.max(0,mean+(a.v-mean)*.35);b.v=Math.max(0,mean+(b.v-mean)*.35);
-          const dir=(a.lane-b.lane)||((a.id<b.id)?-1:1);
-          const impulse=contact.lateralPenetration*2.4;
-          a.laneV+=Math.sign(dir)*impulse;b.laneV-=Math.sign(dir)*impulse;
-          if(dv>7){
-            const victim=a.v>b.v?a:b;
-            victim.incident.spinTimer=Math.max(victim.incident.spinTimer,1.8+dv*.08);
-            victim.incident.damage=clamp(victim.incident.damage+dv*.012,0,1);
-            emit('CONTACT',victim,`CONTACT — ${victim.name}`,'CONTACT:'+a.id+':'+b.id+':'+Math.floor(time/2));
-          }
+        if(!contact.hit)continue;
+
+        const pair=`${a.id}:${b.id}`;activePairs.add(pair);
+        if(!contactPairs.has(pair))totalContacts++;
+
+        const response=resolveContactImpulse(a,b,contact);
+        if(!response.applied)continue;
+
+        const deltaA=Math.hypot(response.deltaVA||0,response.deltaLatA||0);
+        const deltaB=Math.hypot(response.deltaVB||0,response.deltaLatB||0);
+        const damageA=Math.max(0,deltaA-1.5)*.010;
+        const damageB=Math.max(0,deltaB-1.5)*.010;
+        if(damageA>0)a.incident.damage=clamp(a.incident.damage+damageA,0,1);
+        if(damageB>0)b.incident.damage=clamp(b.incident.damage+damageB,0,1);
+
+        const lateralImpact=response.impactSpeed*Math.abs(response.normalLat||0);
+        if(lateralImpact>4.5){
+          const lateralDeltaA=Math.abs(response.deltaLatA||0),lateralDeltaB=Math.abs(response.deltaLatB||0);
+          const victim=lateralDeltaA>=lateralDeltaB?a:b;
+          const duration=clamp(1.35+(lateralImpact-4.5)*.13,1.35,3.8);
+          victim.incident.spinTimer=Math.max(victim.incident.spinTimer,duration);
+        }
+
+        if(response.impactSpeed>5||lateralImpact>3){
+          const victim=deltaA>=deltaB?a:b;
+          emit('CONTACT',victim,`CONTACT — ${victim.name}`,'CONTACT:'+a.id+':'+b.id+':'+Math.floor(time/2));
         }
       }
     }
