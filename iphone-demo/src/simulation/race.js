@@ -14,12 +14,19 @@ import {contactManifold,resolveContactImpulse} from './contact.js';
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 
-function physicalBrakeCapability(car,speed,grip,aeroFactor){
+function combinedBrakeLimit(spec,speed,grip,aeroFactor,loadTransfer,curvature=0){
+  const tyreLong=tyreLongitudinalAccel(spec,speed,grip,aeroFactor,loadTransfer);
+  const tyreLat=tyreLateralAccel(spec,speed,grip,aeroFactor,loadTransfer);
+  const lateralDemand=Math.abs(curvature)*speed*speed;
+  const latUse=clamp(lateralDemand/Math.max(1,tyreLat),0,1);
+  return tyreLong*Math.sqrt(Math.max(0,1-latUse*latUse));
+}
+function physicalBrakeCapability(car,speed,grip,aeroFactor,curvature=0){
   const spec=car.spec;
-  const unloaded=tyreLongitudinalAccel(spec,speed,grip,aeroFactor,0);
+  const unloaded=combinedBrakeLimit(spec,speed,grip,aeroFactor,0,curvature);
   const requested=Math.min(spec.brake,unloaded);
   const transfer=clamp((requested/9.81)*(spec.cgHeight??.42)/Math.max(1.8,spec.wheelbase),0,.30);
-  return Math.min(spec.brake,tyreLongitudinalAccel(spec,speed,grip,aeroFactor,transfer));
+  return Math.min(spec.brake,combinedBrakeLimit(spec,speed,grip,aeroFactor,transfer,curvature));
 }
 function speedEnvelope(car,track){
   const effectiveTop=effectiveTopSpeed(car);
@@ -31,7 +38,7 @@ function speedEnvelope(car,track){
     const k=track.curvature(car.s+d);
     const vc=Math.min(effectiveTop,cornerSpeedLimit(car.spec,k,grip,aeroFactor));
     const brakeSpeed=clamp((Math.max(car.v,vc)+vc)*.5,vc,effectiveTop);
-    const braking=Math.max(5,physicalBrakeCapability(car,brakeSpeed,grip,aeroFactor)*.82);
+    const braking=Math.max(5,physicalBrakeCapability(car,brakeSpeed,grip,aeroFactor,k)*.82);
     const allowed=Math.sqrt(Math.max(vc*vc,vc*vc+2*braking*d));
     limit=Math.min(limit,allowed);
   }
