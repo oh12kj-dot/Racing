@@ -105,7 +105,7 @@ test('PIT/RACE/TIMING: mandatory stop completes and sector sum matches lap time'
 });
 
 test('RACE-05: incident triggers physical yellow control without teleport',()=>{
-  const sim=createRaceSimulation(0x5555,{raceLaps:20});run(sim,25);const victim=sim.cars[6];victim.incident.spinTimer=3;const before=sim.cars.map(c=>c.s);sim.update(FIXED_DT);const s=sim.snapshot();expect(s.flag).toBe('YELLOW');
+  const sim=createRaceSimulation(0x5555,{raceLaps:20});run(sim,25);const victim=sim.cars[6];victim.incident.spinTimer=3;victim.yawRate=1.1;const before=sim.cars.map(c=>c.s);sim.update(FIXED_DT);const s=sim.snapshot();expect(s.flag).toBe('YELLOW');
   for(let i=0;i<sim.cars.length;i++)expect(Math.abs(sim.track.signedDistance(before[i],sim.cars[i].s))).toBeLessThan(Math.max(2,sim.cars[i].v*FIXED_DT*1.6+1));
 });
 
