@@ -20,11 +20,21 @@ function blockedTrack(stopped,track){
   }
   return false;
 }
+function physicallyUnstableIncident(car){
+  if((car.incident?.spinTimer||0)<=0)return false;
+  const yawRate=Math.abs(car.yawRate||0);
+  const slipAngle=Math.abs(car.tyre?.slipAngle||0);
+  const lateralSpeed=Math.abs(car.laneV||0);
+  return yawRate>.55||slipAngle>.16||lateralSpeed>2.2;
+}
 function cautionFacts(time,cars,track,environment=null){
   const hazards=cars.filter(c=>{
     if(c.retired||c.finished||c.pit.phase!=='TRACK'||c.lap<0)return false;
-    const movingIncident=c.incident.spinTimer>.8;
-    const stoppedCause=(c.incident.damage||0)>.05||c.systems?.failed||c.incident.spinTimer>0;
+    // A timer only tags the origin of an incident. Race control reacts to the
+    // car's actual instability or a genuinely stopped/damaged car, not to the
+    // mere existence of time remaining on an incident state.
+    const movingIncident=physicallyUnstableIncident(c);
+    const stoppedCause=(c.incident.damage||0)>.05||c.systems?.failed||movingIncident;
     return movingIncident||(time>12&&c.v<3&&stoppedCause);
   });
   const stopped=hazards.filter(c=>time>12&&c.v<3);
