@@ -30,16 +30,10 @@ function physicallyUnstableIncident(car){
 function cautionFacts(time,cars,track,environment=null){
   const hazards=cars.filter(c=>{
     if(c.retired||c.finished||c.pit.phase!=='TRACK'||c.lap<0)return false;
-    // A timer only tags the origin of an incident. Race control reacts to the
-    // car's actual instability or a genuinely stopped/damaged car, not to the
-    // mere existence of time remaining on an incident state.
     const movingIncident=physicallyUnstableIncident(c);
     const stoppedCause=(c.incident.damage||0)>.05||c.systems?.failed||movingIncident;
     return movingIncident||(time>12&&c.v<3&&stoppedCause);
   });
-  // Sub-3 m/s cars remain hazards for VSC/SC, but a red-flag track blockage
-  // requires cars that are effectively stationary. A car still rolling at
-  // ~10 km/h can clear the corridor and must not by itself complete a red block.
   const stopped=hazards.filter(c=>time>12&&c.v<3);
   const blockedCars=stopped.filter(c=>c.v<1.2);
   const severe=stopped.find(c=>(c.incident.damage||0)>=.55||c.systems?.failed);
@@ -64,7 +58,10 @@ function allRunningCarsStopped(cars,excludedIds){
   return running.length===0||running.every(c=>c.v<1.2);
 }
 function queueFormed(cars,excludedIds){
-  const live=cars.filter(c=>!c.retired&&!c.finished&&!excludedIds.has(c.id)).sort((a,b)=>b.totalProgress-a.totalProgress);
+  // Cars physically in the pit sequence are not part of the on-track safety-car
+  // train. They rejoin under the pit/merge authority and must not deadlock the
+  // restart of a correctly formed track queue.
+  const live=cars.filter(c=>!c.retired&&!c.finished&&!excludedIds.has(c.id)&&c.pit.phase==='TRACK').sort((a,b)=>b.totalProgress-a.totalProgress);
   if(live.length<2)return true;
   for(let i=1;i<live.length;i++){
     const ahead=live[i-1],behind=live[i];
@@ -155,10 +152,6 @@ export function createRaceControl(){
           if(facts.primary)this.incidentId=facts.primary.id;
         }
       }else if(this.isCaution()&&time>=this.cautionUntil){
-        // A normal safety-car period has the same physical restart prerequisite
-        // as a red-flag restart: the field must actually be arranged with safe
-        // non-overlapping gaps before racing resumes. Time expiry alone cannot
-        // release a compressed or partially overlapping queue.
         if(this.flag!=='SAFETY_CAR'||queueFormed(cars,new Set(this.incidentIds)))this.transition('GREEN',time,null,emit,[]);
       }
       this.updateBlueFlags(cars,track);
@@ -181,7 +174,7 @@ export function createRaceControl(){
     },
     queueCars(cars){
       const excluded=new Set(this.incidentIds.length?this.incidentIds:[this.incidentId]);
-      return cars.filter(c=>!c.retired&&!c.finished&&!excluded.has(c.id)).sort((a,b)=>b.totalProgress-a.totalProgress);
+      return cars.filter(c=>!c.retired&&!c.finished&&!excluded.has(c.id)&&c.pit.phase==='TRACK').sort((a,b)=>b.totalProgress-a.totalProgress);
     },
     targetFor(car,cars,track){
       const incident=this.incidentIds.includes(car.id)||car.id===this.incidentId;
