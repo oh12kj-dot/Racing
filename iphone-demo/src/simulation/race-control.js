@@ -67,8 +67,10 @@ function queueFormed(cars,excludedIds){
   const live=cars.filter(c=>!c.retired&&!c.finished&&!excludedIds.has(c.id)).sort((a,b)=>b.totalProgress-a.totalProgress);
   if(live.length<2)return true;
   for(let i=1;i<live.length;i++){
-    const gap=live[i-1].totalProgress-live[i].totalProgress;
-    if(gap>42)return false;
+    const ahead=live[i-1],behind=live[i];
+    const gap=ahead.totalProgress-behind.totalProgress;
+    const minGap=(ahead.length+behind.length)*.5+2.5;
+    if(gap<minGap||gap>42)return false;
   }
   return true;
 }
@@ -153,7 +155,11 @@ export function createRaceControl(){
           if(facts.primary)this.incidentId=facts.primary.id;
         }
       }else if(this.isCaution()&&time>=this.cautionUntil){
-        this.transition('GREEN',time,null,emit,[]);
+        // A normal safety-car period has the same physical restart prerequisite
+        // as a red-flag restart: the field must actually be arranged with safe
+        // non-overlapping gaps before racing resumes. Time expiry alone cannot
+        // release a compressed or partially overlapping queue.
+        if(this.flag!=='SAFETY_CAR'||queueFormed(cars,new Set(this.incidentIds)))this.transition('GREEN',time,null,emit,[]);
       }
       this.updateBlueFlags(cars,track);
     },
