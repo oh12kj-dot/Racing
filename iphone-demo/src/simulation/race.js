@@ -117,14 +117,21 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
         if(damageA>0)a.incident.damage=clamp(a.incident.damage+damageA,0,1);
         if(damageB>0)b.incident.damage=clamp(b.incident.damage+damageB,0,1);
 
-        const lateralImpact=response.impactSpeed*Math.abs(response.normalLat||0);
-        if(lateralImpact>4.5){
-          const lateralDeltaA=Math.abs(response.deltaLatA||0),lateralDeltaB=Math.abs(response.deltaLatB||0);
-          const victim=lateralDeltaA>=lateralDeltaB?a:b;
-          const duration=clamp(1.35+(lateralImpact-4.5)*.13,1.35,3.8);
-          victim.incident.spinTimer=Math.max(victim.incident.spinTimer,duration);
+        // A spin state is a consequence of angular impulse, not an assigned
+        // collision result. Door-to-door contact has almost no yaw lever, while
+        // an oblique front/rear lateral hit can generate a sustained rotation.
+        const yawKickA=Math.abs(response.deltaYawRateA||0);
+        const yawKickB=Math.abs(response.deltaYawRateB||0);
+        if(yawKickA>.65){
+          const duration=clamp(1.4+yawKickA*.85,1.6,4.6);
+          a.incident.spinTimer=Math.max(a.incident.spinTimer,duration);
+        }
+        if(yawKickB>.65){
+          const duration=clamp(1.4+yawKickB*.85,1.6,4.6);
+          b.incident.spinTimer=Math.max(b.incident.spinTimer,duration);
         }
 
+        const lateralImpact=response.impactSpeed*Math.abs(response.normalLat||0);
         if(response.impactSpeed>5||lateralImpact>3){
           const victim=deltaA>=deltaB?a:b;
           emit('CONTACT',victim,`CONTACT — ${victim.name}`,'CONTACT:'+a.id+':'+b.id+':'+Math.floor(time/2));
@@ -182,9 +189,12 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
         source='DRIVER_ERROR_INPUT';
       }
       if(car.incident.spinTimer>0){
+        // Stabilise the current physical corridor; lateral/yaw motion comes from
+        // vehicle state and contact impulse rather than a prescribed sine path.
+        targetLane=car.lane;
+        targetSpeed=Math.min(targetSpeed,Math.max(4,car.v*.62));
+        source='INCIDENT_SPIN';
         car.incident.spinTimer=Math.max(0,car.incident.spinTimer-dt);
-        targetSpeed=Math.min(targetSpeed,Math.max(5,car.v*.70));
-        targetLane=clamp(car.lane+Math.sin(time*4.5+car.id)*.55,-6.2,6.2);source='INCIDENT_SPIN';
       }
 
       if(raceControl.isCaution()){
@@ -284,11 +294,11 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
     ];
     for(const c of [...cars].sort((a,b)=>a.id-b.id)){
       values.push(
-        c.id,c.lap,Math.round(c.s*1000),Math.round(c.v*1000),Math.round(c.lane*1000),Math.round(c.yaw*1e5),Math.round(c.steer*1e5),c.gear,
+        c.id,c.lap,Math.round(c.s*1000),Math.round(c.v*1000),Math.round(c.lane*1000),Math.round(c.yaw*1e5),Math.round(c.yawRate*1e5),Math.round(c.steer*1e5),c.gear,
         Math.round(c.systems.fuel*1000),Math.round(c.systems.tyreWear*1e6),Math.round(c.systems.tyreTemp*1000),Math.round(c.systems.grip*1e6),c.systems.tyreCompound,
         Math.round(c.systems.mechanicalStress*1e6),Math.round(c.systems.powerDerate*1e6),c.systems.failed?1:0,c.systems.failureReason??'NONE',
         Math.round((c.tyre?.slipRatio??0)*1e6),Math.round((c.tyre?.slipAngle??0)*1e6),Math.round((c.tyre?.loadTransfer??0)*1e6),
-        Math.round((c.incident.redRecoveryTimer||0)*1000),c.strategy?.reason??'NONE',c.pit.phase,c.finished?1:0,c.retired?1:0
+        Math.round((c.incident.spinTimer||0)*1000),Math.round((c.incident.redRecoveryTimer||0)*1000),c.strategy?.reason??'NONE',c.pit.phase,c.finished?1:0,c.retired?1:0
       );
     }
     return fnv1a(values);
@@ -307,7 +317,7 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
       diagnostics:{
         finite:cars.every(c=>[
           c.s,c.v,c.lane,c.laneV,c.yaw,c.yawRate,c.steer,c.gear,c.systems.fuel,c.systems.tyreWear,c.systems.tyreTemp,c.systems.grip,
-          c.systems.mechanicalStress,c.systems.powerDerate,c.incident.redRecoveryTimer||0,
+          c.systems.mechanicalStress,c.systems.powerDerate,c.incident.spinTimer||0,c.incident.redRecoveryTimer||0,
           c.tyre?.slipRatio??0,c.tyre?.slipAngle??0,c.tyre?.loadTransfer??0,c.tyre?.longitudinalAccel??0,c.tyre?.forceUsage??0
         ].every(Number.isFinite))&&[environment.wetness,environment.rainRate,environment.visibility,environment.ambientTemp].every(Number.isFinite),
         maxSpeedKph:Math.max(...cars.map(c=>c.v*3.6)),
