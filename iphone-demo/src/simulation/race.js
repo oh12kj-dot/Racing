@@ -56,22 +56,22 @@ function controlFor(car,targetSpeed,targetLane){
   const steer=steerForLateralAccel(car,desiredLatAccel);
   return{throttle,brake,steer};
 }
-function yawLossSeverity(car,track){
+function yawImpactSeverity(car,preExcessYawRate,deltaYawRate){
   const spec=car.spec;
   const mass=Math.max(1,car.mass||spec.mass||1000);
   const length=Math.max(1,car.length||spec.length||4.5);
   const width=Math.max(.8,car.width||spec.width||2);
   const inertia=mass*(length*length+width*width)/12;
-  const nominalYawRate=track.curvature(car.s)*car.v;
-  const excessYawRate=(car.yawRate||0)-nominalYawRate;
-  const rotationalEnergy=.5*inertia*excessYawRate*excessYawRate;
+  const postExcessYawRate=preExcessYawRate+deltaYawRate;
+  const injectedEnergy=.5*inertia*Math.max(0,postExcessYawRate*postExcessYawRate-preExcessYawRate*preExcessYawRate);
   const grip=car.systems?.grip??1;
   const lateralAccel=tyreLateralAccel(spec,Math.max(4,car.v),grip,effectiveAeroFactor(car),car.tyre?.loadTransfer??0);
   const restoringTorque=mass*lateralAccel*Math.max(.8,(spec.wheelbase||2.8)*.5);
-  // Work available over a modest recovery angle. Below this energy the tyre can
-  // catch the yaw as a transient; above it the car has physically lost control.
+  // Compare only the rotational energy injected by this impact with the tyre
+  // work available over a modest recovery angle. Existing cornering yaw is not
+  // counted as crash energy; repeated impacts can still accumulate naturally.
   const restoringWork=Math.max(1,restoringTorque*.14);
-  return rotationalEnergy/restoringWork;
+  return injectedEnergy/restoringWork;
 }
 function fnv1a(values){
   let h=2166136261>>>0;
@@ -124,6 +124,8 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
         const pair=`${a.id}:${b.id}`;activePairs.add(pair);
         if(!contactPairs.has(pair))totalContacts++;
 
+        const preExcessA=(a.yawRate||0)-track.curvature(a.s)*a.v;
+        const preExcessB=(b.yawRate||0)-track.curvature(b.s)*b.v;
         const response=resolveContactImpulse(a,b,contact);
         if(!response.applied)continue;
 
@@ -134,16 +136,16 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
         if(damageA>0)a.incident.damage=clamp(a.incident.damage+damageA,0,1);
         if(damageB>0)b.incident.damage=clamp(b.incident.damage+damageB,0,1);
 
-        const yawKickA=Math.abs(response.deltaYawRateA||0);
-        const yawKickB=Math.abs(response.deltaYawRateB||0);
-        if(yawKickA>.02)a.incident.yawTransient=true;
-        if(yawKickB>.02)b.incident.yawTransient=true;
+        const deltaYawA=response.deltaYawRateA||0;
+        const deltaYawB=response.deltaYawRateB||0;
+        if(Math.abs(deltaYawA)>.02)a.incident.yawTransient=true;
+        if(Math.abs(deltaYawB)>.02)b.incident.yawTransient=true;
 
-        // Contact only supplies angular momentum. Whether that becomes a spin is
-        // decided by rotational energy relative to the tyre's restoring work,
-        // not by a raw velocity-difference or yaw-kick result threshold.
-        const severityA=yawLossSeverity(a,track);
-        const severityB=yawLossSeverity(b,track);
+        // Contact supplies angular momentum. A spin is declared only when this
+        // impact injects more rotational energy than the tyres can plausibly
+        // recover over the initial catch angle.
+        const severityA=yawImpactSeverity(a,preExcessA,deltaYawA);
+        const severityB=yawImpactSeverity(b,preExcessB,deltaYawB);
         if(severityA>.82){
           const duration=clamp(1.25+Math.sqrt(severityA)*1.10,1.5,4.6);
           a.incident.spinTimer=Math.max(a.incident.spinTimer,duration);
