@@ -1,4 +1,6 @@
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const TAU=Math.PI*2;
+const wrapAngle=a=>((a+Math.PI)%TAU+TAU)%TAU-Math.PI;
 
 function signedDelta(track,a,b){
   let d=track.wrapS(b.s)-track.wrapS(a.s);
@@ -18,6 +20,19 @@ function laneAvailable(car,candidate,cars,track,horizon=1.25){
     if(Math.abs(futureSelf-futureOther)<safeLat(car,o)&&Math.abs(d)<(car.length+o.length)*.6+4)return false;
   }
   return true;
+}
+function hazardSweep(car,hazard,track,horizon=1.15){
+  const pose=track.sample(hazard.s);
+  const bodyAngle=Math.abs(wrapAngle((hazard.yaw??pose.heading)-pose.heading));
+  const halfBody=Math.abs(Math.cos(bodyAngle))*hazard.width*.5+Math.abs(Math.sin(bodyAngle))*hazard.length*.5;
+  const futureLane=hazard.lane+clamp(hazard.laneV||0,-5.2,5.2)*horizon;
+  const margin=car.width*.5+.55;
+  return{
+    min:Math.min(hazard.lane,futureLane)-halfBody-margin,
+    max:Math.max(hazard.lane,futureLane)+halfBody+margin,
+    futureLane,
+    halfBody
+  };
 }
 function fasterAdvantage(a,b){return a.spec.pace>b.spec.pace+.02||a.spec.top>b.spec.top+3;}
 function ensureState(state){
@@ -70,15 +85,26 @@ export function planRacecraft(car,cars,track,time){
 
   const hazard=ahead.find(x=>x.d<85&&(x.o.incident.spinTimer>.2||x.o.v<4));
   if(hazard){
-    const left=hazard.o.lane-safeLat(car,hazard.o)-.8;
-    const right=hazard.o.lane+safeLat(car,hazard.o)+.8;
+    const horizon=clamp(hazard.d/Math.max(8,car.v),.65,1.45);
+    const sweep=hazardSweep(car,hazard.o,track,horizon);
+    const left=sweep.min,right=sweep.max;
     const options=[left,right].filter(l=>laneAvailable(car,l,cars,track,.9));
     if(options.length){
       options.sort((a,b)=>Math.abs(a-car.lane)-Math.abs(b-car.lane));
       targetLane=options[0];
+      const body=(car.length+hazard.o.length)*.5;
+      const usable=Math.max(.1,hazard.d-body);
       const closing=Math.max(.1,car.v-hazard.o.v);
-      const ttc=Math.max(.1,(hazard.d-(car.length+hazard.o.length)*.5)/closing);
-      targetSpeed=ttc<1.2?Math.max(5,hazard.o.v+2):Math.min(targetSpeed,car.v);
+      const ttc=usable/closing;
+      // Preserve enough time to complete the lateral escape. This is a speed
+      // plan, not a velocity clamp; vehicle physics still owns actual braking.
+      const lateralDistance=Math.abs(targetLane-car.lane);
+      const lateralTime=Math.max(1.0,lateralDistance/Math.max(1.5,car.spec.laneChangeG*2.1));
+      const safeTtc=clamp(lateralTime+.55,1.45,2.35);
+      if(ttc<safeTtc){
+        const allowedClosing=usable/safeTtc;
+        targetSpeed=Math.min(targetSpeed,hazard.o.v+allowedClosing);
+      }else targetSpeed=Math.min(targetSpeed,car.v);
       reason='HAZARD_EVADE';
     }else{
       targetSpeed=Math.min(targetSpeed,Math.max(0,hazard.o.v-2));
