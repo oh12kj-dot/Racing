@@ -51,8 +51,10 @@ test('RACECRAFT-CAUTION-03: race control publishes and clears the no-passing res
 test('RACECRAFT-CAUTION-04: high lateral tyre usage increases following caution before contact',()=>{
   const track=createTrack(),entries=buildEntrants();
   const entry=entries[0],frontEntry=entries[1];
-  const low=car(entry,100,45,0),lowFront=car(frontEntry,118,32,0);
-  const high=car(entry,100,45,0),highFront=car(frontEntry,118,32,0);
+  // Keep this outside the emergency-TTC branch for the low-load car so the
+  // test measures the graded loss of braking reserve, not the shared panic cap.
+  const low=car(entry,100,45,0),lowFront=car(frontEntry,135,32,0);
+  const high=car(entry,100,45,0),highFront=car(frontEntry,135,32,0);
   low.cautionNoPass=true;high.cautionNoPass=true;
   low.tyre.lateralForceUsage=.10;high.tyre.lateralForceUsage=.90;
   const lowPlan=planRacecraft(low,[low,lowFront],track,20);
