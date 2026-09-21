@@ -32,7 +32,11 @@ test('AUTH/RC-09: controller emits steering and vehicle physics owns lateral acc
 });
 
 test('PHY-03: full braking is progressive without a one-frame velocity clamp',()=>{
-  const track=createTrack();
+  const physicalTrack=createTrack();
+  // PHY-03 isolates longitudinal braking. The production circuit is curved at
+  // s=300, so use a zero-curvature fixture here; combined corner/brake demand is
+  // covered separately by PHY-04/PHY-04A.
+  const track={...physicalTrack,curvature:()=>0};
   const entry=buildEntrants().find(e=>e.type==='gt');
   const car=createVehicleState(entry,300,0);car.v=65;
   const speeds=[car.v];
