@@ -157,7 +157,11 @@ export function createRaceControl(){
       this.updateBlueFlags(cars,track);
     },
     updateBlueFlags(cars,track){
-      for(const car of cars)car.blueFlag=false;
+      // Race control publishes the sporting restriction; racecraft remains the
+      // sole owner of tactical lane intent. Hazard evasion is allowed to
+      // override this rule inside racecraft, but attacks/defence are not.
+      const noPassing=this.isCaution();
+      for(const car of cars){car.blueFlag=false;car.cautionNoPass=noPassing;}
       if(this.flag!=='GREEN')return;
       for(const slow of cars){
         if(slow.retired||slow.finished||slow.pit.phase!=='TRACK')continue;
