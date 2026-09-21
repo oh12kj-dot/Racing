@@ -9,12 +9,12 @@ Simulation and presentation are intentionally separated so the renderer/UI canno
 ### Simulation authorities
 
 - `src/simulation/track.js` — circuit geometry, widths, track/world coordinates and pit coordinates
-- `src/simulation/environment.js` — deterministic weather/wetness/visibility state and SLICK/WET condition functions
+- `src/simulation/environment.js` — deterministic weather/visibility state plus local racing-line/off-line surface wetness and standing-water state
 - `src/simulation/vehicle.js` — longitudinal/lateral vehicle physics, tyre-force sharing, load transfer, steering, yaw, gears, damage-performance effects and barrier response
 - `src/simulation/racecraft.js` — attack/defend/pass/yield/hazard tactical intent
 - `src/simulation/traffic-aero.js` — draft drag reduction and dirty-air downforce loss
-- `src/simulation/systems.js` — fuel, tyre compound/wear/temperature, wet-grip/slip degradation, thermal state and deterministic mechanical reliability
-- `src/simulation/strategy.js` — reason-coded pit/service decisions including weather tyre intent; it does not own tactical lane choice
+- `src/simulation/systems.js` — fuel, tyre compound/wear/temperature, local wet-grip/slip degradation, thermal state and deterministic mechanical reliability
+- `src/simulation/strategy.js` — reason-coded pit/service decisions including racing-line weather tyre intent; it does not own tactical lane choice
 - `src/simulation/pit.js` — physical pit approach, limiter, fast lane, working lane, queue, service, tyre-change application, release and merge
 - `src/simulation/timing.js` — lap and sector timing
 - `src/simulation/race-control.js` — GREEN/YELLOW/VSC/SAFETY_CAR/RED/CHEQUERED authority, controlled RED recovery/restart procedure and blue-flag context
@@ -74,9 +74,12 @@ The current clean build includes:
 - yaw/yaw-rate and gear state
 - deterministic fixed simulation step and authoritative state hashing
 - one authoritative environment state with evolving wetness, rainfall intensity, visibility and ambient temperature
+- local longitudinal surface wetness with an established racing line, wetter off-line asphalt and traffic-driven line drying
+- standing-water state derived from local surface saturation, acting through tyre grip rather than direct vehicle-speed limits
+- high-speed standing-water grip loss that is stronger on SLICK tyres than on WET tyres
 - SLICK/WET tyre compounds with continuous weather-dependent grip and different temperature targets
 - wetness acting through tyre grip, cornering and braking physics rather than direct speed caps
-- weather-aware strategy with hysteresis to avoid rapid SLICK/WET oscillation
+- weather-aware strategy using representative racing-line condition, with hysteresis to avoid rapid SLICK/WET oscillation from one local puddle
 - compound changes applied only during physical pit service; weather strategy never directly changes pose/lane/speed
 - wet-road material, darker environment and visibility/fog presentation driven by the same simulation environment snapshot
 - draft as drag reduction and dirty air as downforce reduction; no direct wake speed boost
@@ -118,9 +121,11 @@ The browser suite includes dedicated contracts for:
 - class ordering, progressive braking, combined friction usage, load transfer and tyre slip behaviour
 - wet slick braking/corner degradation and wet-tyre advantage under wet conditions
 - dry-track disadvantage for wet tyres and compound-change hysteresis
-- weather strategy intent without direct pose/lane/speed mutation
+- racing-line drying under traffic, wetter off-line surface state and local standing-water differences
+- high-speed standing-water grip loss without a scripted speed cap, with a smaller penalty for WET tyres than SLICKs
+- weather strategy intent from representative racing-line condition without direct pose/lane/speed mutation
 - compound changes only during pit service
-- deterministic environment evolution and deterministic race state under identical weather inputs
+- deterministic global/local environment evolution and deterministic race state under identical weather inputs
 - presentation reading simulation weather rather than running a second visual weather model
 - steering authority/rate and deterministic replay hash
 - straight/multiclass passing, safe side-by-side running, convergence veto, inside/outside attacks, switchback and one-move defense
@@ -140,4 +145,4 @@ The browser suite includes dedicated contracts for:
 
 ## Remaining fidelity work
 
-This is a working clean race spectator application, but it is not intended to claim final real-world fidelity in every subsystem. Further work should deepen the existing single authorities rather than add wrapper controllers. High-value future areas include richer weather forecasting/racing-line drying and standing-water effects, intermediate tyre compounds where rules require them, richer fuel/hybrid/energy deployment and strategy, more detailed component-specific reliability/damage, production vehicle/environment assets, and broader calibrated real-world performance validation.
+This is a working clean race spectator application, but it is not intended to claim final real-world fidelity in every subsystem. Further work should deepen the existing single authorities rather than add wrapper controllers. High-value future areas include richer weather forecasting and evolving rain-event scenarios, intermediate tyre compounds where rules require them, richer fuel/hybrid/energy deployment and strategy, more detailed component-specific reliability/damage, production vehicle/environment assets, and broader calibrated real-world performance validation.
