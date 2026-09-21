@@ -197,15 +197,12 @@ export function stepVehicle(car,track,control,dt){
     const recoveryGain=spinning?(finalRecovery?3.2:1.5):5.5;
     const yawDamping=spinning?(finalRecovery?1.8:.8):3.2;
     const maxYawAccel=spinning?4.5:7.5;
-    const yawAccel=clamp(alignmentError*recoveryGain-car.yawRate*yawDamping,-maxYawAccel,maxYawAccel);
-    car.yawRate=clamp(car.yawRate+yawAccel*dt,-6,6);
-    car.yaw=wrapAngle(car.yaw+car.yawRate*dt);
-    // The velocity heading rotates both because the circuit curves and because
-    // lateral velocity itself is changing. Subtract both components before
-    // deciding whether contact-induced yaw has settled; the conservative fixed
-    // excess-yaw threshold remains unchanged.
     const lateralHeadingRate=(car.v*car.laneA-car.laneV*actualLongAccel)/Math.max(16,car.v*car.v+car.laneV*car.laneV);
     const nominalYawRate=track.curvature(car.s)*car.v+lateralHeadingRate;
+    const yawRateError=car.yawRate-nominalYawRate;
+    const yawAccel=clamp(alignmentError*recoveryGain-yawRateError*yawDamping,-maxYawAccel,maxYawAccel);
+    car.yawRate=clamp(car.yawRate+yawAccel*dt,-6,6);
+    car.yaw=wrapAngle(car.yaw+car.yawRate*dt);
     const excessYawRate=car.yawRate-nominalYawRate;
     if(!spinning&&Math.abs(alignmentError)<.025&&Math.abs(excessYawRate)<.12)car.incident.yawTransient=false;
   }else{
