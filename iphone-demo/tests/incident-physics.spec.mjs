@@ -23,6 +23,15 @@ function configureObliqueRace(sim){
   return[a,b];
 }
 
+function configureSoloRace(sim){
+  const [car,...rest]=sim.cars;
+  for(const other of rest)other.retired=true;
+  car.reaction=-10;car.lap=0;car.s=300;car.totalProgress=300;
+  car.lane=0;car.laneV=0;car.laneA=0;car.v=34;
+  car.yaw=sim.track.sample(car.s).heading;car.yawRate=0;
+  return car;
+}
+
 test('INC-01: active incident stabilises the current corridor without scripted lateral oscillation',()=>{
   const sim=createRaceSimulation(0x1ac1001,{raceLaps:40});
   const [car,...rest]=sim.cars;
@@ -118,4 +127,33 @@ test('INC-07: overlap separation correction cannot manufacture crash yaw without
   expect(response.separationImpulse).toBeGreaterThan(0);
   expect(response.deltaYawRateA).toBe(0);
   expect(response.deltaYawRateB).toBe(0);
+});
+
+test('INC-08: incident state cannot prescribe a synthetic lower target speed',()=>{
+  const normal=createRaceSimulation(0x1ac1008,{raceLaps:40});
+  const incident=createRaceSimulation(0x1ac1008,{raceLaps:40});
+  const normalCar=configureSoloRace(normal),incidentCar=configureSoloRace(incident);
+  incidentCar.incident.spinTimer=.5;
+  incidentCar.yawRate=1.2;
+  normal.update(FIXED_DT);incident.update(FIXED_DT);
+  expect(incidentCar.controlSource).toBe('INCIDENT_SPIN');
+  expect(incidentCar.targetSpeed).toBeCloseTo(normalCar.targetSpeed,9);
+  expect(incidentCar.targetSpeed).toBeGreaterThan(incidentCar.v*.8);
+  expect(incidentCar.throttle).toBe(0);
+});
+
+test('INC-09: spin speed loss comes from body-slip tyre scrub rather than the incident timer itself',()=>{
+  const track=createTrack(),entry=buildEntrants()[0];
+  const aligned=createVehicleState(entry,300,0),sideways=createVehicleState(entry,300,0);
+  const heading=track.sample(300).heading;
+  for(const car of [aligned,sideways]){
+    car.v=40;car.lane=0;car.laneV=0;car.laneA=0;car.yawRate=0;car.incident.spinTimer=1;
+  }
+  aligned.yaw=heading;
+  sideways.yaw=heading+Math.PI/2;
+  stepVehicle(aligned,track,{throttle:0,brake:0,steer:0},FIXED_DT);
+  stepVehicle(sideways,track,{throttle:0,brake:0,steer:0},FIXED_DT);
+  expect(40-aligned.v).toBeLessThan(.05);
+  expect(sideways.v).toBeLessThan(aligned.v-.05);
+  expect(40-sideways.v).toBeLessThan(1);
 });
