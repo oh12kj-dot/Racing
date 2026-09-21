@@ -200,7 +200,9 @@ export function stepVehicle(car,track,control,dt){
     const yawAccel=clamp(alignmentError*recoveryGain-car.yawRate*yawDamping,-maxYawAccel,maxYawAccel);
     car.yawRate=clamp(car.yawRate+yawAccel*dt,-6,6);
     car.yaw=wrapAngle(car.yaw+car.yawRate*dt);
-    if(!spinning&&Math.abs(alignmentError)<.018&&Math.abs(car.yawRate)<.06)car.incident.yawTransient=false;
+    const nominalYawRate=track.curvature(car.s)*car.v;
+    const excessYawRate=car.yawRate-nominalYawRate;
+    if(!spinning&&Math.abs(alignmentError)<.025&&Math.abs(excessYawRate)<.12)car.incident.yawTransient=false;
   }else{
     car.yawRate=wrapAngle(alignedYaw-car.yaw)/Math.max(1e-4,dt);
     car.yaw=alignedYaw;
