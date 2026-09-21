@@ -46,6 +46,7 @@ test('INC-02: oblique lateral impulse away from the centre of mass creates physi
   expect(Math.abs(contact.normalLat)).toBeGreaterThan(.9);
   const response=resolveContactImpulse(a,b,contact);
   expect(response.applied).toBeTruthy();
+  expect(response.impactImpulse).toBeGreaterThan(0);
   expect(Math.abs(response.deltaYawRateA)).toBeGreaterThan(.65);
   expect(Math.abs(response.deltaYawRateB)).toBeGreaterThan(.65);
   const yawBefore=a.yaw,rateBefore=Math.abs(a.yawRate);
@@ -103,4 +104,18 @@ test('INC-06: identical oblique incidents remain deterministic through physical 
   }
   expect(a.snapshot().diagnostics.finite).toBeTruthy();
   expect(b.snapshot().diagnostics.finite).toBeTruthy();
+});
+
+test('INC-07: overlap separation correction cannot manufacture crash yaw without closing speed',()=>{
+  const {track,a,b}=vehiclePair();
+  a.lane=-.3;b.lane=.3;a.laneV=0;b.laneV=0;a.v=40;b.v=40;a.yawRate=0;b.yawRate=0;
+  const contact=contactManifold(a,b,track);
+  expect(contact.hit).toBeTruthy();
+  const response=resolveContactImpulse(a,b,contact);
+  expect(response.applied).toBeTruthy();
+  expect(response.impactSpeed).toBe(0);
+  expect(response.impactImpulse).toBe(0);
+  expect(response.separationImpulse).toBeGreaterThan(0);
+  expect(response.deltaYawRateA).toBe(0);
+  expect(response.deltaYawRateB).toBe(0);
 });
