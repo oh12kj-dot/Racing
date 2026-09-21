@@ -84,7 +84,7 @@ export function createVehicleState(entry,s,lap=-1){
     targetSpeed:0,targetLane:0,
     racecraft:{state:'RESET',targetId:null,commitUntil:0,defenseUsed:false},
     pit:{phase:'TRACK',requested:false,served:false,plannedLap:2+(entry.id%3),serviceTimer:0,queue:false,boxS:0,missedCount:0},
-    incident:{spinTimer:0,damage:0},
+    incident:{spinTimer:0,yawTransient:false,damage:0},
     systems:createSystems(entry.type),
     timing:createTiming(),
     tyre:{slipRatio:0,slipAngle:0,loadTransfer:0,longitudinalAccel:0,forceUsage:0},
@@ -145,7 +145,8 @@ export function stepVehicle(car,track,control,dt){
   const overspeed=car.v>topSpeed?Math.min(10,(car.v-topSpeed)*2.2):0;
   const velocityHeading=wrapAngle(track.sample(car.s).heading+Math.atan2(car.laneV,Math.max(4,car.v)));
   const bodySlip=wrapAngle(velocityHeading-car.yaw);
-  const incidentScrub=(car.incident?.spinTimer||0)>0?Math.min(tyreLong,tyreLat*Math.sin(bodySlip)**2):0;
+  const angularTransient=(car.incident?.spinTimer||0)>0||!!car.incident?.yawTransient;
+  const incidentScrub=angularTransient?Math.min(tyreLong,tyreLat*Math.sin(bodySlip)**2):0;
   const oldV=car.v;
   const acc=tyreForce-drag-overspeed-incidentScrub;
   car.v=Math.max(0,car.v+acc*dt);
@@ -186,17 +187,20 @@ export function stepVehicle(car,track,control,dt){
   const trackPose=track.sample(car.s);
   const velocitySlipYaw=Math.atan2(car.laneV,Math.max(4,car.v));
   const alignedYaw=wrapAngle(trackPose.heading+velocitySlipYaw);
-  if((car.incident?.spinTimer||0)>0){
-    // During an incident, angular velocity is authoritative: contact creates the
-    // yaw impulse and tyre restoring/damping moments bring the car back toward
-    // its velocity direction. No scripted yaw or lane oscillation is injected.
-    const alignmentError=wrapAngle(alignedYaw-car.yaw);
-    const finalRecovery=car.incident.spinTimer<.55;
-    const recoveryGain=finalRecovery?3.2:1.5;
-    const yawDamping=finalRecovery?1.8:.8;
-    const yawAccel=clamp(alignmentError*recoveryGain-car.yawRate*yawDamping,-4.5,4.5);
+  const alignmentError=wrapAngle(alignedYaw-car.yaw);
+  if(angularTransient){
+    // A contact yaw transient and a full spin use the same angular physics but
+    // different tyre recovery authority. Recoverable yaw is damped strongly;
+    // only a genuine loss-of-control state receives the slower spin recovery.
+    const spinning=(car.incident?.spinTimer||0)>0;
+    const finalRecovery=spinning&&car.incident.spinTimer<.55;
+    const recoveryGain=spinning?(finalRecovery?3.2:1.5):5.5;
+    const yawDamping=spinning?(finalRecovery?1.8:.8):3.2;
+    const maxYawAccel=spinning?4.5:7.5;
+    const yawAccel=clamp(alignmentError*recoveryGain-car.yawRate*yawDamping,-maxYawAccel,maxYawAccel);
     car.yawRate=clamp(car.yawRate+yawAccel*dt,-6,6);
     car.yaw=wrapAngle(car.yaw+car.yawRate*dt);
+    if(!spinning&&Math.abs(alignmentError)<.018&&Math.abs(car.yawRate)<.06)car.incident.yawTransient=false;
   }else{
     car.yawRate=wrapAngle(alignedYaw-car.yaw)/Math.max(1e-4,dt);
     car.yaw=alignedYaw;
