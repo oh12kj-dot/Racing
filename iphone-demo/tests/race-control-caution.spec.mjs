@@ -27,13 +27,13 @@ test('RACE-06: race control is the sole caution authority and never writes vehic
   expect(src).toContain("'SAFETY_CAR'");
 });
 
-test('RACE-07: a moving spin remains yellow and clears only after the minimum caution time',()=>{
+test('RACE-07: a physically moving spin remains yellow and clears only after the minimum caution time',()=>{
   const {track,cars}=field(2),rc=createRaceControl();
-  cars[0].incident.spinTimer=2;cars[0].v=24;
+  cars[0].incident.spinTimer=2;cars[0].yawRate=1.1;cars[0].v=24;
   rc.update(20,cars,track);
   expect(rc.flag).toBe('YELLOW');
   const clearAt=rc.cautionUntil;
-  cars[0].incident.spinTimer=0;
+  cars[0].incident.spinTimer=0;cars[0].yawRate=0;
   rc.update(clearAt-.1,cars,track);expect(rc.flag).toBe('YELLOW');
   rc.update(clearAt+.1,cars,track);expect(rc.flag).toBe('GREEN');
 });
