@@ -19,7 +19,9 @@ export function evaluatePitStrategy(car,track,raceLaps,environment=null){
   const newDamage=Math.max(0,damage-lastServicedDamage);
   const damageStop=damage>.48&&(!car.pit.served||damage>.82||newDamage>.12);
   const mechanicalRisk=s.engineTemp>112||s.mechanicalStress>.45||s.powerDerate>.12;
-  const wetness=environment?.wetness??0;
+  // Tyre calls use the representative racing-line condition, not one local
+  // puddle under this car. Local surface water still affects vehicle grip.
+  const wetness=environment?.racingLineWetness??environment?.wetness??0;
   const currentCompound=s.tyreCompound||TYRE_COMPOUND.SLICK;
   const desiredCompound=currentCompound===TYRE_COMPOUND.WET
     ?(wetness<.20?TYRE_COMPOUND.SLICK:TYRE_COMPOUND.WET)
