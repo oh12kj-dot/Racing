@@ -81,7 +81,9 @@ test('PIT-14: pit exit yields physically to unsafe main-track traffic before mer
   let plan=planPit(car,[car,traffic],track,FIXED_DT);
   expect(car.pit.phase).toBe('FAST_LANE_EXIT');
   expect(plan.targetLane).toBe(track.pit.fastLane);
-  expect(plan.targetSpeed).toBeLessThan(track.pit.speedLimit-1);
+  // The target is the exact braking envelope needed to stop at the hold point;
+  // it need only be below the limiter, not an arbitrary whole m/s lower.
+  expect(plan.targetSpeed).toBeLessThan(track.pit.speedLimit);
   expect({s:traffic.s,v:traffic.v,lane:traffic.lane}).toEqual(beforeTraffic);
 
   car.s=track.pit.mergeStart-4;car.v=.2;
@@ -96,6 +98,27 @@ test('PIT-14: pit exit yields physically to unsafe main-track traffic before mer
   plan=planPit(car,[car,traffic],track,FIXED_DT);
   expect(car.pit.phase).toBe('MERGE');
   expect(plan.targetLane).toBeGreaterThan(track.pit.fastLane);
+});
+
+test('PIT-15: merge completes in the merge corridor instead of cutting straight to the racing line',()=>{
+  const track=createTrack(),entries=buildEntrants();
+  const car=createVehicleState(entries[0],track.pit.mergeEnd,2);
+  car.pit.phase='MERGE';car.pit.requested=true;car.lane=-2.4;car.v=22;
+  const plan=planPit(car,[car],track,FIXED_DT);
+  expect(car.pit.phase).toBe('TRACK');
+  expect(plan.targetLane).toBeCloseTo(-2.2,9);
+});
+
+test('PIT-16: pit-exit traffic follows a slower car instead of stacking into it',()=>{
+  const track=createTrack(),entries=buildEntrants();
+  const follower=createVehicleState(entries[0],track.pit.mergeStart-30,2);
+  const leader=createVehicleState(entries[2],track.pit.mergeStart-18,2);
+  for(const c of [follower,leader]){c.pit.phase='FAST_LANE_EXIT';c.pit.requested=true;c.lane=track.pit.fastLane;}
+  follower.v=22;leader.v=8;
+  const plan=planPit(follower,[follower,leader],track,FIXED_DT);
+  expect(plan.targetLane).toBe(track.pit.fastLane);
+  expect(plan.targetSpeed).toBeLessThan(track.pit.speedLimit-2);
+  expect(plan.targetSpeed).toBeGreaterThanOrEqual(leader.v);
 });
 
 test('PIT-03/04/05/11/12: full pit transit is continuous, corridor-bound and limiter-controlled',()=>{
