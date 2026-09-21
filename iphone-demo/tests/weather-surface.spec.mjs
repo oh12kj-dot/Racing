@@ -2,7 +2,7 @@ import {test,expect} from '@playwright/test';
 import {FIXED_DT,buildEntrants} from '../src/config.js';
 import {createTrack} from '../src/simulation/track.js';
 import {createVehicleState} from '../src/simulation/vehicle.js';
-import {createEnvironment,stepEnvironment,surfaceConditionAt,TYRE_COMPOUND,tyreIdealTemperature} from '../src/simulation/environment.js';
+import {createEnvironment,stepEnvironment,surfaceConditionAt,SURFACE_SECTORS,TYRE_COMPOUND,tyreIdealTemperature} from '../src/simulation/environment.js';
 import {gripFactor} from '../src/simulation/systems.js';
 import {evaluatePitStrategy,PIT_REASON} from '../src/simulation/strategy.js';
 import {createRaceSimulation} from '../src/simulation/race.js';
@@ -16,7 +16,11 @@ function makeCar(type='formula',s=240,v=52){
 
 test('WET-10: traffic dries the racing line while off-line asphalt remains wetter',()=>{
   const track=createTrack(),env=createEnvironment({initialWetness:.65,rainRate:0,dryingRate:0});
-  const car=makeCar('formula',240,55);
+  // Measure the same surface cell that the stationary traffic fixture sweeps;
+  // an arbitrary point between cells would intentionally interpolate with an
+  // untouched neighbour and would measure sector interpolation instead.
+  const s=track.total*11/SURFACE_SECTORS;
+  const car=makeCar('formula',s,55);
   car.lane=track.idealLane(car.s);
   for(let i=0;i<Math.round(60/FIXED_DT);i++)stepEnvironment(env,FIXED_DT,[car],track);
   const local=surfaceConditionAt(env,track,car.s,car.lane);
@@ -26,7 +30,8 @@ test('WET-10: traffic dries the racing line while off-line asphalt remains wette
 
 test('WET-11: the same longitudinal point has less water on the established line than off line',()=>{
   const track=createTrack(),env=createEnvironment({initialWetness:.72,rainRate:0,dryingRate:0});
-  const car=makeCar('gt',520,44);car.lane=track.idealLane(car.s);
+  const s=track.total*23/SURFACE_SECTORS;
+  const car=makeCar('gt',s,44);car.lane=track.idealLane(car.s);
   for(let i=0;i<Math.round(50/FIXED_DT);i++)stepEnvironment(env,FIXED_DT,[car],track);
   const ideal=track.idealLane(car.s);
   const line=surfaceConditionAt(env,track,car.s,ideal);
