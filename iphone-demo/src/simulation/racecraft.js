@@ -114,9 +114,12 @@ export function planRacecraft(car,cars,track,time){
     return{targetLane,targetSpeed,reason,state:state.state,attackKind:state.attackKind};
   }
 
-  if(car.blueFlag){
+  const cautionNoPass=!!car.cautionNoPass;
+  if(cautionNoPass){
+    resetPass(state,'CAUTION');targetLane=car.lane;reason='CAUTION_HOLD_LINE';
+  }else if(car.blueFlag){
     resetPass(state,'YIELD');targetLane=ideal;reason='BLUE_FLAG_PREDICTABLE';
-  }else if(state.state==='YIELD'||state.state==='SPECIAL'){
+  }else if(state.state==='YIELD'||state.state==='SPECIAL'||state.state==='CAUTION'){
     state.state='RESET';
   }
   if((state.state==='COMPLETE'||state.state==='ABORT')&&time>=state.commitUntil)resetPass(state);
@@ -170,7 +173,7 @@ export function planRacecraft(car,cars,track,time){
 
   const passActive=['SETUP','COMMIT','ALONGSIDE','SWITCHBACK'].includes(state.state)&&activeTarget;
   const front=ahead.find(x=>Math.abs(x.o.lane-car.lane)<3.6);
-  if(!passActive&&front&&!car.blueFlag&&state.state!=='COMPLETE'&&state.state!=='ABORT'){
+  if(!cautionNoPass&&!passActive&&front&&!car.blueFlag&&state.state!=='COMPLETE'&&state.state!=='ABORT'){
     const closing=car.v-front.o.v;
     const faster=fasterAdvantage(car,front.o);
     const cornerLoad=Math.min(1.5,Math.abs(track.curvature(car.s+35))*92);
@@ -187,7 +190,7 @@ export function planRacecraft(car,cars,track,time){
     }
   }
 
-  if(!front&&!passActive&&!car.blueFlag&&behind.length){
+  if(!cautionNoPass&&!front&&!passActive&&!car.blueFlag&&behind.length){
     const attacker=behind[0];
     const similarClass=Math.abs(car.spec.pace-attacker.o.spec.pace)<.08;
     const closing=attacker.o.v-car.v;
