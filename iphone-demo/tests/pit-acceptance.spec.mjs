@@ -51,7 +51,7 @@ test('PIT-06/07/08/09: capture is physical, teams service in parallel and same-t
   expect(Math.abs(track.pit.fastLane-queued.targetLane)).toBeGreaterThan((same.width+a.width)*.5+.45);
 });
 
-test('PIT-10: service release waits for unsafe fast-lane traffic and releases when TTC is safe',()=>{
+test('PIT-10: service release reserves enough time to clear the working-lane exit',()=>{
   const track=createTrack(),entries=buildEntrants();
   const car=createVehicleState(entries[0],boxFor(entries[0],track),2);
   const traffic=createVehicleState(entries.find(e=>e.teamId!==car.teamId),track.wrapS(car.s-20),2);
@@ -60,7 +60,13 @@ test('PIT-10: service release waits for unsafe fast-lane traffic and releases wh
   planPit(car,[car,traffic],track,FIXED_DT);
   expect(car.pit.phase).toBe('RELEASE_WAIT');
 
+  // 65 m is only about three seconds at pit-lane speed and is not enough for
+  // every stopped class to accelerate through the 38 m working-lane exit.
   traffic.s=track.wrapS(car.s-65);
+  planPit(car,[car,traffic],track,FIXED_DT);
+  expect(car.pit.phase).toBe('RELEASE_WAIT');
+
+  traffic.s=track.wrapS(car.s-85);
   planPit(car,[car,traffic],track,FIXED_DT);
   expect(car.pit.phase).toBe('WORKING_EXIT');
 });
