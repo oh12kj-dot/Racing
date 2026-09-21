@@ -182,9 +182,22 @@ export function stepVehicle(car,track,control,dt){
 
   const trackPose=track.sample(car.s);
   const velocitySlipYaw=Math.atan2(car.laneV,Math.max(4,car.v));
-  const nextYaw=wrapAngle(trackPose.heading+velocitySlipYaw);
-  car.yawRate=wrapAngle(nextYaw-car.yaw)/Math.max(1e-4,dt);
-  car.yaw=nextYaw;
+  const alignedYaw=wrapAngle(trackPose.heading+velocitySlipYaw);
+  if((car.incident?.spinTimer||0)>0){
+    // During an incident, angular velocity is authoritative: contact creates the
+    // yaw impulse and tyre restoring/damping moments bring the car back toward
+    // its velocity direction. No scripted yaw or lane oscillation is injected.
+    const alignmentError=wrapAngle(alignedYaw-car.yaw);
+    const finalRecovery=car.incident.spinTimer<.55;
+    const recoveryGain=finalRecovery?3.2:1.5;
+    const yawDamping=finalRecovery?1.8:.8;
+    const yawAccel=clamp(alignmentError*recoveryGain-car.yawRate*yawDamping,-4.5,4.5);
+    car.yawRate=clamp(car.yawRate+yawAccel*dt,-6,6);
+    car.yaw=wrapAngle(car.yaw+car.yawRate*dt);
+  }else{
+    car.yawRate=wrapAngle(alignedYaw-car.yaw)/Math.max(1e-4,dt);
+    car.yaw=alignedYaw;
+  }
   const baseSteer=Math.atan(track.curvature(car.s)*spec.wheelbase);
   const frontVelocityAngle=Math.atan2(car.laneV+car.yawRate*spec.wheelbase*.5,Math.max(4,car.v));
   const frontSlip=wrapAngle(baseSteer+car.steer-frontVelocityAngle);
