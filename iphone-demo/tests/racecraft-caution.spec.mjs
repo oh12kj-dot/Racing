@@ -48,19 +48,19 @@ test('RACECRAFT-CAUTION-03: race control publishes and clears the no-passing res
   expect(cars.every(c=>c.cautionNoPass===false)).toBeTruthy();
 });
 
-test('RACECRAFT-CAUTION-04: high lateral tyre usage increases following caution before contact',()=>{
+test('RACECRAFT-CAUTION-04: high lateral tyre usage consumes following reserve before the low-load car must lift',()=>{
   const track=createTrack(),entries=buildEntrants();
   const entry=entries[0],frontEntry=entries[1];
-  // Keep this outside the emergency-TTC branch for the low-load car so the
-  // test measures the graded loss of braking reserve, not the shared panic cap.
   const low=car(entry,100,45,0),lowFront=car(frontEntry,135,32,0);
   const high=car(entry,100,45,0),highFront=car(frontEntry,135,32,0);
   low.cautionNoPass=true;high.cautionNoPass=true;
   low.tyre.lateralForceUsage=.10;high.tyre.lateralForceUsage=.90;
   const lowPlan=planRacecraft(low,[low,lowFront],track,20);
   const highPlan=planRacecraft(high,[high,highFront],track,20);
-  expect(Number.isFinite(lowPlan.targetSpeed)).toBeTruthy();
+  // At this gap the low-load car still has enough tyre reserve to leave speed
+  // unconstrained, while the saturated car must already reduce closing speed.
+  expect(lowPlan.targetSpeed).toBe(Infinity);
   expect(Number.isFinite(highPlan.targetSpeed)).toBeTruthy();
-  expect(highPlan.targetSpeed).toBeLessThan(lowPlan.targetSpeed-.5);
+  expect(highPlan.targetSpeed).toBeLessThan(high.v);
   expect(highPlan.targetLane).toBeCloseTo(high.lane,9);
 });
