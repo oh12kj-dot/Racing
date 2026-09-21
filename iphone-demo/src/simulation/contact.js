@@ -17,15 +17,25 @@ export function contactManifold(a,b,track){
   const penetration=radius-separation;
 
   let normalLong=0,normalLat=0;
-  if(capDx>1e-6||lat>1e-6){
+  if(capDx>1e-6){
     const nx=Math.sign(longitudinal||1)*capDx;
     const ny=lateral;
     const nLen=Math.hypot(nx,ny)||1;
     normalLong=nx/nLen;normalLat=ny/nLen;
-  }else if(Math.abs(longitudinal)>.25){
-    normalLong=Math.sign(longitudinal);
   }else{
-    normalLat=a.id<=b.id?1:-1;
+    const relLong=(b.v||0)-(a.v||0);
+    const relLat=(b.laneV||0)-(a.laneV||0);
+    const longitudinalClosing=long>.25&&Math.abs(relLong)>Math.abs(relLat)*1.5;
+    const nearlyAligned=long>.25&&lat<radius*.18;
+    if(longitudinalClosing||nearlyAligned){
+      normalLong=Math.sign(longitudinal||1);
+    }else if(lat>1e-6){
+      normalLat=Math.sign(lateral);
+    }else if(long>.25){
+      normalLong=Math.sign(longitudinal);
+    }else{
+      normalLat=a.id<=b.id?1:-1;
+    }
   }
 
   return{
