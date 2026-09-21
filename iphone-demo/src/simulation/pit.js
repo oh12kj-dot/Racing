@@ -18,6 +18,26 @@ function fastLaneBlocked(car,cars,track){
   }
   return false;
 }
+function mainTrackMergeBlocked(car,cars,track){
+  const mergeLane=-2.2;
+  for(const o of cars){
+    if(o===car||o.retired||o.finished||o.pit.phase!=='TRACK')continue;
+    const lateralClearance=(car.width+o.width)*.5+1.8;
+    if(Math.abs(o.lane-mergeLane)>lateralClearance)continue;
+    const d=track.signedDistance(car.s,o.s);
+    const body=(car.length+o.length)*.5+2.0;
+    if(d<0){
+      const usable=Math.max(.1,-d-body);
+      const closing=Math.max(0,o.v-car.v);
+      if(-d<38||(closing>.1&&usable/closing<2.8))return true;
+    }else{
+      const usable=Math.max(.1,d-body);
+      const closing=Math.max(0,car.v-o.v);
+      if(d<12||(closing>.1&&usable/closing<1.2))return true;
+    }
+  }
+  return false;
+}
 function sameTeamService(car,cars){return cars.find(o=>o!==car&&!o.retired&&!o.finished&&o.teamId===car.teamId&&['SERVICE','QUEUE'].includes(o.pit.phase));}
 function pitApproachDecel(car){return clamp(car.spec.brake*.20,3.2,6.5);}
 function brakeEnvelope(car,dist,target){const a=pitApproachDecel(car);return Math.sqrt(Math.max(target*target,target*target+2*a*Math.max(0,dist)));}
@@ -129,7 +149,14 @@ export function planPit(car,cars,track,dt,emit){
 
   if(p.phase==='FAST_LANE_EXIT'){
     lane=t.fastLane;speed=t.speedLimit;
-    if(car.s>=t.mergeStart)p.phase='MERGE';
+    const mergeBlocked=mainTrackMergeBlocked(car,cars,track);
+    const holdS=t.mergeStart-4;
+    const toHold=holdS-car.s;
+    if(mergeBlocked){
+      speed=toHold>0?Math.min(t.speedLimit,brakeEnvelope(car,toHold,0)):0;
+    }else if(car.s>=t.mergeStart){
+      p.phase='MERGE';
+    }
   }
 
   if(p.phase==='MERGE'){
