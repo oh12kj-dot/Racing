@@ -4,6 +4,7 @@ import {createTrack} from '../src/simulation/track.js';
 import {createVehicleState,stepVehicle} from '../src/simulation/vehicle.js';
 import {contactManifold,resolveContactImpulse} from '../src/simulation/contact.js';
 import {createRaceControl} from '../src/simulation/race-control.js';
+import {planRacecraft} from '../src/simulation/racecraft.js';
 import {createRaceSimulation} from '../src/simulation/race.js';
 
 function vehiclePair(){
@@ -38,7 +39,7 @@ test('INC-01: active incident stabilises the current corridor without scripted l
   const [car,...rest]=sim.cars;
   for(const other of rest)other.retired=true;
   car.reaction=-10;car.lap=0;car.s=300;car.totalProgress=300;
-  car.lane=4.2;car.laneV=.8;car.v=34;car.yaw=sim.track.sample(car.s).heading;car.yawRate=1.4;
+  car.lane=4.2;car.laneV=.8;car.v=34;car.yaw=sim.track.sample(car.s).heading;car.yawRate=.3;
   car.incident.spinTimer=.5;
   const laneBefore=car.lane,sBefore=car.s;
   sim.update(FIXED_DT);
@@ -135,7 +136,7 @@ test('INC-08: incident state cannot prescribe a synthetic lower target speed',()
   const incident=createRaceSimulation(0x1ac1008,{raceLaps:40});
   const normalCar=configureSoloRace(normal),incidentCar=configureSoloRace(incident);
   incidentCar.incident.spinTimer=.5;
-  incidentCar.yawRate=1.2;
+  incidentCar.yawRate=.2;
   normal.update(FIXED_DT);incident.update(FIXED_DT);
   expect(incidentCar.controlSource).toBe('INCIDENT_SPIN');
   expect(incidentCar.targetSpeed).toBeCloseTo(normalCar.targetSpeed,9);
@@ -175,4 +176,17 @@ test('INC-11: race control still reacts to a physically unstable tagged incident
   rc.update(20,[car],track);
   expect(rc.flag).toBe('YELLOW');
   expect(rc.incidentIds).toEqual([car.id]);
+});
+
+test('INC-12: following traffic evades a spinning car swept corridor instead of its current lane only',()=>{
+  const track=createTrack(),entries=buildEntrants();
+  const car=createVehicleState(entries[0],300,0),hazard=createVehicleState(entries[1],330,0);
+  car.v=42;car.lane=0;car.yaw=track.sample(car.s).heading;car.totalProgress=car.s;
+  hazard.v=8;hazard.lane=-1;hazard.laneV=3.2;hazard.yaw=track.sample(hazard.s).heading+Math.PI/2;
+  hazard.incident.spinTimer=2;hazard.totalProgress=hazard.s;
+  const plan=planRacecraft(car,[car,hazard],track,20);
+  expect(plan.reason).toBe('HAZARD_EVADE');
+  expect(plan.targetLane).toBeLessThan(-4.5);
+  expect(plan.targetSpeed).toBeLessThan(car.v);
+  expect(plan.targetSpeed).toBeGreaterThanOrEqual(hazard.v);
 });
