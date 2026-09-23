@@ -39,10 +39,14 @@ async function sample(page,label){
   },label);
 }
 
-test('VISUAL-AUDIT: record real race motion from multiple broadcast cameras',async({page},testInfo)=>{
+async function bootRace(page){
   await page.goto('/iphone-demo/index.html?runtimeTest=1',{waitUntil:'domcontentloaded'});
   await page.waitForFunction(()=>!!(window.__RACING_RACE__&&window.__RACING_WORLD__&&window.__RACING__?.director),null,{timeout:30000});
   await page.evaluate(()=>window.__RACING_RACE__.setRunning(true));
+}
+
+test('VISUAL-AUDIT: record real race motion from multiple broadcast cameras',async({page},testInfo)=>{
+  await bootRace(page);
 
   const telemetry=[];
   const modes=['TV','FOLLOW','HELI','ONBOARD'];
@@ -75,4 +79,29 @@ test('VISUAL-AUDIT: record real race motion from multiple broadcast cameras',asy
   expect(finalState.groups).toBe(24);
   expect(finalState.mode).toBe('ONBOARD');
   expect(finalState.onboardCameraError).toBeLessThan(.05);
+});
+
+test('VISUAL-AUDIT: rear grid launches together instead of entering stopped-hazard mode',async({page},testInfo)=>{
+  await bootRace(page);
+  await page.evaluate(()=>{
+    window.__RACING__.director.trackedId=9;
+    window.__RACING__.director.setMode('HELI');
+  });
+
+  const launchTelemetry=[];
+  for(const [i,time] of [3.2,3.8,4.4,5.0,5.6,6.2].entries()){
+    await page.waitForFunction(t=>window.__RACING_RACE__.snapshot().time>=t,time,{timeout:15000});
+    launchTelemetry.push(await sample(page,`START-${i}`));
+    await attachFrame(page,testInfo,`start-rear-grid-${i}.png`);
+  }
+
+  const final=launchTelemetry.at(-1);
+  const rear=final.cars.filter(car=>car.id>=6&&car.id<=11&&!car.retired);
+  const falseHazards=rear.filter(car=>car.racecraft==='SPECIAL');
+  const stopped=rear.filter(car=>car.v<1);
+  await testInfo.attach('start-telemetry.json',{body:Buffer.from(JSON.stringify(launchTelemetry,null,2)),contentType:'application/json'});
+
+  expect(falseHazards.map(car=>car.id)).toEqual([]);
+  expect(stopped.map(car=>car.id)).toEqual([]);
+  expect(final.finite).toBeTruthy();
 });
