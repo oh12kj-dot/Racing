@@ -1,18 +1,25 @@
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const mean=values=>values.length?values.reduce((sum,value)=>sum+value,0)/values.length:0;
 
-export const TYRE_COMPOUND=Object.freeze({SLICK:'SLICK',WET:'WET'});
+export const TYRE_COMPOUND=Object.freeze({SLICK:'SLICK',INTERMEDIATE:'INTERMEDIATE',WET:'WET'});
 export const SURFACE_SECTORS=48;
 
 export function tyreWeatherGrip(compound,wetness){
   const w=clamp(wetness??0,0,1);
   if(compound===TYRE_COMPOUND.WET)return clamp(.90+.075*w,.90,.975);
+  if(compound===TYRE_COMPOUND.INTERMEDIATE){
+    if(w<=.35)return .94+.05*(w/.35);
+    if(w<=.65)return .99-.03*((w-.35)/.30);
+    return clamp(.96-.10*((w-.65)/.35),.86,.96);
+  }
   return clamp(1-.40*Math.pow(w,1.08),.60,1);
 }
 
 export function tyreIdealTemperature(compound,wetness){
   const w=clamp(wetness??0,0,1);
-  return compound===TYRE_COMPOUND.WET?72-4*w:92-7*w;
+  if(compound===TYRE_COMPOUND.WET)return 72-4*w;
+  if(compound===TYRE_COMPOUND.INTERMEDIATE)return 82-6*w;
+  return 92-7*w;
 }
 
 function ensureSurface(environment){
