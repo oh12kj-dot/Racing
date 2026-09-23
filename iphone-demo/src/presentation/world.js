@@ -84,8 +84,23 @@ export function createWorld(container,track,cars){
   }
   const carGroups=new Map();
   for(const car of cars){const m=carMesh(car);m.traverse(o=>{if(o.isMesh){o.castShadow=true;o.receiveShadow=true;}});carGroups.set(car.id,m);scene.add(m);}
-  const startQ=track.sample(0,0),gantry=new THREE.Mesh(new THREE.BoxGeometry(18,.55,.45),new THREE.MeshStandardMaterial({color:0x181a1d}));
-  gantry.position.set(startQ.x,6.5,startQ.z);gantry.rotation.y=startQ.heading;scene.add(gantry);
+
+  // The start structure must read as a grounded gantry from every spectator
+  // camera. A crossbar by itself looked like a floating black plank in TV/HELI
+  // views, so keep its supports just outside the road corridor.
+  const startQ=track.sample(0,0),gantryMat=new THREE.MeshStandardMaterial({color:0x181a1d,roughness:.62});
+  const gantryHeight=6.5,gantrySpan=18,gantrySupportLateral=Math.max(mainRoadWidth*.5+.75,8.2);
+  const gantry=new THREE.Group();gantry.userData={kind:'start-gantry'};
+  const gantryCrossbar=new THREE.Mesh(new THREE.BoxGeometry(gantrySpan,.55,.45),gantryMat);
+  gantryCrossbar.position.set(startQ.x,gantryHeight,startQ.z);gantryCrossbar.rotation.y=startQ.heading;gantryCrossbar.castShadow=true;gantry.add(gantryCrossbar);
+  const gantrySupports=[];
+  for(const lateral of [-gantrySupportLateral,gantrySupportLateral]){
+    const q=track.sample(0,lateral),support=new THREE.Mesh(new THREE.BoxGeometry(.52,gantryHeight,.52),gantryMat);
+    support.position.set(q.x,gantryHeight*.5,q.z);support.rotation.y=startQ.heading;support.castShadow=true;support.userData={kind:'start-gantry-support',lateral};
+    gantry.add(support);gantrySupports.push(support);
+  }
+  scene.add(gantry);
+
   function update(snapshot){
     const weather=snapshot.environment;
     const wetness=Math.max(0,Math.min(1,weather?.wetness??0));
@@ -98,5 +113,5 @@ export function createWorld(container,track,cars){
     for(const car of snapshot.cars){const q=track.sample(car.s,car.lane),m=carGroups.get(car.id);if(!m)continue;m.position.set(q.x,CAR_BASE_Y,q.z);m.rotation.y=Number.isFinite(car.yaw)?car.yaw:q.heading;m.visible=!car.retired;}
   }
   function resize(){renderer.setSize(container.clientWidth,container.clientHeight,false);renderer.setPixelRatio(Math.min(devicePixelRatio||1,2));}
-  return{scene,renderer,carGroups,garages,weatherMaterials:{road:roadMat,pitRoad:pitRoadMat,grass:grassMat},worldGeometry:{mainRoadWidth,pitRoadWidth,pitRoadCenter,garageLateral,roadY:ROAD_Y,carBaseY:CAR_BASE_Y,wheelRadius:WHEEL_RADIUS,wheelCenterY:WHEEL_CENTER_Y},update,resize};
+  return{scene,renderer,carGroups,garages,gantry:{group:gantry,crossbar:gantryCrossbar,supports:gantrySupports},weatherMaterials:{road:roadMat,pitRoad:pitRoadMat,grass:grassMat},worldGeometry:{mainRoadWidth,pitRoadWidth,pitRoadCenter,garageLateral,gantrySupportLateral,gantryHeight,roadY:ROAD_Y,carBaseY:CAR_BASE_Y,wheelRadius:WHEEL_RADIUS,wheelCenterY:WHEEL_CENTER_Y},update,resize};
 }
