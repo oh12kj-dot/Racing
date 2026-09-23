@@ -71,6 +71,14 @@ function queueFormed(cars,excludedIds){
   }
   return true;
 }
+function safeQueueSpeed(car,ahead,gap,cap){
+  const clearance=(ahead.length+car.length)*.5+3.0;
+  if(gap<=clearance)return Math.max(0,ahead.v-2.2);
+  const brakeAuthority=Math.max(3.2,(car.spec?.brake||8)*.55);
+  const usable=Math.max(0,gap-clearance);
+  const stoppingLimited=Math.sqrt(Math.max(0,ahead.v*ahead.v+2*brakeAuthority*usable));
+  return Math.min(cap,stoppingLimited);
+}
 
 export function createRaceControl(){
   return{
@@ -192,9 +200,9 @@ export function createRaceControl(){
         let gap=ahead.totalProgress-car.totalProgress;
         if(gap<0)gap+=track.total;
         const desired=14+car.v*.38;
-        if(gap<desired*.72)return Math.max(8,ahead.v-2.5);
-        if(gap>desired*1.7)return 31.5;
-        return clamp(ahead.v+(gap-desired)*.10,12,30.5);
+        if(gap<desired*.72)return Math.min(safeQueueSpeed(car,ahead,gap,30.5),Math.max(0,ahead.v-2.5));
+        if(gap>desired*1.7)return safeQueueSpeed(car,ahead,gap,31.5);
+        return Math.min(safeQueueSpeed(car,ahead,gap,30.5),clamp(ahead.v+(gap-desired)*.10,0,30.5));
       }
       if(this.flag==='SAFETY_CAR'){
         if(incident)return 8;
@@ -204,9 +212,9 @@ export function createRaceControl(){
         let gap=ahead.totalProgress-car.totalProgress;
         if(gap<0)gap+=track.total;
         const desired=11+car.v*.24;
-        if(gap<desired*.70)return Math.max(7,ahead.v-2.2);
-        if(gap>desired*1.65)return 27;
-        return clamp(ahead.v+(gap-desired)*.13,9,26);
+        if(gap<desired*.70)return Math.min(safeQueueSpeed(car,ahead,gap,26),Math.max(0,ahead.v-2.2));
+        if(gap>desired*1.65)return safeQueueSpeed(car,ahead,gap,27);
+        return Math.min(safeQueueSpeed(car,ahead,gap,26),clamp(ahead.v+(gap-desired)*.13,0,26));
       }
       return Infinity;
     },
