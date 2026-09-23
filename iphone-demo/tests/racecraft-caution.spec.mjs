@@ -65,3 +65,15 @@ test('RACECRAFT-CAUTION-04: high lateral tyre usage consumes following reserve b
   expect(highPlan.targetSpeed).toBeLessThan(high.v);
   expect(highPlan.targetLane).toBeCloseTo(high.lane,9);
 });
+
+test('RACECRAFT-CAUTION-05: a stationary hazard under caution is approached as a stop without a passing swerve',()=>{
+  const track=createTrack(),entries=buildEntrants();
+  const follower=car(entries[0],100,36,0),hazard=car(entries[1],121,0,0);
+  follower.cautionNoPass=true;hazard.incident.damage=.2;
+  const plan=planRacecraft(follower,[follower,hazard],track,20);
+  expect(plan.reason).toBe('CAUTION_HAZARD_BRAKE');
+  expect(plan.state).toBe('SPECIAL');
+  expect(plan.targetLane).toBeCloseTo(follower.lane,9);
+  expect(plan.targetSpeed).toBeLessThan(follower.v);
+  expect(plan.targetSpeed).toBeGreaterThanOrEqual(0);
+});
