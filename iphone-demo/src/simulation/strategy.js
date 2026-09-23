@@ -23,9 +23,17 @@ export function evaluatePitStrategy(car,track,raceLaps,environment=null){
   // puddle under this car. Local surface water still affects vehicle grip.
   const wetness=environment?.racingLineWetness??environment?.wetness??0;
   const currentCompound=s.tyreCompound||TYRE_COMPOUND.SLICK;
-  const desiredCompound=currentCompound===TYRE_COMPOUND.WET
-    ?(wetness<.20?TYRE_COMPOUND.SLICK:TYRE_COMPOUND.WET)
-    :(wetness>.40?TYRE_COMPOUND.WET:TYRE_COMPOUND.SLICK);
+  let desiredCompound=currentCompound;
+  if(currentCompound===TYRE_COMPOUND.SLICK){
+    if(wetness>.58)desiredCompound=TYRE_COMPOUND.WET;
+    else if(wetness>.18)desiredCompound=TYRE_COMPOUND.INTERMEDIATE;
+  }else if(currentCompound===TYRE_COMPOUND.INTERMEDIATE){
+    if(wetness<.10)desiredCompound=TYRE_COMPOUND.SLICK;
+    else if(wetness>.62)desiredCompound=TYRE_COMPOUND.WET;
+  }else if(currentCompound===TYRE_COMPOUND.WET){
+    if(wetness<.08)desiredCompound=TYRE_COMPOUND.SLICK;
+    else if(wetness<.44)desiredCompound=TYRE_COMPOUND.INTERMEDIATE;
+  }
   const weatherStop=desiredCompound!==currentCompound;
   let reason=PIT_REASON.NONE;
 
