@@ -55,9 +55,9 @@ test('WET-12: standing-water resistance is ordered slick < intermediate < wet wi
   car.systems.tyreTemp=tyreIdealTemperature(TYRE_COMPOUND.WET,.92);
   const wetClear=gripFactor(car,env,clearSurface),wetDeep=gripFactor(car,env,deepSurface);
 
-  const slickLoss=slickClear-slickDeep;
-  const interLoss=interClear-interDeep;
-  const wetLoss=wetClear-wetDeep;
+  const slickLoss=(slickClear-slickDeep)/slickClear;
+  const interLoss=(interClear-interDeep)/interClear;
+  const wetLoss=(wetClear-wetDeep)/wetClear;
   expect(slickDeep).toBeLessThan(slickClear-.08);
   expect(interDeep).toBeLessThan(interClear);
   expect(wetDeep).toBeLessThan(wetClear);
