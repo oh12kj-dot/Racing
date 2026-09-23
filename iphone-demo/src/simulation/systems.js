@@ -32,7 +32,7 @@ export function createSystems(type){
     failed:false,
     failureReason:null,
     energyCapacityMJ:h?.capacityMJ??0,
-    energyMJ:h? h.capacityMJ*.76:0,
+    energyMJ:h?h.capacityMJ*.76:0,
     energyDeploy:0,
     energyHarvest:0,
     energyAssistShare:h?.assistShare??0,
@@ -50,6 +50,11 @@ export function createSystems(type){
 export function energyDriveFactor(car){
   const s=car.systems;
   if(!s||s.energyCapacityMJ<=0||!s.energyControllerActive)return 1;
+  // Hybrid availability only changes maximum requested power. At partial throttle,
+  // low speed or while braking, the combustion powertrain can satisfy the driver's
+  // requested torque without treating "not deploying" as a blanket drivetrain loss.
+  const highDemand=(car.throttle??0)>.72&&(car.brake??0)<.05&&car.v>=s.energyMinDeploySpeed;
+  if(!highDemand)return 1;
   const deploy=clamp(s.energyDeploy||0,0,1);
   const assist=clamp(s.energyAssistShare||0,0,.25);
   return clamp(1-assist*(1-deploy),1-assist,1);
