@@ -93,7 +93,12 @@ export function planRacecraft(car,cars,track,time){
 
   let targetLane=ideal,targetSpeed=Infinity,reason='RACING_LINE';
 
-  const hazard=ahead.find(x=>x.d<85&&(x.o.incident.spinTimer>.2||x.o.v<4));
+  // Cars still behind the start line are in a dense standing-start queue. A car
+  // ahead that is merely reacting to the lights must be followed, not treated as
+  // a stopped-track hazard; otherwise the grid releases one car at a time. A real
+  // spin or mechanical failure still enters the hazard path immediately.
+  const launchPhase=car.lap<0;
+  const hazard=ahead.find(x=>x.d<85&&(x.o.incident.spinTimer>.2||x.o.systems?.failed||(x.o.v<4&&!launchPhase)));
   if(hazard){
     // Under a neutralised field, a stationary hazard is approached as a stop,
     // not as an overtaking opportunity. This keeps the queue in one corridor and
