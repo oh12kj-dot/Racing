@@ -76,11 +76,13 @@ The current clean build includes:
 - one authoritative environment state with evolving wetness, rainfall intensity, visibility and ambient temperature
 - local longitudinal surface wetness with an established racing line, wetter off-line asphalt and traffic-driven line drying
 - standing-water state derived from local surface saturation, acting through tyre grip rather than direct vehicle-speed limits
-- high-speed standing-water grip loss that is stronger on SLICK tyres than on WET tyres
-- SLICK/WET tyre compounds with continuous weather-dependent grip and different temperature targets
+- high-speed standing-water resistance ordered SLICK < INTERMEDIATE < WET, with no scripted speed cap
+- SLICK/INTERMEDIATE/WET tyre compounds with continuous weather-dependent grip and distinct temperature targets
+- INTERMEDIATE tyres strongest in representative damp conditions, while SLICK remains preferred dry and WET preferred in deep water
 - wetness acting through tyre grip, cornering and braking physics rather than direct speed caps
-- weather-aware strategy using representative racing-line condition, with hysteresis to avoid rapid SLICK/WET oscillation from one local puddle
+- weather-aware strategy using representative racing-line condition with three-compound hysteresis to avoid repeated threshold-driven stops
 - compound changes applied only during physical pit service; weather strategy never directly changes pose/lane/speed
+- iPhone/leaderboard telemetry abbreviating INTERMEDIATE as `INT` while the authoritative compound remains `INTERMEDIATE`
 - wet-road material, darker environment and visibility/fog presentation driven by the same simulation environment snapshot
 - draft as drag reduction and dirty air as downforce reduction; no direct wake speed boost
 - staged racecraft: SETUP → COMMIT → ALONGSIDE → COMPLETE/ABORT
@@ -120,11 +122,13 @@ The browser suite includes dedicated contracts for:
 - anti-101-km/h fixed-speed regression
 - class ordering, progressive braking, combined friction usage, load transfer and tyre slip behaviour
 - wet slick braking/corner degradation and wet-tyre advantage under wet conditions
-- dry-track disadvantage for wet tyres and compound-change hysteresis
+- dry SLICK advantage, damp INTERMEDIATE advantage, deep-water WET advantage and ordered ideal tyre-temperature targets
+- three-compound weather-choice hysteresis across SLICK/INTERMEDIATE/WET transitions
 - racing-line drying under traffic, wetter off-line surface state and local standing-water differences
-- high-speed standing-water grip loss without a scripted speed cap, with a smaller penalty for WET tyres than SLICKs
+- high-speed standing-water grip loss without a scripted speed cap, with relative resistance ordered SLICK < INTERMEDIATE < WET
 - weather strategy intent from representative racing-line condition without direct pose/lane/speed mutation
-- compound changes only during pit service
+- SLICK/INTERMEDIATE/WET compound changes only during physical pit service
+- mobile telemetry rendering `INT` while preserving the authoritative `INTERMEDIATE` state
 - deterministic global/local environment evolution and deterministic race state under identical weather inputs
 - presentation reading simulation weather rather than running a second visual weather model
 - steering authority/rate and deterministic replay hash
@@ -145,4 +149,4 @@ The browser suite includes dedicated contracts for:
 
 ## Remaining fidelity work
 
-This is a working clean race spectator application, but it is not intended to claim final real-world fidelity in every subsystem. Further work should deepen the existing single authorities rather than add wrapper controllers. High-value future areas include richer weather forecasting and evolving rain-event scenarios, intermediate tyre compounds where rules require them, richer fuel/hybrid/energy deployment and strategy, more detailed component-specific reliability/damage, production vehicle/environment assets, and broader calibrated real-world performance validation.
+This is a working clean race spectator application, but it is not intended to claim final real-world fidelity in every subsystem. Further work should deepen the existing single authorities rather than add wrapper controllers. High-value future areas include richer weather forecasting and evolving rain-event scenarios, richer fuel/hybrid/energy deployment and strategy, more detailed component-specific reliability/damage, production vehicle/environment assets, and broader calibrated real-world performance validation.
