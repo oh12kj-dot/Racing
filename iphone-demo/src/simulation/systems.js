@@ -39,7 +39,8 @@ export function gripFactor(car,environment=null,surface=null){
   const standingWater=clamp(surface?.standingWater??0,0,1);
   const compound=s.tyreCompound||TYRE_COMPOUND.SLICK;
   const idealTemp=tyreIdealTemperature(compound,wetness);
-  const tempPenalty=Math.abs(s.tyreTemp-idealTemp)/(compound===TYRE_COMPOUND.WET?105:125);
+  const tempRange=compound===TYRE_COMPOUND.WET?105:compound===TYRE_COMPOUND.INTERMEDIATE?115:125;
+  const tempPenalty=Math.abs(s.tyreTemp-idealTemp)/tempRange;
   const wearPenalty=Math.max(0,s.tyreWear-.18)*.24;
   const damagePenalty=(car.incident?.damage||0)*.10;
   const slipAngle=Math.abs(car.tyre?.slipAngle||0);
@@ -47,7 +48,8 @@ export function gripFactor(car,environment=null,surface=null){
   const slidePenalty=Math.max(0,slipAngle-.10)*.22+Math.max(0,slipRatio-.10)*.18;
   const tyreState=clamp(1.015-tempPenalty-wearPenalty-damagePenalty-slidePenalty,.74,1.02);
   const hydroSpeed=clamp((car.v-22)/45,0,1);
-  const waterPenalty=standingWater*hydroSpeed*(compound===TYRE_COMPOUND.WET?.10:.28);
+  const waterResistance=compound===TYRE_COMPOUND.WET?.10:compound===TYRE_COMPOUND.INTERMEDIATE?.18:.28;
+  const waterPenalty=standingWater*hydroSpeed*waterResistance;
   return clamp(tyreState*tyreWeatherGrip(compound,wetness)*(1-waterPenalty),.42,1.02);
 }
 
@@ -66,9 +68,13 @@ export function stepSystems(car,dt,environment=null,surface=null){
   const slipAngle=Math.min(2.5,Math.abs(car.tyre?.slipAngle||0)/.10);
   const slipRatio=Math.min(2.5,Math.abs(car.tyre?.slipRatio||0)/.10);
   const slipEnergy=slipAngle*.65+slipRatio*.55;
-  const compoundWear=compound===TYRE_COMPOUND.WET?1+(1-wetness)*.45:1+wetness*.18;
+  const compoundWear=compound===TYRE_COMPOUND.WET
+    ?1+(1-wetness)*.45
+    :compound===TYRE_COMPOUND.INTERMEDIATE
+      ?1+(1-wetness)*.24+wetness*.06
+      :1+wetness*.18;
   s.tyreWear=clamp(s.tyreWear+km*(PROFILE[car.type]?.wear||.009)*(1+latLoad*.72+slipEnergy*.34)*compoundWear,0,1);
-  const baseTyreTemp=compound===TYRE_COMPOUND.WET?64:76;
+  const baseTyreTemp=compound===TYRE_COMPOUND.WET?64:compound===TYRE_COMPOUND.INTERMEDIATE?70:76;
   const tyreTarget=baseTyreTemp+car.v*.19+latLoad*15+slipEnergy*8+Math.abs(car.brake)*6-wetness*12-standingWater*5;
   s.tyreTemp+=clamp(tyreTarget-s.tyreTemp,-18,18)*dt*.18;
   const brakeTarget=170+car.brake*720+car.v*1.8-wetness*35-standingWater*18;
@@ -99,10 +105,10 @@ export function needsPit(car){
 
 export function serviceSystems(car,servicePlan=null){
   const s=car.systems;
-  if(servicePlan?.tyreCompound===TYRE_COMPOUND.WET||servicePlan?.tyreCompound===TYRE_COMPOUND.SLICK)s.tyreCompound=servicePlan.tyreCompound;
+  if([TYRE_COMPOUND.SLICK,TYRE_COMPOUND.INTERMEDIATE,TYRE_COMPOUND.WET].includes(servicePlan?.tyreCompound))s.tyreCompound=servicePlan.tyreCompound;
   s.fuel=Math.min(s.fuelCapacity,Math.max(s.fuel,s.fuelCapacity*.82));
   s.tyreWear=0;
-  s.tyreTemp=s.tyreCompound===TYRE_COMPOUND.WET?70:80;
+  s.tyreTemp=s.tyreCompound===TYRE_COMPOUND.WET?70:s.tyreCompound===TYRE_COMPOUND.INTERMEDIATE?76:80;
   s.brakeTemp=Math.min(s.brakeTemp,260);
   s.engineTemp=Math.min(s.engineTemp,94);
   s.mechanicalStress=Math.max(0,s.mechanicalStress-.35);
