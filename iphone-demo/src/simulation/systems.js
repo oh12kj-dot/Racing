@@ -3,9 +3,9 @@ import {TYRE_COMPOUND,tyreIdealTemperature,tyreWeatherGrip} from './environment.
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 
 const PROFILE={
-  formula:{fuel:110,burn:.34,wear:.0105,hybrid:{capacityMJ:4.0,deployMW:.12,regenMW:.10,regenEfficiency:.74,assistShare:.10,minDeploySpeed:22,reserve:.18,attackReserve:.08}},
-  hyper:{fuel:90,burn:.48,wear:.0090,hybrid:{capacityMJ:6.0,deployMW:.20,regenMW:.16,regenEfficiency:.76,assistShare:.08,minDeploySpeed:25,reserve:.20,attackReserve:.10}},
-  lmh:{fuel:90,burn:.47,wear:.0090,hybrid:{capacityMJ:6.0,deployMW:.18,regenMW:.15,regenEfficiency:.76,assistShare:.08,minDeploySpeed:25,reserve:.20,attackReserve:.10}},
+  formula:{fuel:110,burn:.34,wear:.0105,hybrid:{capacityMJ:4.0,deployMW:.12,regenMW:.10,regenEfficiency:.74,assistShare:.05,minDeploySpeed:22,reserve:.18,attackReserve:.08}},
+  hyper:{fuel:90,burn:.48,wear:.0090,hybrid:{capacityMJ:6.0,deployMW:.20,regenMW:.16,regenEfficiency:.76,assistShare:.04,minDeploySpeed:25,reserve:.20,attackReserve:.10}},
+  lmh:{fuel:90,burn:.47,wear:.0090,hybrid:{capacityMJ:6.0,deployMW:.18,regenMW:.15,regenEfficiency:.76,assistShare:.04,minDeploySpeed:25,reserve:.20,attackReserve:.10}},
   proto:{fuel:75,burn:.42,wear:.0095},
   gt:{fuel:115,burn:.50,wear:.0078},
   supercar:{fuel:105,burn:.53,wear:.0085},
@@ -47,13 +47,18 @@ export function createSystems(type){
   };
 }
 
+function attackEnergyRequested(car){
+  const state=car.racecraft?.state;
+  return state==='COMMIT'||state==='ALONGSIDE';
+}
+
 export function energyDriveFactor(car){
   const s=car.systems;
   if(!s||s.energyCapacityMJ<=0||!s.energyControllerActive)return 1;
-  // Hybrid availability only changes maximum requested power. At partial throttle,
-  // low speed or while braking, the combustion powertrain can satisfy the driver's
-  // requested torque without treating "not deploying" as a blanket drivetrain loss.
-  const highDemand=(car.throttle??0)>.72&&(car.brake??0)<.05&&car.v>=s.energyMinDeploySpeed;
+  // The class acceleration envelope already represents its normal managed hybrid
+  // performance. Explicit SOC therefore models the discretionary attack reserve:
+  // it can preserve the calibrated maximum under an attack, but never boost above it.
+  const highDemand=attackEnergyRequested(car)&&(car.throttle??0)>.72&&(car.brake??0)<.05&&car.v>=s.energyMinDeploySpeed;
   if(!highDemand)return 1;
   const deploy=clamp(s.energyDeploy||0,0,1);
   const assist=clamp(s.energyAssistShare||0,0,.25);
@@ -69,10 +74,10 @@ function stepHybridEnergy(car,dt){
   }
 
   s.energyControllerActive=true;
-  const attacking=car.racecraft?.state==='COMMIT'||car.racecraft?.state==='ALONGSIDE';
+  const attacking=attackEnergyRequested(car);
   const reserveFraction=attacking?(s.energyAttackReserve||0):(s.energyReserve||0);
   const reserveMJ=capacity*clamp(reserveFraction,0,.8);
-  const deployDemand=!s.failed&&car.v>=s.energyMinDeploySpeed&&car.brake<.05&&car.throttle>.72;
+  const deployDemand=attacking&&!s.failed&&car.v>=s.energyMinDeploySpeed&&car.brake<.05&&car.throttle>.72;
   const deployRequest=deployDemand?clamp((car.throttle-.72)/.28,0,1):0;
   const available=Math.max(0,(s.energyMJ||0)-reserveMJ);
   const deployEnergy=Math.min(available,Math.max(0,s.energyDeployMW||0)*deployRequest*dt);
@@ -86,7 +91,7 @@ function stepHybridEnergy(car,dt){
   s.energyMJ=clamp(s.energyMJ-deployEnergy+harvestEnergy,0,capacity);
 
   if(s.energyHarvest>.02)s.energyMode='HARVEST';
-  else if(s.energyDeploy>.02)s.energyMode=attacking?'ATTACK':'DEPLOY';
+  else if(s.energyDeploy>.02)s.energyMode='ATTACK';
   else if(s.energyMJ<=reserveMJ+.01)s.energyMode='RESERVE';
   else s.energyMode='BALANCED';
 }
