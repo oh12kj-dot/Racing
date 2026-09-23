@@ -84,7 +84,10 @@ function activeTargetFor(state,cars){
 }
 
 export function planRacecraft(car,cars,track,time){
-  const ideal=track.idealLane(car.s);
+  const launchPhase=car.lap<0;
+  // A standing-start car should initially launch along its occupied grid lane.
+  // Once it crosses the line, the normal racing line becomes the baseline again.
+  const ideal=launchPhase?car.lane:track.idealLane(car.s);
   const state=ensureState(car.racecraft);
   const nearby=cars.filter(o=>o!==car&&!o.retired&&!o.finished&&o.pit.phase==='TRACK').map(o=>({o,d:signedDelta(track,car,o)}));
   const ahead=nearby.filter(x=>x.d>0&&x.d<130).sort((a,b)=>a.d-b.d);
@@ -97,7 +100,6 @@ export function planRacecraft(car,cars,track,time){
   // ahead that is merely reacting to the lights must be followed, not treated as
   // a stopped-track hazard; otherwise the grid releases one car at a time. A real
   // spin or mechanical failure still enters the hazard path immediately.
-  const launchPhase=car.lap<0;
   const hazard=ahead.find(x=>x.d<85&&(x.o.incident.spinTimer>.2||x.o.systems?.failed||(x.o.v<4&&!launchPhase)));
   if(hazard){
     // Under a neutralised field, a stationary hazard is approached as a stop,
