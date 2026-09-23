@@ -9,8 +9,10 @@ function signedDelta(track,a,b){
   return d;
 }
 function safeLat(a,b){return (a.width+b.width)*.5+.45;}
+function laneLimit(car,track){return Math.max(0,track.sample(car.s).halfWidth-car.width*.55-.35);}
+function boundedLane(car,lane,track){const limit=laneLimit(car,track);return clamp(lane,-limit,limit);}
 function laneAvailable(car,candidate,cars,track,horizon=1.25){
-  if(Math.abs(candidate)>track.sample(car.s).halfWidth-car.width*.55-.35)return false;
+  if(Math.abs(candidate)>laneLimit(car,track))return false;
   for(const o of cars){
     if(o===car||o.retired||o.finished||o.pit.phase!=='TRACK')continue;
     const d=signedDelta(track,car,o);
@@ -135,6 +137,7 @@ export function planRacecraft(car,cars,track,time){
       }
     }
     state.state='SPECIAL';
+    targetLane=boundedLane(car,targetLane,track);
     return{targetLane,targetSpeed,reason,state:state.state,attackKind:state.attackKind};
   }
 
@@ -150,6 +153,7 @@ export function planRacecraft(car,cars,track,time){
   let activeTarget=activeTargetFor(state,cars);
   if(state.targetId!=null&&!activeTarget&&['SETUP','COMMIT','ALONGSIDE','SWITCHBACK'].includes(state.state))resetPass(state);
   activeTarget=activeTargetFor(state,cars);
+  if(activeTarget&&['SETUP','COMMIT','ALONGSIDE','SWITCHBACK'].includes(state.state))state.lane=boundedLane(car,state.lane,track);
 
   if(state.state==='SETUP'&&activeTarget&&!car.blueFlag){
     const d=signedDelta(track,car,activeTarget);
@@ -190,6 +194,7 @@ export function planRacecraft(car,cars,track,time){
   }
 
   if(state.state==='SWITCHBACK'&&activeTarget&&!car.blueFlag){
+    state.lane=boundedLane(car,state.lane,track);
     targetLane=state.lane;reason='SWITCHBACK_EXIT';
     if(time>=state.switchUntil){state.state='COMMIT';state.commitUntil=time+2.2;}
   }
@@ -270,11 +275,14 @@ export function planRacecraft(car,cars,track,time){
     if(crosses||converges){
       const dir=sepNow===0?(car.id<o.id?-1:1):Math.sign(sepNow);
       const candidate=o.lane+dir*safe;
-      if(Math.abs(candidate)<=6.5)targetLane=candidate;
+      const bounded=boundedLane(car,candidate,track);
+      if(Math.abs(bounded-o.lane)>=safe*.88)targetLane=bounded;
+      else targetSpeed=Math.min(targetSpeed,o.v);
       if(Math.abs(sepNow)<safe*.6)targetSpeed=Math.min(targetSpeed,o.v);
       reason='COLLISION_AVOID';
     }
   }
 
+  targetLane=boundedLane(car,targetLane,track);
   return{targetLane,targetSpeed,reason,state:state.state,attackKind:state.attackKind};
 }
