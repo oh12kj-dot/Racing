@@ -11,6 +11,7 @@ function fmtDelta(row,metersKey,secondsKey,leader=false){
   if(Number.isFinite(meters))return `+${Math.round(meters)}m`;
   return '--';
 }
+function fmtCompound(compound){return compound==='INTERMEDIATE'?'INT':compound||'SLICK';}
 export function createUI(root,callbacks={}){
   root.innerHTML=`
   <div class="hud">
@@ -93,7 +94,7 @@ export function createUI(root,callbacks={}){
       item.node.classList.toggle('active',cameraState?.tracked?.id===c.id);
       item.pos.textContent=String(overall);
       item.name.textContent=`${c.number} ${c.name}`;
-      item.klass.textContent=`${c.spec.label} P${classPosition} · ${statusLabel} · ${c.systems?.tyreCompound??'SLICK'} · INT ${interval} · PITS ${pitStops}`;
+      item.klass.textContent=`${c.spec.label} P${classPosition} · ${statusLabel} · ${fmtCompound(c.systems?.tyreCompound)} · INT ${interval} · PITS ${pitStops}`;
       item.speed.textContent=String(Math.round(c.v*3.6));
       item.gap.textContent=gap;
     }
@@ -109,7 +110,7 @@ export function createUI(root,callbacks={}){
         <div class="big">${Math.round(car.v*3.6)} <span class="muted">km/h</span></div>
         <div class="muted">P${row?.overallPosition??'--'} · CLASS P${row?.classPosition??'--'} · GAP ${gap} · INT ${interval}</div>
         <div class="muted">L${displayLap} · ${row?.status??car.pit.phase} · ${car.racecraft.state} · PITS ${row?.pitStops??0}</div>
-        <div class="muted">TYRE ${sys.tyreCompound??'SLICK'} · WEAR ${Math.round(sys.tyreWear*100)}% · ${Math.round(sys.tyreTemp)}°C · WET ${Math.round((weather?.wetness??0)*100)}%</div>
+        <div class="muted">TYRE ${fmtCompound(sys.tyreCompound)} · WEAR ${Math.round(sys.tyreWear*100)}% · ${Math.round(sys.tyreTemp)}°C · WET ${Math.round((weather?.wetness??0)*100)}%</div>
         <div class="muted">FUEL ${sys.fuel.toFixed(1)}L · ${reliability}</div>
         <div class="muted">CUR ${fmtTime(row?.currentLapTime)} · LAST ${fmtTime(row?.lastLap)} · BEST ${fmtTime(row?.bestLap)}</div>`;
     }
