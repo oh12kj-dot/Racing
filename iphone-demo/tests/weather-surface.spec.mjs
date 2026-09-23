@@ -40,21 +40,29 @@ test('WET-11: the same longitudinal point has less water on the established line
   expect(outside.standingWater).toBeGreaterThan(line.standingWater);
 });
 
-test('WET-12: standing water costs high-speed slick grip more than wet-tyre grip without a speed cap',()=>{
+test('WET-12: standing-water resistance is ordered slick < intermediate < wet without a speed cap',()=>{
   const car=makeCar('formula',120,70),env=createEnvironment({initialWetness:.92,dryingRate:0});
-  const drySurface={wetness:.92,standingWater:0};
+  const clearSurface={wetness:.92,standingWater:0};
   const deepSurface={wetness:.92,standingWater:.75};
 
   car.systems.tyreCompound=TYRE_COMPOUND.SLICK;
   car.systems.tyreTemp=tyreIdealTemperature(TYRE_COMPOUND.SLICK,.92);
-  const slickClear=gripFactor(car,env,drySurface),slickDeep=gripFactor(car,env,deepSurface);
+  const slickClear=gripFactor(car,env,clearSurface),slickDeep=gripFactor(car,env,deepSurface);
+  car.systems.tyreCompound=TYRE_COMPOUND.INTERMEDIATE;
+  car.systems.tyreTemp=tyreIdealTemperature(TYRE_COMPOUND.INTERMEDIATE,.92);
+  const interClear=gripFactor(car,env,clearSurface),interDeep=gripFactor(car,env,deepSurface);
   car.systems.tyreCompound=TYRE_COMPOUND.WET;
   car.systems.tyreTemp=tyreIdealTemperature(TYRE_COMPOUND.WET,.92);
-  const wetClear=gripFactor(car,env,drySurface),wetDeep=gripFactor(car,env,deepSurface);
+  const wetClear=gripFactor(car,env,clearSurface),wetDeep=gripFactor(car,env,deepSurface);
 
+  const slickLoss=slickClear-slickDeep;
+  const interLoss=interClear-interDeep;
+  const wetLoss=wetClear-wetDeep;
   expect(slickDeep).toBeLessThan(slickClear-.08);
+  expect(interDeep).toBeLessThan(interClear);
   expect(wetDeep).toBeLessThan(wetClear);
-  expect(slickClear-slickDeep).toBeGreaterThan((wetClear-wetDeep)*1.8);
+  expect(slickLoss).toBeGreaterThan(interLoss*1.35);
+  expect(interLoss).toBeGreaterThan(wetLoss*1.35);
   expect(car.v).toBe(70);
 });
 
@@ -64,9 +72,9 @@ test('WET-13: tyre strategy follows average racing-line condition rather than on
   env.racingLineWetness=.16;
   expect(evaluatePitStrategy(car,track,20,env).reason).not.toBe(PIT_REASON.WEATHER);
   env.racingLineWetness=.46;
-  const wetCall=evaluatePitStrategy(car,track,20,env);
-  expect(wetCall.reason).toBe(PIT_REASON.WEATHER);
-  expect(wetCall.service.tyreCompound).toBe(TYRE_COMPOUND.WET);
+  const dampCall=evaluatePitStrategy(car,track,20,env);
+  expect(dampCall.reason).toBe(PIT_REASON.WEATHER);
+  expect(dampCall.service.tyreCompound).toBe(TYRE_COMPOUND.INTERMEDIATE);
 });
 
 test('WET-14: local surface evolution is deterministic for identical traffic',()=>{
