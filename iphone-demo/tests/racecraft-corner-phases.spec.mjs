@@ -67,3 +67,18 @@ test('RC-06: lost inside overlap can request a physical switchback path without 
   expect([attacker.s,leader.s]).toEqual(progressBefore);
   if(p.reason==='TRAFFIC_FOLLOW')expect(p.targetSpeed).toBeLessThanOrEqual(leader.v+4);
 });
+
+test('RC-07: committed pass target is re-bounded when the live corridor narrows',()=>{
+  const track=createTrack(),{attacker,leader}=pairAt(track,520);
+  attacker.v=45;leader.v=43;
+  leader.s=track.wrapS(attacker.s+8);
+  attacker.racecraft={state:'COMMIT',targetId:leader.id,commitUntil:99,setupUntil:0,switchUntil:0,attackKind:'OUTSIDE',lane:-99,defenseUsed:false,alongsideAt:0};
+  const laneBefore=attacker.lane,sBefore=attacker.s;
+
+  const p=planRacecraft(attacker,[attacker,leader],track,30);
+  const limit=track.sample(attacker.s).halfWidth-attacker.width*.55-.35;
+  expect(Math.abs(p.targetLane)).toBeLessThanOrEqual(limit+1e-6);
+  expect(Math.abs(attacker.racecraft.lane)).toBeLessThanOrEqual(limit+1e-6);
+  expect(attacker.lane).toBe(laneBefore);
+  expect(attacker.s).toBe(sBefore);
+});
