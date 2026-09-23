@@ -41,6 +41,30 @@ test('WET-02: wet tyres beat slicks on a wet track but remain inferior on a dry 
   expect(tyreWeatherGrip(TYRE_COMPOUND.WET,0)).toBeLessThan(tyreWeatherGrip(TYRE_COMPOUND.SLICK,0));
 });
 
+test('WET-17: intermediate tyres bridge dry and full-wet performance instead of acting as a renamed wet tyre',()=>{
+  const dry=0,damp=.35,deep=.82;
+  const drySlick=tyreWeatherGrip(TYRE_COMPOUND.SLICK,dry);
+  const dryInter=tyreWeatherGrip(TYRE_COMPOUND.INTERMEDIATE,dry);
+  const dryWet=tyreWeatherGrip(TYRE_COMPOUND.WET,dry);
+  expect(drySlick).toBeGreaterThan(dryInter);
+  expect(dryInter).toBeGreaterThan(dryWet);
+
+  const dampInter=tyreWeatherGrip(TYRE_COMPOUND.INTERMEDIATE,damp);
+  expect(dampInter).toBeGreaterThan(tyreWeatherGrip(TYRE_COMPOUND.SLICK,damp)+.08);
+  expect(dampInter).toBeGreaterThan(tyreWeatherGrip(TYRE_COMPOUND.WET,damp)+.04);
+
+  const deepWet=tyreWeatherGrip(TYRE_COMPOUND.WET,deep);
+  const deepInter=tyreWeatherGrip(TYRE_COMPOUND.INTERMEDIATE,deep);
+  expect(deepWet).toBeGreaterThan(deepInter);
+  expect(deepInter).toBeGreaterThan(tyreWeatherGrip(TYRE_COMPOUND.SLICK,deep)+.15);
+
+  const slickTemp=tyreIdealTemperature(TYRE_COMPOUND.SLICK,damp);
+  const interTemp=tyreIdealTemperature(TYRE_COMPOUND.INTERMEDIATE,damp);
+  const wetTemp=tyreIdealTemperature(TYRE_COMPOUND.WET,damp);
+  expect(slickTemp).toBeGreaterThan(interTemp);
+  expect(interTemp).toBeGreaterThan(wetTemp);
+});
+
 test('WET-03: strategy requests wet tyres without writing lane, speed, pose or compound',()=>{
   const car=carOf('gt'),track=createTrack(),wet=createEnvironment({initialWetness:.70,dryingRate:0});
   car.lap=2;car.v=42;car.lane=-.5;car.systems.tyreCompound=TYRE_COMPOUND.SLICK;
@@ -62,14 +86,32 @@ test('WET-04: tyre compound changes only when physical pit service is applied',(
   expect(car.pit.serviceApplied).toBeTruthy();
 });
 
-test('WET-05: compound-choice hysteresis prevents repeated slick/wet oscillation around one threshold',()=>{
+test('WET-05: three-compound hysteresis prevents repeated weather stops around transition thresholds',()=>{
   const car=carOf('gt'),track=createTrack();car.lap=2;
+
   car.systems.tyreCompound=TYRE_COMPOUND.SLICK;
-  expect(evaluatePitStrategy(car,track,20,createEnvironment({initialWetness:.30,dryingRate:0})).reason).not.toBe(PIT_REASON.WEATHER);
-  expect(evaluatePitStrategy(car,track,20,createEnvironment({initialWetness:.48,dryingRate:0})).reason).toBe(PIT_REASON.WEATHER);
+  expect(evaluatePitStrategy(car,track,20,createEnvironment({initialWetness:.14,dryingRate:0})).reason).not.toBe(PIT_REASON.WEATHER);
+  let decision=evaluatePitStrategy(car,track,20,createEnvironment({initialWetness:.30,dryingRate:0}));
+  expect(decision.reason).toBe(PIT_REASON.WEATHER);
+  expect(decision.service.tyreCompound).toBe(TYRE_COMPOUND.INTERMEDIATE);
+
+  car.systems.tyreCompound=TYRE_COMPOUND.INTERMEDIATE;
+  expect(evaluatePitStrategy(car,track,20,createEnvironment({initialWetness:.14,dryingRate:0})).reason).not.toBe(PIT_REASON.WEATHER);
+  expect(evaluatePitStrategy(car,track,20,createEnvironment({initialWetness:.58,dryingRate:0})).reason).not.toBe(PIT_REASON.WEATHER);
+  decision=evaluatePitStrategy(car,track,20,createEnvironment({initialWetness:.66,dryingRate:0}));
+  expect(decision.reason).toBe(PIT_REASON.WEATHER);
+  expect(decision.service.tyreCompound).toBe(TYRE_COMPOUND.WET);
+
   car.systems.tyreCompound=TYRE_COMPOUND.WET;
-  expect(evaluatePitStrategy(car,track,20,createEnvironment({initialWetness:.30,dryingRate:0})).reason).not.toBe(PIT_REASON.WEATHER);
-  expect(evaluatePitStrategy(car,track,20,createEnvironment({initialWetness:.12,dryingRate:0})).reason).toBe(PIT_REASON.WEATHER);
+  expect(evaluatePitStrategy(car,track,20,createEnvironment({initialWetness:.50,dryingRate:0})).reason).not.toBe(PIT_REASON.WEATHER);
+  decision=evaluatePitStrategy(car,track,20,createEnvironment({initialWetness:.36,dryingRate:0}));
+  expect(decision.reason).toBe(PIT_REASON.WEATHER);
+  expect(decision.service.tyreCompound).toBe(TYRE_COMPOUND.INTERMEDIATE);
+
+  car.systems.tyreCompound=TYRE_COMPOUND.INTERMEDIATE;
+  decision=evaluatePitStrategy(car,track,20,createEnvironment({initialWetness:.08,dryingRate:0}));
+  expect(decision.reason).toBe(PIT_REASON.WEATHER);
+  expect(decision.service.tyreCompound).toBe(TYRE_COMPOUND.SLICK);
 });
 
 test('WET-06: environment evolution and race outcome state are deterministic for identical inputs',()=>{
