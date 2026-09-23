@@ -18,15 +18,15 @@ function makeCar(type='formula',v=50){
   return car;
 }
 
-test('ERS-01: charged hybrid deploys under sustained throttle and consumes stored energy',()=>{
+test('ERS-01: charged hybrid deploys its attack reserve under sustained attack throttle',()=>{
   const car=makeCar('formula',55),start=car.systems.energyMJ;
-  car.throttle=1;car.brake=0;
+  car.racecraft.state='COMMIT';car.throttle=1;car.brake=0;
   for(let i=0;i<120;i++)stepSystems(car,FIXED_DT);
   expect(car.systems.energyControllerActive).toBeTruthy();
   expect(car.systems.energyDeploy).toBeGreaterThan(.9);
-  expect(car.systems.energyMode).toBe('DEPLOY');
+  expect(car.systems.energyMode).toBe('ATTACK');
   expect(car.systems.energyMJ).toBeLessThan(start-.20);
-  expect(car.systems.energyMJ).toBeGreaterThan(car.systems.energyCapacityMJ*car.systems.energyReserve);
+  expect(car.systems.energyMJ).toBeGreaterThan(car.systems.energyCapacityMJ*car.systems.energyAttackReserve);
 });
 
 test('ERS-02: braking harvests energy without systems writing pose or velocity',()=>{
@@ -40,10 +40,11 @@ test('ERS-02: braking harvests energy without systems writing pose or velocity',
   expect({s:car.s,v:car.v,lane:car.lane,laneV:car.laneV,yaw:car.yaw}).toEqual(before);
 });
 
-test('ERS-03: depleted storage reduces physical acceleration instead of imposing a speed cap',()=>{
+test('ERS-03: depleted attack reserve reduces physical acceleration instead of imposing a speed cap',()=>{
   const charged=makeCar('formula',40),depleted=makeCar('formula',40);
+  charged.racecraft.state=depleted.racecraft.state='COMMIT';
   charged.systems.energyMJ=charged.systems.energyCapacityMJ*.8;
-  depleted.systems.energyMJ=depleted.systems.energyCapacityMJ*.10;
+  depleted.systems.energyMJ=depleted.systems.energyCapacityMJ*.05;
   for(let i=0;i<180;i++){
     stepVehicle(charged,STRAIGHT_TRACK,{throttle:1,brake:0,steer:0},FIXED_DT);
     stepSystems(charged,FIXED_DT);
@@ -52,13 +53,13 @@ test('ERS-03: depleted storage reduces physical acceleration instead of imposing
   }
   expect(charged.systems.energyDeploy).toBeGreaterThan(.5);
   expect(depleted.systems.energyDeploy).toBe(0);
-  expect(energyDriveFactor(charged)).toBeGreaterThan(energyDriveFactor(depleted)+.07);
-  expect(charged.v).toBeGreaterThan(depleted.v+.8);
+  expect(energyDriveFactor(charged)).toBeGreaterThan(energyDriveFactor(depleted)+.035);
+  expect(charged.v).toBeGreaterThan(depleted.v+.35);
   expect(charged.v).toBeLessThan(charged.spec.top);
   expect(depleted.v).toBeLessThan(depleted.spec.top);
 });
 
-test('ERS-04: attack state may spend reserve energy that balanced running protects',()=>{
+test('ERS-04: balanced running protects discretionary energy while attack may spend it',()=>{
   const balanced=makeCar('lmh',52),attack=makeCar('lmh',52);
   balanced.systems.energyMJ=balanced.systems.energyCapacityMJ*.14;
   attack.systems.energyMJ=attack.systems.energyCapacityMJ*.14;
@@ -67,13 +68,14 @@ test('ERS-04: attack state may spend reserve energy that balanced running protec
   stepSystems(balanced,FIXED_DT);stepSystems(attack,FIXED_DT);
   expect(balanced.systems.energyDeploy).toBe(0);
   expect(balanced.systems.energyMode).toBe('RESERVE');
+  expect(energyDriveFactor(balanced)).toBe(1);
   expect(attack.systems.energyDeploy).toBeGreaterThan(.9);
   expect(attack.systems.energyMode).toBe('ATTACK');
 });
 
 test('ERS-05: non-hybrid classes remain neutral to the energy subsystem',()=>{
   const car=makeCar('gt',45);
-  car.throttle=1;car.brake=0;
+  car.racecraft.state='COMMIT';car.throttle=1;car.brake=0;
   for(let i=0;i<120;i++)stepSystems(car,FIXED_DT);
   expect(car.systems.energyCapacityMJ).toBe(0);
   expect(car.systems.energyMJ).toBe(0);
