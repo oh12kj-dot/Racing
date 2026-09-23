@@ -78,6 +78,20 @@ test('VISUAL-01: successful race motion is retained for human realism audit',asy
     await attachFrame(page,testInfo,`visual-follow-0${i}`);
   }
 
+  const edgeCarId=await page.evaluate(()=>{
+    const race=window.__RACING_RACE__.snapshot();
+    const running=race.cars.filter(c=>!c.retired&&!c.finished&&c.pit?.phase==='TRACK');
+    running.sort((a,b)=>Math.abs(b.lane)-Math.abs(a.lane));
+    if(running[0])window.__RACING__.director.trackedId=running[0].id;
+    window.__RACING__.director.setMode('FOLLOW');
+    return running[0]?.id??null;
+  });
+  for(let i=1;i<=2;i++){
+    await page.waitForTimeout(1200);
+    telemetry.push(await motionSnapshot(page));
+    await attachFrame(page,testInfo,`visual-edge-car-${edgeCarId??'none'}-0${i}`);
+  }
+
   await testInfo.attach('visual-motion-telemetry',{body:Buffer.from(JSON.stringify(telemetry,null,2)),contentType:'application/json'});
   const final=await page.evaluate(()=>window.__RACING_RACE__.snapshot());
   expect(final.diagnostics.finite).toBeTruthy();
