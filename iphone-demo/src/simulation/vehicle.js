@@ -1,4 +1,4 @@
-import {createSystems} from './systems.js';
+import {createSystems,energyDriveFactor} from './systems.js';
 import {createTiming} from './timing.js';
 
 const TAU=Math.PI*2;
@@ -25,7 +25,7 @@ export function performanceFactors(car){
   const derate=failed?1:clamp(car.systems?.powerDerate||0,0,.48);
   return{
     aero:clamp(1-damage*.32,.68,1),
-    drive:failed?0:clamp((1-damage*.22)*(1-derate),.35,1),
+    drive:failed?0:clamp((1-damage*.22)*(1-derate)*energyDriveFactor(car),.35,1),
     steering:clamp(1-damage*.28,.65,1),
     top:clamp(1-damage*.10-derate*.10,.78,1),
     drag:1+damage*.22,
