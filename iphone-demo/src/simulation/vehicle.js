@@ -160,7 +160,7 @@ export function stepVehicle(car,track,control,dt){
   car.tyre.slipRatio=clamp(car.tyre.slipRatio,0,.24);
   const tractionEfficiency=clamp(1-Math.max(0,car.tyre.slipRatio-.10)*.65,.90,1);
   const tyreForce=clamp(requestedLong,-longCapacity,longCapacity)*tractionEfficiency;
-  const drag=0.18*ratio*ratio*G*(car.aeroTraffic?.dragFactor??1)*performance.drag;
+  const drag=0.18*ratio*ratio*G*(car.aeroTraffic?.dragFactor??1)*performance.drag*massFactor;
   const overspeed=car.v>topSpeed?Math.min(10,(car.v-topSpeed)*2.2):0;
   const velocityHeading=wrapAngle(track.sample(car.s).heading+Math.atan2(car.laneV,Math.max(4,car.v)));
   const bodySlip=wrapAngle(velocityHeading-car.yaw);
