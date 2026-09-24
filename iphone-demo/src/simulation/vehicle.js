@@ -13,7 +13,7 @@ function interpBand(b,r){
   const t=(r-.45)/.55;return b.mid+(b.high-b.mid)*t;
 }
 function aeroLoadG(spec,speed,aeroFactor=1){
-  return (spec.aeroLoadG70||0)*(speed/Math.max(1,spec.aeroRefSpeed||70))**2*clamp(aeroFactor,.45,1.15);
+  return (spec.aeroLoadG70||0)*(speed/Math.max(1,spec.aeroRefSpeed||70))**2*clamp(aeroFactor,.45,1.05);
 }
 function effectiveTyreMu(spec,grip,aero,loadTransfer=0){
   const transferRatio=clamp(Math.abs(loadTransfer)/.30,0,1);
@@ -49,10 +49,7 @@ export function performanceFactors(car){
   };
 }
 export function effectiveAeroFactor(car){
-  // aeroLoadG is calibrated against the reference race-start mass, so only the
-  // downforce-derived normal load scales with inverse current mass. Base tyre
-  // friction remains approximately mu*g and is not mass-scaled.
-  return (car.aeroTraffic?.downforceFactor??1)*performanceFactors(car).aero*vehicleMassFactor(car);
+  return (car.aeroTraffic?.downforceFactor??1)*performanceFactors(car).aero;
 }
 export function effectiveTopSpeed(car){return car.spec.top*performanceFactors(car).top;}
 export function tyreLateralAccel(spec,speed,grip=1,aeroFactor=1,loadTransfer=0){
