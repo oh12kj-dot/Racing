@@ -25,6 +25,25 @@ function lineGeometry(track,lateral,color,opacity=.7){
   const g=new THREE.BufferGeometry().setFromPoints(pts);
   return new THREE.Line(g,new THREE.LineBasicMaterial({color,transparent:true,opacity}));
 }
+function barrierGeometry(track,side,start,end,height=.88,samples=180){
+  const pos=[],idx=[];
+  const count=Math.max(8,Math.round(samples*(end-start)/track.total));
+  for(let i=0;i<=count;i++){
+    const s=start+(end-start)*(i/count);
+    const center=track.sample(s),lateral=side*(center.halfWidth+.10),q=track.sample(s,lateral);
+    pos.push(q.x,ROAD_Y,q.z,q.x,ROAD_Y+height,q.z);
+    if(i<count){const k=i*2;idx.push(k,k+2,k+1,k+2,k+3,k+1);}
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+  g.setIndex(idx);g.computeVertexNormals();return g;
+}
+function crossingS(start,end,fromLane,toLane,boundaryLane){
+  const span=Math.max(1,end-start),delta=toLane-fromLane;
+  if(Math.abs(delta)<1e-6)return start;
+  const u=Math.max(0,Math.min(1,(boundaryLane-fromLane)/delta));
+  return start+span*u;
+}
 function carMesh(car){
   const g=new THREE.Group();
   const mat=new THREE.MeshStandardMaterial({color:car.color,roughness:.38,metalness:.34});
@@ -72,6 +91,34 @@ export function createWorld(container,track,cars){
   const pitRoadMat=new THREE.MeshStandardMaterial({color:dryPit,roughness:.9,metalness:.02});
   const pitRoad=new THREE.Mesh(roadGeometry(track,pit.entryStart,pit.mergeEnd,pitRoadWidth,260,pitRoadCenter),pitRoadMat);pitRoad.receiveShadow=true;scene.add(pitRoad);
   const wallMat=new THREE.MeshStandardMaterial({color:0xd6d7d8,roughness:.65});
+
+  // Vehicle physics constrains TRACK cars at halfWidth. Render that physical
+  // boundary so a real barrier contact never looks like a collision with an
+  // invisible wall. The pit-side wall keeps two deliberate openings exactly
+  // where PIT_ENTRY and MERGE trajectories cross the main-track boundary.
+  const barrierHeight=.88,barrierLateral=track.sample(0).halfWidth+.10;
+  const entryCross=crossingS(pit.entryStart,pit.speedLine,pit.approachLane,pit.fastLane,-track.sample(0).halfWidth);
+  const mergeCross=crossingS(pit.mergeStart,pit.mergeEnd,pit.fastLane,-2.2,-track.sample(0).halfWidth);
+  const openingHalf=12;
+  const barrierOpenings=[
+    {kind:'pit-entry',start:Math.max(0,entryCross-openingHalf),end:Math.min(track.total,entryCross+openingHalf)},
+    {kind:'pit-merge',start:Math.max(0,mergeCross-openingHalf),end:Math.min(track.total,mergeCross+openingHalf)}
+  ];
+  const barrierSections=[
+    {side:1,start:0,end:track.total},
+    {side:-1,start:0,end:barrierOpenings[0].start},
+    {side:-1,start:barrierOpenings[0].end,end:barrierOpenings[1].start},
+    {side:-1,start:barrierOpenings[1].end,end:track.total}
+  ].filter(s=>s.end-s.start>2);
+  const barrierMat=new THREE.MeshStandardMaterial({color:0xb9bdc2,roughness:.72,metalness:.12,side:THREE.DoubleSide});
+  const barriers=[];
+  for(const section of barrierSections){
+    const mesh=new THREE.Mesh(barrierGeometry(track,section.side,section.start,section.end,barrierHeight,720),barrierMat);
+    mesh.castShadow=true;mesh.receiveShadow=true;
+    mesh.userData={kind:'track-barrier',...section};scene.add(mesh);
+    barriers.push({mesh,...section});
+  }
+
   const garages=new Map();
   const teamCount=cars.reduce((max,car)=>Math.max(max,Number.isFinite(car.teamId)?car.teamId:-1),-1)+1;
   const garageLateral=pit.workingLane-4.4,garageWidth=4.5,garageDepth=5.2;
@@ -113,5 +160,5 @@ export function createWorld(container,track,cars){
     for(const car of snapshot.cars){const q=track.sample(car.s,car.lane),m=carGroups.get(car.id);if(!m)continue;m.position.set(q.x,CAR_BASE_Y,q.z);m.rotation.y=Number.isFinite(car.yaw)?car.yaw:q.heading;m.visible=!car.retired;}
   }
   function resize(){renderer.setSize(container.clientWidth,container.clientHeight,false);renderer.setPixelRatio(Math.min(devicePixelRatio||1,2));}
-  return{scene,renderer,carGroups,garages,gantry:{group:gantry,crossbar:gantryCrossbar,supports:gantrySupports},weatherMaterials:{road:roadMat,pitRoad:pitRoadMat,grass:grassMat},worldGeometry:{mainRoadWidth,pitRoadWidth,pitRoadCenter,garageLateral,gantrySupportLateral,gantryHeight,roadY:ROAD_Y,carBaseY:CAR_BASE_Y,wheelRadius:WHEEL_RADIUS,wheelCenterY:WHEEL_CENTER_Y},update,resize};
+  return{scene,renderer,carGroups,garages,barriers,gantry:{group:gantry,crossbar:gantryCrossbar,supports:gantrySupports},weatherMaterials:{road:roadMat,pitRoad:pitRoadMat,grass:grassMat},worldGeometry:{mainRoadWidth,pitRoadWidth,pitRoadCenter,garageLateral,barrierHeight,barrierLateral,barrierSections:barrierSections.map(s=>({...s})),barrierOpenings:barrierOpenings.map(o=>({...o})),gantrySupportLateral,gantryHeight,roadY:ROAD_Y,carBaseY:CAR_BASE_Y,wheelRadius:WHEEL_RADIUS,wheelCenterY:WHEEL_CENTER_Y},update,resize};
 }
