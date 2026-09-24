@@ -3,6 +3,7 @@ import {createTiming} from './timing.js';
 
 const TAU=Math.PI*2;
 const G=9.81;
+export const FUEL_DENSITY_KG_PER_L=.745;
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const wrapAngle=a=>((a+Math.PI)%TAU+TAU)%TAU-Math.PI;
 
@@ -11,13 +12,27 @@ function interpBand(b,r){
   if(r<=.45){const t=r/.45;return b.low+(b.mid-b.low)*t;}
   const t=(r-.45)/.55;return b.mid+(b.high-b.mid)*t;
 }
-function aeroLoadG(spec,speed,aeroFactor=1){
-  return (spec.aeroLoadG70||0)*(speed/Math.max(1,spec.aeroRefSpeed||70))**2*clamp(aeroFactor,.45,1.05);
+function aeroLoadG(spec,speed,aeroFactor=1,massFactor=1){
+  return (spec.aeroLoadG70||0)*(speed/Math.max(1,spec.aeroRefSpeed||70))**2*clamp(aeroFactor,.45,1.05)*clamp(massFactor,.85,1.15);
 }
 function effectiveTyreMu(spec,grip,aero,loadTransfer=0){
   const transferRatio=clamp(Math.abs(loadTransfer)/.30,0,1);
   const transferPenalty=1-(spec.loadSensitivity??.08)*transferRatio;
   return spec.tyreMu*grip*transferPenalty/(1+.14*aero);
+}
+export function effectiveVehicleMass(car){
+  const fuel=Math.max(0,car.systems?.fuel||0);
+  const reference=Math.max(1,car.referenceMass??car.spec?.mass??car.mass??1000);
+  // Existing class masses are the calibrated race-start masses. Derive dry mass
+  // once from that baseline so the default 64% starting fuel reproduces the
+  // exact pre-fuel-mass performance, while subsequent burn/refuelling changes
+  // inertia and force-per-mass physically.
+  const dry=Number.isFinite(car.dryMass)?Math.max(1,car.dryMass):Math.max(1,reference-fuel*FUEL_DENSITY_KG_PER_L);
+  return Math.max(1,dry+fuel*FUEL_DENSITY_KG_PER_L);
+}
+export function vehicleMassFactor(car){
+  const reference=Math.max(1,car.referenceMass??car.spec?.mass??car.mass??1000);
+  return clamp(reference/effectiveVehicleMass(car),.85,1.15);
 }
 export function performanceFactors(car){
   const damage=clamp(car.incident?.damage||0,0,1);
@@ -37,22 +52,22 @@ export function effectiveAeroFactor(car){
   return (car.aeroTraffic?.downforceFactor??1)*performanceFactors(car).aero;
 }
 export function effectiveTopSpeed(car){return car.spec.top*performanceFactors(car).top;}
-export function tyreLateralAccel(spec,speed,grip=1,aeroFactor=1,loadTransfer=0){
-  const aero=aeroLoadG(spec,speed,aeroFactor);
+export function tyreLateralAccel(spec,speed,grip=1,aeroFactor=1,loadTransfer=0,massFactor=1){
+  const aero=aeroLoadG(spec,speed,aeroFactor,massFactor);
   const mu=effectiveTyreMu(spec,grip,aero,loadTransfer);
   return Math.max(1,mu*G*(1+aero));
 }
-export function tyreLongitudinalAccel(spec,speed,grip=1,aeroFactor=1,loadTransfer=0){
-  const aero=aeroLoadG(spec,speed,aeroFactor);
+export function tyreLongitudinalAccel(spec,speed,grip=1,aeroFactor=1,loadTransfer=0,massFactor=1){
+  const aero=aeroLoadG(spec,speed,aeroFactor,massFactor);
   const mu=effectiveTyreMu(spec,grip,aero,loadTransfer);
   return Math.max(1,mu*G*(1+aero));
 }
-export function cornerSpeedLimit(spec,curvature,grip=1,aeroFactor=1){
+export function cornerSpeedLimit(spec,curvature,grip=1,aeroFactor=1,massFactor=1){
   const k=Math.abs(curvature);
   if(k<1e-5)return spec.top;
   let v=Math.min(spec.top,Math.sqrt(spec.tyreMu*grip*G/k));
   for(let i=0;i<8;i++){
-    const a=tyreLateralAccel(spec,v,grip,aeroFactor,0);
+    const a=tyreLateralAccel(spec,v,grip,aeroFactor,0,massFactor);
     const next=Math.min(spec.top,Math.sqrt(a/k));
     v=v*.45+next*.55;
   }
@@ -72,9 +87,12 @@ function gearFor(spec,speed){
   return clamp(1+Math.floor(clamp(speed/Math.max(1,spec.top),0,.9999)*count),1,count);
 }
 export function createVehicleState(entry,s,lap=-1){
+  const systems=createSystems(entry.type);
+  const referenceMass=Math.max(1,entry.spec.mass);
+  const dryMass=Math.max(1,referenceMass-systems.fuel*FUEL_DENSITY_KG_PER_L);
   return{
     ...entry,
-    length:entry.spec.length,width:entry.spec.width,mass:entry.spec.mass,
+    length:entry.spec.length,width:entry.spec.width,mass:referenceMass,dryMass,referenceMass,
     s,lap,
     v:0,
     lane:0,laneV:0,laneA:0,
@@ -85,7 +103,7 @@ export function createVehicleState(entry,s,lap=-1){
     racecraft:{state:'RESET',targetId:null,commitUntil:0,defenseUsed:false},
     pit:{phase:'TRACK',requested:false,served:false,plannedLap:2+(entry.id%3),serviceTimer:0,queue:false,boxS:0,missedCount:0},
     incident:{spinTimer:0,yawTransient:false,damage:0},
-    systems:createSystems(entry.type),
+    systems,
     timing:createTiming(),
     tyre:{slipRatio:0,slipAngle:0,loadTransfer:0,longitudinalAccel:0,lateralForceUsage:0,forceUsage:0},
     aeroTraffic:{wake:0,dragFactor:1,downforceFactor:1,sourceId:null},
@@ -98,6 +116,8 @@ export function createVehicleState(entry,s,lap=-1){
 }
 export function stepVehicle(car,track,control,dt){
   const spec=car.spec,performance=performanceFactors(car);
+  car.mass=effectiveVehicleMass(car);
+  const massFactor=vehicleMassFactor(car);
   const topSpeed=spec.top*performance.top;
   car.throttle=clamp(control.throttle||0,0,1);
   car.brake=clamp(control.brake||0,0,1);
@@ -113,7 +133,7 @@ export function stepVehicle(car,track,control,dt){
   const grip=car.systems?.grip??1;
   const aeroFactor=(car.aeroTraffic?.downforceFactor??1)*performance.aero;
   const loadTransfer=car.tyre?.loadTransfer??0;
-  const tyreLat=tyreLateralAccel(spec,car.v,grip,aeroFactor,loadTransfer);
+  const tyreLat=tyreLateralAccel(spec,car.v,grip,aeroFactor,loadTransfer,massFactor);
   const maxLat=Math.min(spec.laneChangeG*G,tyreLat);
   const speedSq=Math.max(1,car.v*car.v);
   const steeringAccel=speedSq/Math.max(1.5,spec.wheelbase)*Math.tan(car.steer);
@@ -134,10 +154,10 @@ export function stepVehicle(car,track,control,dt){
   car.tyre.lateralForceUsage=latUse;
   const ratio=car.v/Math.max(1,topSpeed);
   const fuelFactor=(car.systems?.fuel??1)>0?.99:.10;
-  const baseDrive=car.throttle*accelerationAt(spec,car.v)*fuelFactor*performance.drive;
-  const baseBrake=car.brake*spec.brake;
+  const baseDrive=car.throttle*accelerationAt(spec,car.v)*fuelFactor*performance.drive*massFactor;
+  const baseBrake=car.brake*spec.brake*massFactor;
   const requestedLong=baseDrive-baseBrake;
-  const tyreLong=tyreLongitudinalAccel(spec,car.v,grip,aeroFactor,loadTransfer);
+  const tyreLong=tyreLongitudinalAccel(spec,car.v,grip,aeroFactor,loadTransfer,massFactor);
   const ellipseFactor=Math.sqrt(Math.max(0,1-latUse*latUse));
   const longCapacity=tyreLong*ellipseFactor;
   const requestedMagnitude=Math.abs(requestedLong);
@@ -148,7 +168,7 @@ export function stepVehicle(car,track,control,dt){
   car.tyre.slipRatio=clamp(car.tyre.slipRatio,0,.24);
   const tractionEfficiency=clamp(1-Math.max(0,car.tyre.slipRatio-.10)*.65,.90,1);
   const tyreForce=clamp(requestedLong,-longCapacity,longCapacity)*tractionEfficiency;
-  const drag=0.18*ratio*ratio*G*(car.aeroTraffic?.dragFactor??1)*performance.drag;
+  const drag=0.18*ratio*ratio*G*(car.aeroTraffic?.dragFactor??1)*performance.drag*massFactor;
   const overspeed=car.v>topSpeed?Math.min(10,(car.v-topSpeed)*2.2):0;
   const velocityHeading=wrapAngle(track.sample(car.s).heading+Math.atan2(car.laneV,Math.max(4,car.v)));
   const bodySlip=wrapAngle(velocityHeading-car.yaw);
