@@ -92,8 +92,27 @@ test('VISUAL-01: successful race motion is retained for human realism audit',asy
     await attachFrame(page,testInfo,`visual-edge-car-${edgeCarId??'none'}-0${i}`);
   }
 
+  const onboard=await page.evaluate(()=>{
+    const snap=window.__RACING_RACE__.snapshot();
+    const director=window.__RACING__.director;
+    const running=snap.cars.filter(c=>!c.retired&&!c.finished&&c.pit?.phase==='TRACK');
+    const car=running.find(c=>c.id===director.trackedId)??running[0]??snap.leader;
+    if(!car)return{error:Infinity,id:null};
+    director.trackedId=car.id;
+    director.setMode('ONBOARD');
+    director.update(snap);
+    const q=window.__RACING_RACE__.track.sample(car.s,car.lane);
+    const heading=Number.isFinite(car.yaw)?car.yaw:q.heading;
+    const expected={x:q.x+Math.sin(heading)*.7,y:2.35,z:q.z+Math.cos(heading)*.7};
+    const p=director.camera.position;
+    return{id:car.id,error:Math.hypot(p.x-expected.x,p.y-expected.y,p.z-expected.z)};
+  });
+  await attachFrame(page,testInfo,`visual-onboard-${onboard.id??'none'}`);
+  telemetry.push(await motionSnapshot(page));
+
   await testInfo.attach('visual-motion-telemetry',{body:Buffer.from(JSON.stringify(telemetry,null,2)),contentType:'application/json'});
   const final=await page.evaluate(()=>window.__RACING_RACE__.snapshot());
+  expect(onboard.error).toBeLessThan(.05);
   expect(final.diagnostics.finite).toBeTruthy();
   expect(final.cars).toHaveLength(24);
   expect(consoleErrors).toEqual([]);
