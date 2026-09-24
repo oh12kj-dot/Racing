@@ -13,7 +13,7 @@ function interpBand(b,r){
   const t=(r-.45)/.55;return b.mid+(b.high-b.mid)*t;
 }
 function aeroLoadG(spec,speed,aeroFactor=1){
-  return (spec.aeroLoadG70||0)*(speed/Math.max(1,spec.aeroRefSpeed||70))**2*clamp(aeroFactor,.45,1.05);
+  return (spec.aeroLoadG70||0)*(speed/Math.max(1,spec.aeroRefSpeed||70))**2*clamp(aeroFactor,.45,1.15);
 }
 function effectiveTyreMu(spec,grip,aero,loadTransfer=0){
   const transferRatio=clamp(Math.abs(loadTransfer)/.30,0,1);
@@ -23,10 +23,6 @@ function effectiveTyreMu(spec,grip,aero,loadTransfer=0){
 export function effectiveVehicleMass(car){
   const fuel=Math.max(0,car.systems?.fuel||0);
   const reference=Math.max(1,car.referenceMass??car.spec?.mass??car.mass??1000);
-  // Existing class masses are the calibrated race-start masses. Derive dry mass
-  // once from that baseline so the default 64% starting fuel reproduces the
-  // exact pre-fuel-mass performance, while subsequent burn/refuelling changes
-  // inertia and force-per-mass physically.
   const dry=Number.isFinite(car.dryMass)?Math.max(1,car.dryMass):Math.max(1,reference-fuel*FUEL_DENSITY_KG_PER_L);
   return Math.max(1,dry+fuel*FUEL_DENSITY_KG_PER_L);
 }
@@ -49,7 +45,7 @@ export function performanceFactors(car){
   };
 }
 export function effectiveAeroFactor(car){
-  return (car.aeroTraffic?.downforceFactor??1)*performanceFactors(car).aero;
+  return (car.aeroTraffic?.downforceFactor??1)*performanceFactors(car).aero*vehicleMassFactor(car);
 }
 export function effectiveTopSpeed(car){return car.spec.top*performanceFactors(car).top;}
 export function tyreLateralAccel(spec,speed,grip=1,aeroFactor=1,loadTransfer=0){
@@ -144,10 +140,6 @@ export function stepVehicle(car,track,control,dt){
   car.laneV=clamp(car.laneV+car.laneA*dt,-5.2,5.2);
   car.lane+=car.laneV*dt;
 
-  // The track coordinate system already bends the trajectory through a corner,
-  // so that centripetal demand must consume the same tyre force budget as an
-  // explicit lane-change acceleration. Otherwise a car could corner at high G
-  // and still use the full longitudinal tyre capacity for braking/drive.
   const circuitLatAccel=track.curvature(car.s)*car.v*car.v;
   const totalLatAccel=circuitLatAccel+car.laneA;
   const latUse=clamp(Math.abs(totalLatAccel)/Math.max(1,tyreLat),0,1);
@@ -155,8 +147,6 @@ export function stepVehicle(car,track,control,dt){
   const ratio=car.v/Math.max(1,topSpeed);
   const fuelFactor=(car.systems?.fuel??1)>0?.99:.10;
   const baseDrive=car.throttle*accelerationAt(spec,car.v)*fuelFactor*performance.drive*massFactor;
-  // spec.brake is already a calibrated deceleration capability used by the
-  // planner. Do not apply inverse mass a second time here.
   const baseBrake=car.brake*spec.brake;
   const requestedLong=baseDrive-baseBrake;
   const tyreLong=tyreLongitudinalAccel(spec,car.v,grip,aeroFactor,loadTransfer);
@@ -170,9 +160,7 @@ export function stepVehicle(car,track,control,dt){
   car.tyre.slipRatio=clamp(car.tyre.slipRatio,0,.24);
   const tractionEfficiency=clamp(1-Math.max(0,car.tyre.slipRatio-.10)*.65,.90,1);
   const tyreForce=clamp(requestedLong,-longCapacity,longCapacity)*tractionEfficiency;
-  // Aerodynamic drag is a force at a given speed, so its deceleration scales
-  // inversely with current vehicle mass just like the calibrated drive force.
-  const drag=0.18*ratio*ratio*G*(car.aeroTraffic?.dragFactor??1)*performance.drag*massFactor;
+  const drag=0.18*ratio*ratio*G*(car.aeroTraffic?.dragFactor??1)*performance.drag;
   const overspeed=car.v>topSpeed?Math.min(10,(car.v-topSpeed)*2.2):0;
   const velocityHeading=wrapAngle(track.sample(car.s).heading+Math.atan2(car.laneV,Math.max(4,car.v)));
   const bodySlip=wrapAngle(velocityHeading-car.yaw);
@@ -220,9 +208,6 @@ export function stepVehicle(car,track,control,dt){
   const alignedYaw=wrapAngle(trackPose.heading+velocitySlipYaw);
   const alignmentError=wrapAngle(alignedYaw-car.yaw);
   if(angularTransient){
-    // A contact yaw transient and a full spin use the same angular physics but
-    // different tyre recovery authority. Recoverable yaw is damped strongly;
-    // only a genuine loss-of-control state receives the slower spin recovery.
     const spinning=(car.incident?.spinTimer||0)>0;
     const finalRecovery=spinning&&car.incident.spinTimer<.55;
     const recoveryGain=spinning?(finalRecovery?3.2:1.5):5.5;
