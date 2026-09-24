@@ -133,8 +133,8 @@ export function stepVehicle(car,track,control,dt){
   const grip=car.systems?.grip??1;
   const aeroFactor=(car.aeroTraffic?.downforceFactor??1)*performance.aero;
   const loadTransfer=car.tyre?.loadTransfer??0;
-  // Diagnostic isolation: keep dynamic collision/inertia mass, but leave the
-  // calibrated tyre/drive/brake/drag performance envelope unchanged.
+  // A/B isolation: dynamic mass affects collision inertia and drive force-per-mass.
+  // Braking, tyre aero authority and drag remain on the calibrated baseline here.
   const tyreLat=tyreLateralAccel(spec,car.v,grip,aeroFactor,loadTransfer);
   const maxLat=Math.min(spec.laneChangeG*G,tyreLat);
   const speedSq=Math.max(1,car.v*car.v);
@@ -156,7 +156,7 @@ export function stepVehicle(car,track,control,dt){
   car.tyre.lateralForceUsage=latUse;
   const ratio=car.v/Math.max(1,topSpeed);
   const fuelFactor=(car.systems?.fuel??1)>0?.99:.10;
-  const baseDrive=car.throttle*accelerationAt(spec,car.v)*fuelFactor*performance.drive;
+  const baseDrive=car.throttle*accelerationAt(spec,car.v)*fuelFactor*performance.drive*massFactor;
   const baseBrake=car.brake*spec.brake;
   const requestedLong=baseDrive-baseBrake;
   const tyreLong=tyreLongitudinalAccel(spec,car.v,grip,aeroFactor,loadTransfer);
