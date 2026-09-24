@@ -12,6 +12,8 @@ const PROFILE={
   touring:{fuel:100,burn:.45,wear:.0074}
 };
 
+const ENERGY_STRATEGY_HOLD={BALANCED:.9,ATTACK:.9,DEFEND:.9,SAVE:1.2,CAUTION:.45,ENDGAME:.75};
+
 export function createSystems(type){
   const p=PROFILE[type]||PROFILE.gt;
   const h=p.hybrid||null;
@@ -42,7 +44,10 @@ export function createSystems(type){
     energyMinDeploySpeed:h?.minDeploySpeed??Infinity,
     energyReserve:h?.reserve??0,
     energyAttackReserve:h?.attackReserve??0,
+    energyReserveTarget:h?.reserve??0,
     energyControllerActive:false,
+    energyStrategy:h?'BALANCED':'NONE',
+    energyStrategyHold:0,
     energyMode:h?'BALANCED':'NONE'
   };
 }
@@ -52,13 +57,79 @@ function attackEnergyRequested(car){
   return state==='COMMIT'||state==='ALONGSIDE';
 }
 
+function defenseEnergyRequested(car){
+  return !attackEnergyRequested(car)&&!!car.racecraft?.defenseUsed;
+}
+
+function remainingRaceLaps(car){
+  const remaining=car.strategy?.remainingLaps;
+  return Number.isFinite(remaining)?Math.max(0,remaining):Infinity;
+}
+
+function strategicReserveFraction(car,s){
+  if(car.cautionNoPass)return Math.max(s.energyReserve||0,.50);
+
+  const remaining=remainingRaceLaps(car);
+  const base=clamp(s.energyReserve||0,0,.8);
+  const attackBase=clamp(s.energyAttackReserve||0,0,base);
+  const attacking=attackEnergyRequested(car);
+  const defending=defenseEnergyRequested(car);
+
+  // Keep more discretionary energy protected early, then release it as the
+  // finish approaches. Unknown race distance preserves the legacy reserves so
+  // isolated physics/tests remain backward compatible.
+  if(!Number.isFinite(remaining)){
+    if(attacking)return attackBase;
+    if(defending)return Math.max(attackBase,base-.04);
+    return base;
+  }
+  if(remaining<=1)return .02;
+  if(remaining<=2)return Math.min(base,.08);
+
+  const earlyRaceProtection=clamp((remaining-2)/8,0,1);
+  const protectedBase=clamp(base+.18*earlyRaceProtection,base,.48);
+  if(attacking)return Math.max(attackBase,protectedBase-.10);
+  if(defending)return Math.max(attackBase,protectedBase-.06);
+  return protectedBase;
+}
+
+function desiredEnergyStrategy(car,s,reserveFraction){
+  if(car.cautionNoPass)return 'CAUTION';
+  if(remainingRaceLaps(car)<=1)return 'ENDGAME';
+  const soc=s.energyCapacityMJ>0?clamp((s.energyMJ||0)/s.energyCapacityMJ,0,1):0;
+  if(soc<=reserveFraction+.012)return 'SAVE';
+  if(attackEnergyRequested(car))return 'ATTACK';
+  if(defenseEnergyRequested(car))return 'DEFEND';
+  return 'BALANCED';
+}
+
+function updateEnergyStrategy(car,s,dt,reserveFraction){
+  const desired=desiredEnergyStrategy(car,s,reserveFraction);
+  const current=s.energyStrategy||'BALANCED';
+  s.energyStrategyHold=Math.max(0,(s.energyStrategyHold||0)-dt);
+  const urgent=desired==='CAUTION'||desired==='SAVE'||desired==='ENDGAME';
+  const tacticalEntry=(desired==='ATTACK'||desired==='DEFEND')&&current!=='ATTACK'&&current!=='DEFEND';
+  if(current!==desired&&(urgent||tacticalEntry||s.energyStrategyHold<=0)){
+    s.energyStrategy=desired;
+    s.energyStrategyHold=ENERGY_STRATEGY_HOLD[desired]??.9;
+  }
+}
+
+function energyDeploymentRequested(car){
+  if(car.cautionNoPass)return false;
+  if(remainingRaceLaps(car)<=1)return true;
+  return attackEnergyRequested(car)||defenseEnergyRequested(car);
+}
+
 export function energyDriveFactor(car){
   const s=car.systems;
   if(!s||s.energyCapacityMJ<=0||!s.energyControllerActive)return 1;
   // The class acceleration envelope already represents its normal managed hybrid
-  // performance. Explicit SOC therefore models the discretionary attack reserve:
-  // it can preserve the calibrated maximum under an attack, but never boost above it.
-  const highDemand=attackEnergyRequested(car)&&(car.throttle??0)>.72&&(car.brake??0)<.05&&car.v>=s.energyMinDeploySpeed;
+  // performance. Explicit SOC therefore models the discretionary tactical reserve:
+  // it can preserve the calibrated maximum under attack/defence/endgame demand,
+  // but never boost above it.
+  const strategyBlocks=s.energyStrategy==='SAVE'||s.energyStrategy==='CAUTION';
+  const highDemand=!strategyBlocks&&energyDeploymentRequested(car)&&(car.throttle??0)>.72&&(car.brake??0)<.05&&car.v>=s.energyMinDeploySpeed;
   if(!highDemand)return 1;
   const deploy=clamp(s.energyDeploy||0,0,1);
   const assist=clamp(s.energyAssistShare||0,0,.25);
@@ -69,15 +140,17 @@ function stepHybridEnergy(car,dt){
   const s=car.systems;
   const capacity=Math.max(0,s.energyCapacityMJ||0);
   if(capacity<=0){
-    s.energyMJ=0;s.energyDeploy=0;s.energyHarvest=0;s.energyControllerActive=false;s.energyMode='NONE';
+    s.energyMJ=0;s.energyDeploy=0;s.energyHarvest=0;s.energyReserveTarget=0;s.energyControllerActive=false;s.energyStrategy='NONE';s.energyStrategyHold=0;s.energyMode='NONE';
     return;
   }
 
   s.energyControllerActive=true;
-  const attacking=attackEnergyRequested(car);
-  const reserveFraction=attacking?(s.energyAttackReserve||0):(s.energyReserve||0);
-  const reserveMJ=capacity*clamp(reserveFraction,0,.8);
-  const deployDemand=attacking&&!s.failed&&car.v>=s.energyMinDeploySpeed&&car.brake<.05&&car.throttle>.72;
+  const reserveFraction=clamp(strategicReserveFraction(car,s),0,.8);
+  s.energyReserveTarget=reserveFraction;
+  updateEnergyStrategy(car,s,dt,reserveFraction);
+  const reserveMJ=capacity*reserveFraction;
+  const strategyBlocks=s.energyStrategy==='SAVE'||s.energyStrategy==='CAUTION';
+  const deployDemand=!strategyBlocks&&energyDeploymentRequested(car)&&!s.failed&&car.v>=s.energyMinDeploySpeed&&car.brake<.05&&car.throttle>.72;
   const deployRequest=deployDemand?clamp((car.throttle-.72)/.28,0,1):0;
   const available=Math.max(0,(s.energyMJ||0)-reserveMJ);
   const deployEnergy=Math.min(available,Math.max(0,s.energyDeployMW||0)*deployRequest*dt);
@@ -92,7 +165,7 @@ function stepHybridEnergy(car,dt){
 
   if(s.energyHarvest>.02)s.energyMode='HARVEST';
   else if(s.energyDeploy>.02)s.energyMode='ATTACK';
-  else if(s.energyMJ<=reserveMJ+.01)s.energyMode='RESERVE';
+  else if(strategyBlocks||s.energyMJ<=reserveMJ+.01)s.energyMode='RESERVE';
   else s.energyMode='BALANCED';
 }
 
