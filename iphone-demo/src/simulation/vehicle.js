@@ -12,8 +12,8 @@ function interpBand(b,r){
   if(r<=.45){const t=r/.45;return b.low+(b.mid-b.low)*t;}
   const t=(r-.45)/.55;return b.mid+(b.high-b.mid)*t;
 }
-function aeroLoadG(spec,speed,aeroFactor=1,massFactor=1){
-  return (spec.aeroLoadG70||0)*(speed/Math.max(1,spec.aeroRefSpeed||70))**2*clamp(aeroFactor,.45,1.05)*clamp(massFactor,.85,1.15);
+function aeroLoadG(spec,speed,aeroFactor=1){
+  return (spec.aeroLoadG70||0)*(speed/Math.max(1,spec.aeroRefSpeed||70))**2*clamp(aeroFactor,.45,1.15);
 }
 function effectiveTyreMu(spec,grip,aero,loadTransfer=0){
   const transferRatio=clamp(Math.abs(loadTransfer)/.30,0,1);
@@ -49,25 +49,28 @@ export function performanceFactors(car){
   };
 }
 export function effectiveAeroFactor(car){
-  return (car.aeroTraffic?.downforceFactor??1)*performanceFactors(car).aero;
+  // aeroLoadG is calibrated against the reference race-start mass, so only the
+  // downforce-derived normal load scales with inverse current mass. Base tyre
+  // friction remains approximately mu*g and is not mass-scaled.
+  return (car.aeroTraffic?.downforceFactor??1)*performanceFactors(car).aero*vehicleMassFactor(car);
 }
 export function effectiveTopSpeed(car){return car.spec.top*performanceFactors(car).top;}
-export function tyreLateralAccel(spec,speed,grip=1,aeroFactor=1,loadTransfer=0,massFactor=1){
-  const aero=aeroLoadG(spec,speed,aeroFactor,massFactor);
+export function tyreLateralAccel(spec,speed,grip=1,aeroFactor=1,loadTransfer=0){
+  const aero=aeroLoadG(spec,speed,aeroFactor);
   const mu=effectiveTyreMu(spec,grip,aero,loadTransfer);
   return Math.max(1,mu*G*(1+aero));
 }
-export function tyreLongitudinalAccel(spec,speed,grip=1,aeroFactor=1,loadTransfer=0,massFactor=1){
-  const aero=aeroLoadG(spec,speed,aeroFactor,massFactor);
+export function tyreLongitudinalAccel(spec,speed,grip=1,aeroFactor=1,loadTransfer=0){
+  const aero=aeroLoadG(spec,speed,aeroFactor);
   const mu=effectiveTyreMu(spec,grip,aero,loadTransfer);
   return Math.max(1,mu*G*(1+aero));
 }
-export function cornerSpeedLimit(spec,curvature,grip=1,aeroFactor=1,massFactor=1){
+export function cornerSpeedLimit(spec,curvature,grip=1,aeroFactor=1){
   const k=Math.abs(curvature);
   if(k<1e-5)return spec.top;
   let v=Math.min(spec.top,Math.sqrt(spec.tyreMu*grip*G/k));
   for(let i=0;i<8;i++){
-    const a=tyreLateralAccel(spec,v,grip,aeroFactor,0,massFactor);
+    const a=tyreLateralAccel(spec,v,grip,aeroFactor);
     const next=Math.min(spec.top,Math.sqrt(a/k));
     v=v*.45+next*.55;
   }
@@ -131,10 +134,8 @@ export function stepVehicle(car,track,control,dt){
   car.diagnostics.maxSteerRate=Math.max(car.diagnostics.maxSteerRate,Math.abs(car.steer-priorSteer)/Math.max(1e-4,dt));
 
   const grip=car.systems?.grip??1;
-  const aeroFactor=(car.aeroTraffic?.downforceFactor??1)*performance.aero;
+  const aeroFactor=effectiveAeroFactor(car);
   const loadTransfer=car.tyre?.loadTransfer??0;
-  // A/B isolation: dynamic mass affects collision inertia and drive force-per-mass.
-  // Braking, tyre aero authority and drag remain on the calibrated baseline here.
   const tyreLat=tyreLateralAccel(spec,car.v,grip,aeroFactor,loadTransfer);
   const maxLat=Math.min(spec.laneChangeG*G,tyreLat);
   const speedSq=Math.max(1,car.v*car.v);
@@ -157,6 +158,8 @@ export function stepVehicle(car,track,control,dt){
   const ratio=car.v/Math.max(1,topSpeed);
   const fuelFactor=(car.systems?.fuel??1)>0?.99:.10;
   const baseDrive=car.throttle*accelerationAt(spec,car.v)*fuelFactor*performance.drive*massFactor;
+  // spec.brake is already a calibrated deceleration capability used by the
+  // planner. Do not apply inverse mass a second time here.
   const baseBrake=car.brake*spec.brake;
   const requestedLong=baseDrive-baseBrake;
   const tyreLong=tyreLongitudinalAccel(spec,car.v,grip,aeroFactor,loadTransfer);
@@ -170,7 +173,9 @@ export function stepVehicle(car,track,control,dt){
   car.tyre.slipRatio=clamp(car.tyre.slipRatio,0,.24);
   const tractionEfficiency=clamp(1-Math.max(0,car.tyre.slipRatio-.10)*.65,.90,1);
   const tyreForce=clamp(requestedLong,-longCapacity,longCapacity)*tractionEfficiency;
-  const drag=0.18*ratio*ratio*G*(car.aeroTraffic?.dragFactor??1)*performance.drag;
+  // Aerodynamic drag is a force at a given speed, so its deceleration scales
+  // inversely with current vehicle mass just like the calibrated drive force.
+  const drag=0.18*ratio*ratio*G*(car.aeroTraffic?.dragFactor??1)*performance.drag*massFactor;
   const overspeed=car.v>topSpeed?Math.min(10,(car.v-topSpeed)*2.2):0;
   const velocityHeading=wrapAngle(track.sample(car.s).heading+Math.atan2(car.laneV,Math.max(4,car.v)));
   const bodySlip=wrapAngle(velocityHeading-car.yaw);
