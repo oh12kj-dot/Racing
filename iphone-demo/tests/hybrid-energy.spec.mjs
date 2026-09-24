@@ -92,3 +92,64 @@ test('ERS-06: identical full simulations keep hybrid state deterministic',()=>{
   expect(a.stateHash()).toBe(b.stateHash());
   expect(a.snapshot().diagnostics.finite).toBeTruthy();
 });
+
+test('ERS-07: strategic reserve releases progressively toward the final lap',()=>{
+  const early=makeCar('formula',55),finalLap=makeCar('formula',55);
+  early.racecraft.state=finalLap.racecraft.state='COMMIT';
+  early.strategy={remainingLaps:8};finalLap.strategy={remainingLaps:1};
+  early.systems.energyMJ=finalLap.systems.energyMJ=1.15;
+  early.throttle=finalLap.throttle=1;early.brake=finalLap.brake=0;
+
+  stepSystems(early,FIXED_DT);stepSystems(finalLap,FIXED_DT);
+  expect(early.systems.energyStrategy).toBe('ATTACK');
+  expect(finalLap.systems.energyStrategy).toBe('ENDGAME');
+  expect(early.systems.energyReserveTarget).toBeGreaterThan(finalLap.systems.energyReserveTarget+.15);
+
+  for(let i=1;i<600;i++){stepSystems(early,FIXED_DT);stepSystems(finalLap,FIXED_DT);}
+  expect(early.systems.energyMJ).toBeGreaterThan(finalLap.systems.energyMJ+.60);
+  expect(finalLap.systems.energyMJ).toBeLessThan(.12);
+});
+
+test('ERS-08: caution suppresses deployment while braking still regenerates energy',()=>{
+  const car=makeCar('formula',48);
+  car.racecraft.state='COMMIT';car.strategy={remainingLaps:4};car.cautionNoPass=true;
+  car.throttle=1;car.brake=0;
+  const start=car.systems.energyMJ;
+  stepSystems(car,FIXED_DT);
+  expect(car.systems.energyStrategy).toBe('CAUTION');
+  expect(car.systems.energyDeploy).toBe(0);
+  expect(car.systems.energyMJ).toBeCloseTo(start,6);
+
+  car.systems.energyMJ=1;car.throttle=0;car.brake=1;
+  for(let i=0;i<120;i++)stepSystems(car,FIXED_DT);
+  expect(car.systems.energyHarvest).toBeGreaterThan(.9);
+  expect(car.systems.energyMJ).toBeGreaterThan(1.10);
+  expect(car.systems.energyStrategy).toBe('CAUTION');
+});
+
+test('ERS-09: defence may deploy energy but hysteresis prevents strategy flapping',()=>{
+  const car=makeCar('formula',52);
+  car.strategy={remainingLaps:4};car.racecraft.state='RESET';car.racecraft.defenseUsed=true;
+  car.throttle=1;car.brake=0;
+  stepSystems(car,FIXED_DT);
+  expect(car.systems.energyStrategy).toBe('DEFEND');
+  expect(car.systems.energyDeploy).toBeGreaterThan(.9);
+
+  car.racecraft.defenseUsed=false;
+  stepSystems(car,FIXED_DT);
+  expect(car.systems.energyStrategy).toBe('DEFEND');
+  expect(car.systems.energyDeploy).toBe(0);
+  for(let i=0;i<70;i++)stepSystems(car,FIXED_DT);
+  expect(car.systems.energyStrategy).toBe('BALANCED');
+});
+
+test('ERS-10: low SOC enters save mode before crossing the strategic reserve',()=>{
+  const car=makeCar('formula',55);
+  car.strategy={remainingLaps:10};car.racecraft.state='COMMIT';
+  car.systems.energyMJ=car.systems.energyCapacityMJ*.24;car.throttle=1;car.brake=0;
+  stepSystems(car,FIXED_DT);
+  expect(car.systems.energyReserveTarget).toBeGreaterThan(.24);
+  expect(car.systems.energyStrategy).toBe('SAVE');
+  expect(car.systems.energyDeploy).toBe(0);
+  expect(car.systems.energyMode).toBe('RESERVE');
+});
