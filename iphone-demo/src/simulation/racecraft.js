@@ -10,6 +10,7 @@ function signedDelta(track,a,b){
   return d;
 }
 function safeLat(a,b){return (a.width+b.width)*.5+.45;}
+function isTrackTraffic(car){return car.pit.phase==='TRACK'||car.pit.phase==='PIT_APPROACH';}
 function laneLimit(car,track,candidate=car.lane){
   const base=Math.max(0,track.sample(car.s).halfWidth-car.width*.55-.35);
   const dir=Math.sign(candidate);
@@ -22,7 +23,7 @@ function boundedLane(car,lane,track){const limit=laneLimit(car,track,lane);retur
 function laneAvailable(car,candidate,cars,track,horizon=1.25){
   if(Math.abs(candidate)>laneLimit(car,track,candidate))return false;
   for(const o of cars){
-    if(o===car||o.retired||o.finished||o.pit.phase!=='TRACK')continue;
+    if(o===car||o.retired||o.finished||!isTrackTraffic(o))continue;
     const d=signedDelta(track,car,o);
     if(Math.abs(d)>16)continue;
     const futureSelf=candidate+(car.laneV||0)*horizon*.25;
@@ -99,7 +100,10 @@ function activeTargetFor(state,cars){
 export function planRacecraft(car,cars,track,time){
   const ideal=track.idealLane(car.s);
   const state=ensureState(car.racecraft);
-  const nearby=cars.filter(o=>o!==car&&!o.retired&&!o.finished&&o.pit.phase==='TRACK').map(o=>({o,d:signedDelta(track,car,o)}));
+  // A PIT_APPROACH car is still physically on the racing surface while it
+  // brakes and blends toward pit entry. Keep it visible to following/collision
+  // planning until PIT_ENTRY takes over the separated pit corridor.
+  const nearby=cars.filter(o=>o!==car&&!o.retired&&!o.finished&&isTrackTraffic(o)).map(o=>({o,d:signedDelta(track,car,o)}));
   const ahead=nearby.filter(x=>x.d>0&&x.d<130).sort((a,b)=>a.d-b.d);
   const behind=nearby.filter(x=>x.d<0&&x.d>-45).sort((a,b)=>b.d-a.d);
   const cautionNoPass=!!car.cautionNoPass;
@@ -218,7 +222,7 @@ export function planRacecraft(car,cars,track,time){
 
   const passActive=['SETUP','COMMIT','ALONGSIDE','SWITCHBACK'].includes(state.state)&&activeTarget;
   const front=ahead.find(x=>Math.abs(x.o.lane-car.lane)<3.6);
-  if(!cautionNoPass&&!passActive&&front&&!car.blueFlag&&state.state!=='COMPLETE'&&state.state!=='ABORT'){
+  if(!cautionNoPass&&!passActive&&front&&front.o.pit.phase==='TRACK'&&!car.blueFlag&&state.state!=='COMPLETE'&&state.state!=='ABORT'){
     const closing=car.v-front.o.v;
     const faster=fasterAdvantage(car,front.o);
     const cornerLoad=Math.min(1.5,Math.abs(track.curvature(car.s+35))*92);
@@ -240,7 +244,7 @@ export function planRacecraft(car,cars,track,time){
     const similarClass=Math.abs(car.spec.pace-attacker.o.spec.pace)<.08;
     const closing=attacker.o.v-car.v;
     const straight=Math.abs(track.curvature(car.s+20))<.006;
-    if(similarClass&&closing>.8&&-attacker.d<24&&straight&&car.aggression>.62&&!state.defenseUsed){
+    if(attacker.o.pit.phase==='TRACK'&&similarClass&&closing>.8&&-attacker.d<24&&straight&&car.aggression>.62&&!state.defenseUsed){
       const k=track.curvature(car.s+55),inside=k>=0?1:-1,candidate=clamp(inside*2.2,-4.5,4.5);
       if(laneAvailable(car,candidate,cars,track,.7)){targetLane=candidate;reason='DEFEND_ONE_MOVE';state.defenseUsed=true;state.defenseResetAt=time+7;}
     }
@@ -281,7 +285,7 @@ export function planRacecraft(car,cars,track,time){
   }
 
   for(const o of cars){
-    if(o===car||o.retired||o.finished||o.pit.phase!=='TRACK')continue;
+    if(o===car||o.retired||o.finished||!isTrackTraffic(o))continue;
     const d=signedDelta(track,car,o);
     if(Math.abs(d)>(car.length+o.length)*.55+2.5)continue;
     const sepNow=car.lane-o.lane;
