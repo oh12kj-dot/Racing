@@ -10,7 +10,7 @@ function signedDelta(track,a,b){
   return d;
 }
 function safeLat(a,b){return (a.width+b.width)*.5+.45;}
-function isTrackTraffic(car){return car.pit.phase==='TRACK'||car.pit.phase==='PIT_APPROACH';}
+function isTrackTraffic(car){return ['TRACK','PIT_APPROACH','PIT_ENTRY','MERGE'].includes(car.pit.phase);}
 function laneLimit(car,track,candidate=car.lane){
   const base=Math.max(0,track.sample(car.s).halfWidth-car.width*.55-.35);
   const dir=Math.sign(candidate);
@@ -100,9 +100,9 @@ function activeTargetFor(state,cars){
 export function planRacecraft(car,cars,track,time){
   const ideal=track.idealLane(car.s);
   const state=ensureState(car.racecraft);
-  // A PIT_APPROACH car is still physically on the racing surface while it
-  // brakes and blends toward pit entry. Keep it visible to following/collision
-  // planning until PIT_ENTRY takes over the separated pit corridor.
+  // Entry/merge transition cars can still physically overlap the racing surface.
+  // Keep them visible to following/collision planning, while only TRACK cars may
+  // become sporting pass/defence targets.
   const nearby=cars.filter(o=>o!==car&&!o.retired&&!o.finished&&isTrackTraffic(o)).map(o=>({o,d:signedDelta(track,car,o)}));
   const ahead=nearby.filter(x=>x.d>0&&x.d<130).sort((a,b)=>a.d-b.d);
   const behind=nearby.filter(x=>x.d<0&&x.d>-45).sort((a,b)=>b.d-a.d);
