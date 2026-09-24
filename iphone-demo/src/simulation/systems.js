@@ -43,22 +43,24 @@ export function createSystems(type){
     energyReserve:h?.reserve??0,
     energyAttackReserve:h?.attackReserve??0,
     energyControllerActive:false,
-    energyMode:h?'BALANCED':'NONE'
+    energyMode:h?'BALANCED':'NONE',
+    energyPolicyMode:h?'BALANCED':'NONE'
   };
 }
 
-function attackEnergyRequested(car){
+function combatEnergyRequested(car){
   const state=car.racecraft?.state;
-  return state==='COMMIT'||state==='ALONGSIDE';
+  return state==='COMMIT'||state==='ALONGSIDE'||state==='SWITCHBACK'||!!car.racecraft?.defenseUsed;
 }
 
 export function energyDriveFactor(car){
   const s=car.systems;
   if(!s||s.energyCapacityMJ<=0||!s.energyControllerActive)return 1;
   // The class acceleration envelope already represents its normal managed hybrid
-  // performance. Explicit SOC therefore models the discretionary attack reserve:
-  // it can preserve the calibrated maximum under an attack, but never boost above it.
-  const highDemand=attackEnergyRequested(car)&&(car.throttle??0)>.72&&(car.brake??0)<.05&&car.v>=s.energyMinDeploySpeed;
+  // performance. Explicit SOC therefore models the discretionary combat reserve:
+  // it can preserve the calibrated maximum under attack/defence, but never boost
+  // above it. Saving energy physically gives up that discretionary assistance.
+  const highDemand=combatEnergyRequested(car)&&(car.throttle??0)>.72&&(car.brake??0)<.05&&car.v>=s.energyMinDeploySpeed;
   if(!highDemand)return 1;
   const deploy=clamp(s.energyDeploy||0,0,1);
   const assist=clamp(s.energyAssistShare||0,0,.25);
@@ -69,15 +71,20 @@ function stepHybridEnergy(car,dt){
   const s=car.systems;
   const capacity=Math.max(0,s.energyCapacityMJ||0);
   if(capacity<=0){
-    s.energyMJ=0;s.energyDeploy=0;s.energyHarvest=0;s.energyControllerActive=false;s.energyMode='NONE';
+    s.energyMJ=0;s.energyDeploy=0;s.energyHarvest=0;s.energyControllerActive=false;s.energyMode='NONE';s.energyPolicyMode='NONE';
     return;
   }
 
   s.energyControllerActive=true;
-  const attacking=attackEnergyRequested(car);
-  const reserveFraction=attacking?(s.energyAttackReserve||0):(s.energyReserve||0);
-  const reserveMJ=capacity*clamp(reserveFraction,0,.8);
-  const deployDemand=attacking&&!s.failed&&car.v>=s.energyMinDeploySpeed&&car.brake<.05&&car.throttle>.72;
+  const combat=combatEnergyRequested(car);
+  const policy=car.strategy?.energy||null;
+  const fallbackReserve=combat?(s.energyAttackReserve||0):(s.energyReserve||0);
+  const reserveFraction=Number.isFinite(policy?.reserveFraction)?policy.reserveFraction:fallbackReserve;
+  const reserveMJ=capacity*clamp(reserveFraction,0,.9);
+  const deployAllowed=policy?.deployAllowed!==false;
+  s.energyPolicyMode=policy?.mode||(combat?'ATTACK':'BALANCED');
+
+  const deployDemand=combat&&deployAllowed&&!s.failed&&car.v>=s.energyMinDeploySpeed&&car.brake<.05&&car.throttle>.72;
   const deployRequest=deployDemand?clamp((car.throttle-.72)/.28,0,1):0;
   const available=Math.max(0,(s.energyMJ||0)-reserveMJ);
   const deployEnergy=Math.min(available,Math.max(0,s.energyDeployMW||0)*deployRequest*dt);
