@@ -16,6 +16,17 @@ test('RACECRAFT: finished cars are not treated as live traffic',()=>{
   expect(plan.targetSpeed).toBe(Infinity);
 });
 
+test('RACECRAFT: a PIT_APPROACH car remains live traffic until it enters the separated pit corridor',()=>{
+  const track=createTrack(),entries=buildEntrants();
+  const follower=createVehicleState(entries[6],100,1),pitting=createVehicleState(entries[7],114,1);
+  follower.v=49;follower.lane=0;
+  pitting.v=39;pitting.lane=.8;pitting.pit.phase='PIT_APPROACH';
+  const plan=planRacecraft(follower,[follower,pitting],track,20);
+  expect(plan.reason).toBe('TRAFFIC_FOLLOW');
+  expect(plan.targetSpeed).toBeLessThan(follower.v);
+  expect(plan.state).not.toBe('SETUP');
+});
+
 test('PIT: every team owns a distinct box and the final team remains inside pit lane',()=>{
   const track=createTrack(),entries=buildEntrants();
   const first=createVehicleState(entries.find(e=>e.teamId===0),track.pit.boxStart-150,1);

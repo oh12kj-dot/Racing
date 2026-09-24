@@ -4,12 +4,43 @@ import {createRaceSimulation} from '../src/simulation/race.js';
 
 const TAU=Math.PI*2;
 const wrapAngle=a=>((a+Math.PI)%TAU+TAU)%TAU-Math.PI;
+function signedDelta(track,a,b){
+  let d=track.wrapS(b.s)-track.wrapS(a.s);
+  if(d>track.total*.5)d-=track.total;
+  if(d<-track.total*.5)d+=track.total;
+  return d;
+}
 
 test('RED-10: normal dry race and pit cycles do not falsely escalate to red',()=>{
   const sim=createRaceSimulation(0x51afe,{raceLaps:80});
-  let sawRed=false,firstRed=null;
+  let sawRed=false,firstRed=null,lastSeenEventId=0;
+  const contactDiagnostics=[];
   for(let i=0;i<Math.round(180/FIXED_DT);i++){
     sim.update(FIXED_DT);
+    const fresh=sim.events.filter(event=>event.id>lastSeenEventId);
+    if(fresh.length)lastSeenEventId=Math.max(...fresh.map(event=>event.id));
+    for(const event of fresh.filter(event=>event.type==='CONTACT')){
+      const car=sim.cars.find(c=>c.id===event.carId);
+      if(!car)continue;
+      const nearest=sim.cars.filter(o=>o!==car&&!o.retired&&!o.finished&&o.pit.phase!=='SERVICE')
+        .map(o=>({o,d:signedDelta(sim.track,car,o)}))
+        .sort((a,b)=>Math.hypot(a.d,car.lane-a.o.lane)-Math.hypot(b.d,car.lane-b.o.lane))[0];
+      contactDiagnostics.push({
+        t:+event.time.toFixed(3),id:car.id,other:nearest?.o.id??null,
+        ds:nearest?+nearest.d.toFixed(3):null,dLane:nearest?+(car.lane-nearest.o.lane).toFixed(3):null,
+        v:+car.v.toFixed(3),otherV:nearest?+nearest.o.v.toFixed(3):null,
+        lane:+car.lane.toFixed(3),otherLane:nearest?+nearest.o.lane.toFixed(3):null,
+        laneV:+car.laneV.toFixed(3),otherLaneV:nearest?+nearest.o.laneV.toFixed(3):null,
+        target:+(car.targetSpeed??0).toFixed(3),otherTarget:nearest?+(nearest.o.targetSpeed??0).toFixed(3):null,
+        targetLane:+(car.targetLane??0).toFixed(3),otherTargetLane:nearest?+(nearest.o.targetLane??0).toFixed(3):null,
+        state:car.racecraft?.state??null,otherState:nearest?.o.racecraft?.state??null,
+        phase:car.pit.phase,otherPhase:nearest?.o.pit.phase??null,
+        source:car.controlSource,otherSource:nearest?.o.controlSource,
+        fuel:+(car.systems?.fuel??0).toFixed(3),otherFuel:nearest?+(nearest.o.systems?.fuel??0).toFixed(3):null,
+        mass:+(car.mass??0).toFixed(3),otherMass:nearest?+(nearest.o.mass??0).toFixed(3):null
+      });
+      if(contactDiagnostics.length>20)contactDiagnostics.shift();
+    }
     if(sim.raceControl.flag==='RED'){
       sawRed=true;
       if(!firstRed){
@@ -36,6 +67,7 @@ test('RED-10: normal dry race and pit cycles do not falsely escalate to red',()=
               source:car.controlSource
             };
           }),
+          contactDiagnostics:[...contactDiagnostics],
           recentEvents:sim.events.filter(event=>event.time>snap.time-18).map(event=>({
             t:+event.time.toFixed(3),type:event.type,carId:event.carId,text:event.text
           }))
