@@ -133,7 +133,9 @@ export function stepVehicle(car,track,control,dt){
   const grip=car.systems?.grip??1;
   const aeroFactor=(car.aeroTraffic?.downforceFactor??1)*performance.aero;
   const loadTransfer=car.tyre?.loadTransfer??0;
-  const tyreLat=tyreLateralAccel(spec,car.v,grip,aeroFactor,loadTransfer,massFactor);
+  // Diagnostic isolation: keep dynamic collision/inertia mass, but leave the
+  // calibrated tyre/drive/brake/drag performance envelope unchanged.
+  const tyreLat=tyreLateralAccel(spec,car.v,grip,aeroFactor,loadTransfer);
   const maxLat=Math.min(spec.laneChangeG*G,tyreLat);
   const speedSq=Math.max(1,car.v*car.v);
   const steeringAccel=speedSq/Math.max(1.5,spec.wheelbase)*Math.tan(car.steer);
@@ -154,10 +156,10 @@ export function stepVehicle(car,track,control,dt){
   car.tyre.lateralForceUsage=latUse;
   const ratio=car.v/Math.max(1,topSpeed);
   const fuelFactor=(car.systems?.fuel??1)>0?.99:.10;
-  const baseDrive=car.throttle*accelerationAt(spec,car.v)*fuelFactor*performance.drive*massFactor;
-  const baseBrake=car.brake*spec.brake*massFactor;
+  const baseDrive=car.throttle*accelerationAt(spec,car.v)*fuelFactor*performance.drive;
+  const baseBrake=car.brake*spec.brake;
   const requestedLong=baseDrive-baseBrake;
-  const tyreLong=tyreLongitudinalAccel(spec,car.v,grip,aeroFactor,loadTransfer,massFactor);
+  const tyreLong=tyreLongitudinalAccel(spec,car.v,grip,aeroFactor,loadTransfer);
   const ellipseFactor=Math.sqrt(Math.max(0,1-latUse*latUse));
   const longCapacity=tyreLong*ellipseFactor;
   const requestedMagnitude=Math.abs(requestedLong);
@@ -168,7 +170,7 @@ export function stepVehicle(car,track,control,dt){
   car.tyre.slipRatio=clamp(car.tyre.slipRatio,0,.24);
   const tractionEfficiency=clamp(1-Math.max(0,car.tyre.slipRatio-.10)*.65,.90,1);
   const tyreForce=clamp(requestedLong,-longCapacity,longCapacity)*tractionEfficiency;
-  const drag=0.18*ratio*ratio*G*(car.aeroTraffic?.dragFactor??1)*performance.drag*massFactor;
+  const drag=0.18*ratio*ratio*G*(car.aeroTraffic?.dragFactor??1)*performance.drag;
   const overspeed=car.v>topSpeed?Math.min(10,(car.v-topSpeed)*2.2):0;
   const velocityHeading=wrapAngle(track.sample(car.s).heading+Math.atan2(car.laneV,Math.max(4,car.v)));
   const bodySlip=wrapAngle(velocityHeading-car.yaw);
