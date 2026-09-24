@@ -4,8 +4,10 @@ import {serviceSystems} from '../src/simulation/systems.js';
 import {
   FUEL_DENSITY_KG_PER_L,
   createVehicleState,
+  effectiveAeroFactor,
   effectiveVehicleMass,
   stepVehicle,
+  tyreLongitudinalAccel,
   vehicleMassFactor
 } from '../src/simulation/vehicle.js';
 
@@ -50,14 +52,16 @@ test('FUEL-MASS-02: burning fuel reduces physical mass and improves straight-lin
   expect(light.v).toBeGreaterThan(heavy.v+.35);
 });
 
-test('FUEL-MASS-03: a lighter car receives greater aerodynamic drag deceleration without changing calibrated brake authority',()=>{
+test('FUEL-MASS-03: a lighter car gains aero-supported tyre authority without double-scaling calibrated brake capability',()=>{
   const heavy=make('formula'),light=make('formula');
   heavy.v=70;light.v=70;
   light.systems.fuel=8;
 
-  run(heavy,.55,{throttle:0,brake:0,steer:0});
-  run(light,.55,{throttle:0,brake:0,steer:0});
-  expect(light.v).toBeLessThan(heavy.v-.015);
+  const heavyAero=effectiveAeroFactor(heavy),lightAero=effectiveAeroFactor(light);
+  const heavyLong=tyreLongitudinalAccel(heavy.spec,70,1,heavyAero,0);
+  const lightLong=tyreLongitudinalAccel(light.spec,70,1,lightAero,0);
+  expect(lightAero).toBeGreaterThan(heavyAero);
+  expect(lightLong).toBeGreaterThan(heavyLong);
 });
 
 test('FUEL-MASS-04: pit refuelling adds real mass instead of only changing a strategy number',()=>{
