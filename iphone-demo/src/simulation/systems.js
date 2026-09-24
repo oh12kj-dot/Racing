@@ -127,9 +127,9 @@ export function energyDriveFactor(car){
   // The class acceleration envelope already represents its normal managed hybrid
   // performance. Explicit SOC therefore models the discretionary tactical reserve:
   // it can preserve the calibrated maximum under attack/defence/endgame demand,
-  // but never boost above it.
-  const strategyBlocks=s.energyStrategy==='SAVE'||s.energyStrategy==='CAUTION';
-  const highDemand=!strategyBlocks&&energyDeploymentRequested(car)&&(car.throttle??0)>.72&&(car.brake??0)<.05&&car.v>=s.energyMinDeploySpeed;
+  // but never boost above it. When strategy deliberately saves energy during a
+  // tactical demand, missing deployment therefore reduces available drive.
+  const highDemand=energyDeploymentRequested(car)&&(car.throttle??0)>.72&&(car.brake??0)<.05&&car.v>=s.energyMinDeploySpeed;
   if(!highDemand)return 1;
   const deploy=clamp(s.energyDeploy||0,0,1);
   const assist=clamp(s.energyAssistShare||0,0,.25);
