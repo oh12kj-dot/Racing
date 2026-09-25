@@ -153,3 +153,16 @@ test('ERS-10: low SOC enters save mode before crossing the strategic reserve',()
   expect(car.systems.energyDeploy).toBe(0);
   expect(car.systems.energyMode).toBe('RESERVE');
 });
+
+test('ERS-11: authoritative hash and finite diagnostics include hybrid energy state',()=>{
+  const sim=createRaceSimulation(0x657273,{raceLaps:8});
+  const car=sim.cars.find(c=>c.systems.energyCapacityMJ>0);
+  const baseline=sim.stateHash();
+  car.systems.energyMJ-=.25;
+  expect(sim.stateHash()).not.toBe(baseline);
+  car.systems.energyMJ+=.25;
+  car.systems.energyStrategy='ATTACK';
+  expect(sim.stateHash()).not.toBe(baseline);
+  car.systems.energyMJ=Number.NaN;
+  expect(sim.snapshot().diagnostics.finite).toBeFalsy();
+});
