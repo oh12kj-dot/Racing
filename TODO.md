@@ -3,9 +3,10 @@
 > **再開するときは先に [`HANDOFF.md`](HANDOFF.md) を読むこと。** 現在地・実装済み API・環境・手順が 1 本にまとまっている。
 
 
-Last updated: 2026-09-10
-Current Phase: **Phase 2 進行中**。TASK-2-1 `4710d63` / 2-2 `ac80e03` / 2-3 `1fd08ca` / **2-4 Phase 1 `54e050a`（Opus APPROVED）**。
-次: TASK-2-4 **Phase 2**（K-1 根治・**人間承認 B 待ち**で着手不可）／ 並行で TASK-05-1 UE5 M3/M4（`profile_gpu.py` 実装済み・`-game` possess 問題を調査中）。
+Last updated: 2026-09-26
+Current Phase: **Phase 2 進行中**。TASK-2-1 `4710d63` / 2-2 `ac80e03` / 2-3 `1fd08ca` / **2-4 Phase 1 `54e050a`（Opus APPROVED）** /
+**2-4 Phase 2 部分: `72ad7c9`（Sonnet・Opus APPROVED）+ Opus 修正ラウンド（PDC-8 スレッショルドブレーキング・全周緑化）**。
+次: TASK-2-4 Phase 2 残り（`t_core_ai_11` 19/51 の分類診断 → 「## TASK-2-4 Phase 2 — Opus 5 Quality Gate 裁定」の NEXT SONNET TASK）／ 並行で TASK-05-1 UE5 M3/M4。
 
 ---
 
@@ -1226,6 +1227,7 @@ or `sim-vehicle` 側の疑いが出るため、凍結解除の判断が要る）
 ## TASK-2-4 Phase 2 — 進捗メモ（Sonnet 5・2026-09-26・**未完了・3 ラウンドで停止し報告**）
 
 > 人間承認 B が下りたため着手。git commit はしていない（作業ツリーに残す）。
+> **（Opus 注 2026-09-26: その後 `72ad7c9` / `2fbe0a6` として commit・push 済み。本メモのヘアピン根因推定は誤り — 同日の Opus 裁定 HIGH-1 を参照。）**
 
 **Scope Confirmation**: `git diff --stat` は `crates/sim-driver/src/controller.rs` /
 `crates/sim-driver/src/planner.rs` / `crates/sim-core/tests/world_ai.rs` の 3 ファイルのみ。
@@ -1336,6 +1338,124 @@ wasm32-unknown-unknown --release` OK（本セッションで `rustup target add`
   なく実測ベースの検証（実車の実測制動距離 vs `plan_brake_decel` の予測値を複数速度で比較）
   から始めるべきという判断で、本ラウンドでは着手しなかった。次のラウンドの出発点として
   ここに記録する。
+
+---
+
+## TASK-2-4 Phase 2 — Opus 5 Quality Gate 裁定 + Architect 修正ラウンド（2026-09-26）
+
+**VERDICT: APPROVED（Sonnet 5 の部分主張「T3 と t=0 spawn のスピンを解消」は実在する改善として land 可）。**
+**ただし Sonnet の根因分析（ヘアピン = 応答不足 / `sim-line` 相互作用 / `plan_brake_decel` 乖離）は誤り（HIGH-1）。**
+Architect 権限で真因（**ABS の無い車で `brake = 1.0` を踏み続けた前輪ロック**）を特定し、
+`controller.rs` にスレッショルドブレーキング上限（**PDC-8**）を追加して `t_core_ai_10_full` を**緑化・ignore 解除**した。
+**TASK-2-4 Phase 2 は未完了のまま**（`t_core_ai_11` 19/51 逸脱・運動学プラント 2 本・Phase 3 未着手）。
+人間不在のため本ラウンドは Opus が最終判断者（ユーザー指示）。
+
+### 監査対象
+
+`origin/master..claude/elegant-fermi-p71sas` = `72ad7c9`（実装）+ `2fbe0a6`（診断記録のみ・コード差分ゼロ）。PR #54（draft）。
+
+### スコープ確認（独立再実行）
+
+`git diff master...HEAD --stat` = `HANDOFF.md` / `TODO.md` / `crates/sim-core/tests/world_ai.rs` /
+`crates/sim-driver/src/{controller.rs, planner.rs}` の 5 ファイルのみ。凍結対象（`sim-math` / `sim-track` /
+`sim-vehicle` / `sim-line` / `sim-core/src/**` / `sim-wasm` / `view-engineering` / `assets` / `tools` /
+`sim-driver/src/{lib,driver,model,perception,decision}.rs`）は無変更。**OK。**
+
+### 独立再実行（Opus・本コンテナ）
+
+| 項目 | Sonnet 申告 | Opus 再実行（監査対象 HEAD `2fbe0a6`） |
+|---|---|---|
+| `cargo fmt --all -- --check` | clean | clean |
+| `cargo clippy --workspace --all-targets -- -D warnings` | 0 | 0 |
+| `cargo test --workspace --release` | 0 failed / ignore 4 | **184 passed（doctest 込み）/ 0 failed / 4 ignored** |
+| wasm32 build / `sim-line --no-default-features` | OK | OK（`rustup target add` 済み環境）|
+| `t_core_ai_10_full`（ignored） | s=3310.5 で 8.6 cm | **s=3310.5・t=-7.585・0.086 m で再現** |
+| `t_core_ai_11`（ignored） | 「ほぼ全て」 | **51/51 逸脱**。うち **12 組は T3（s≈1544〜1594）で先に逸脱**（下記 MEDIUM-3）|
+| `sim-driver --ignored` | `t_ai_01` / `t_drv_04` red | red（運動学プラント起因・変化なし）|
+
+### 回帰テストの実質性（アブレーション・scratch worktree で実施）
+
+`t_core_ai_10_corridor_containment_validated_section`（s<3100）と `t_core_ai_10_offline_spawn` を変種ごとに実行:
+
+| 変種 | validated（s<3100） | offline spawn |
+|---|---|---|
+| **master の controller/planner（修正前）** | **FAIL** s=1561.6（6.9 cm）| **FAIL** s=70.9 |
+| HEAD − ゲインスケジュール（`V_REF_HEADING=∞`）| pass | pass |
+| HEAD − `beta_dot` 位相進み（`K_CS_LEAD_S=0`）| **FAIL** s=1584.1 | **FAIL** s=1584.5 |
+| HEAD − `LOOKAHEAD_MIN_M` 変更（5.0）| pass | **FAIL** s=82.5 |
+| 位相進みのみ（スケジュール・lookahead とも外す）| pass | **FAIL** s=82.5 |
+
+→ 両テストは修正前コードで確実に落ちる**本物の回帰テスト**（トートロジーではない）。
+**T3 を直したのは `beta_dot` 位相進み、発進スピンを直したのは `LOOKAHEAD_MIN_M`**。ゲインスケジュールは
+どのテストにも効いていない（下記 MEDIUM-1）。`t_core_ai_11` は `DriverModel` 全フィールドを実際に振り、
+各 tick でコリドー封じ込めを検査し、最初の逸脱を集計する — **実質的なスイープ**（形だけではない）。
+
+### Findings
+
+| # | 重大度 | 内容 | 処置 |
+|---|---|---|---|
+| **HIGH-1** | HIGH | **ヘアピン（s≈3230〜3315）逸脱の根因の誤診。** Sonnet は「応答不足型」「`sim-line` との相互作用を疑う」（ignore 文）→ 追記で「`plan_brake_decel` と実車の乖離」と推定したが、どちらもタイヤの `slip_ratio` を一度も見ていない。Opus がテレメトリ（`VehicleState::wheels[*].slip_ratio` / `slip_angle` / `force_long`）を採ると、clean 0.6 は s≈3230 で `brake=1.0` → **前輪 `slip_ratio=-1.00`（完全ロック）が s≈3235〜3315 の約 80 m 継続**、s≈3254 から後輪もロック。ロック中の前輪は横力を出せないため `steer=-1.0` でも曲がらず（Sonnet が観測した「フルロックでも heading_error 拡大」の正体）、減速度も −20 → −12 m/s² へ落ちる（「`v_target` に実速度が追従しない」の正体）。**T3 進入（s≈1428〜1456）でもロックが発生**していた。このまま次ラウンドに渡すと凍結 `sim-line` の C 承認という誤った方向へ進むところだった | **本ラウンドで修正（PDC-8）** |
+| **MEDIUM-1** | MEDIUM | **ゲインスケジュール（`k_heading_scaled`/`k_yaw_damp_scaled`）は計測上無効。** 外しても validated / offline / full / スイープ（19/51）すべて結果不変。`V_REF_HEADING=50` なので効くのは 50 m/s 超の直線だけ。コメント・ignore 文・HANDOFF が「スケジュール + 位相進みで T3 解消」と功績を帰属していたのは不正確 | 文書を訂正。**コードは残す**（TASK-2-3 Part F の 50 m/s 直線共振への保険として無害・`v≤50` で旧値を厳密再現）。Phase 3 で実物理テストにより要否を確定し、不要なら削除 |
+| **MEDIUM-2** | MEDIUM | **`t_core_ai_10_full` の終了条件が到達不能。** `S_VALIDATED_FULL_M = 4139.0` だが周長は 4139.087 m。`coord.s` は `wrap_s` で 0 に戻るので `s >= 4139.0` は 0.087 m の窓でしか成立せず（60 Hz・50 m/s で 1 tick ≈ 0.8 m）、**クリーン走行でも "did not reach s = 4139" で赤になる偽陰性**。ヘアピンを直した直後に実際にこれで落ちたことで発見 | 修正: `run_solo_from_until` の打ち切りを走行距離 `laps_completed·L + s`（`until < L` では従来と同一）へ、全周は `s_validated_full_m() = L + GRID_S`（グリッドから 1 周してグリッドへ戻る = s∈[0,40) も検査）。`max_ticks` 6000→8000 |
+| **MEDIUM-3** | MEDIUM | **スイープ結果の過小申告と自己矛盾。** `t_core_ai_11` の ignore 文は「T3 は…で全組み合わせ解消」と書いた直後に「level 0.5 / consistency 0.5 の一部と balanced() は T3 手前でも逸脱」と書く（矛盾）。実測は **51/51 逸脱、12/51 が T3（s≈1544〜1594）で先に逸脱**（level 0.3・consistency 0.5 の 6/6、level 0.5・consistency 0.5 の 3/6、**`DriverModel::balanced()` の 3/3**）。「T3 解消」は clean 0.6（と consistency=1.0 の多く）に限った主張 | ignore 文を現状の数値で全面書き換え |
+| **LOW-1** | LOW | `HANDOFF.md` 先頭行と進捗メモが「commit なし・作業ツリーに残置」と書いているが、実際は `72ad7c9` / `2fbe0a6` として commit・push 済み（PR #54）。§0 の表も Phase 1 時点のまま | HANDOFF 先頭行と §0 を更新（進捗メモ本文は記録として残す）|
+| **LOW-2** | LOW | `beta_dot` は `stabilise.sideslip` の生差分 ÷ `SIM_DT`（×0.25 で実効 15 倍）。現状の安定化経路は認知ノイズ無し（`perception.rs` はノイズを予見経路にのみ加える＝確認済み）なので問題ないが、将来安定化経路にノイズを入れると増幅される | 記録のみ。安定化経路へノイズを足す変更時は `beta_dot` に低域フィルタを入れること |
+
+CRITICAL: なし。
+
+### PDC-8（Opus 起票・Opus 承認・本ラウンドで適用）— スレッショルドブレーキング上限
+
+`controller.rs::brake_lock_cap(speed, kappa_traj)`。PDC-3（トラクション上限）の制動側の対:
+
+- 前後軸それぞれ、ペダル `b` の制動力 `b·F_axle`（`sim-vehicle::Derived::brake_torque` と同式で `VehicleParams` から導出）が
+  1 輪のグリップ `μ(Fz)·Fz` を摩擦円で横力分差し引いた残りを超えない最大の `b` を解き、小さい方 × `BRAKE_LOCK_MARGIN = 0.95`。
+- `μ(Fz)` は **`sim-vehicle` と同じ荷重感度式** `mu0/(1+LS·(Fz/Fz_nom−1))`。一定 μ（`MU_TRACTION=1.316`）版を先に試したところ、
+  制動で荷重が乗る前輪（1 輪 ≈1.8 倍荷重・実効 μ≈1.22）を過大評価して margin 0.90 以上でロックが残った → 荷重感度込みへ。
+- 縦荷重移動 `b·(F_f+F_r)·h/L` を含む（`μ` が `b` 依存なので固定点反復 3 回・決定的）。
+- 横荷重移動（`m·a_lat·h/track × 静的配分`）を含み、軸の限界は**旋回内輪**で決める（同軸左右は同トルクなので内輪ロック＝軸ロック開始。
+  トレイルブレーキング中の内側前輪だけのロックを実測で確認したため追加）。
+- `mistake_brake_bias` は上限の**後**に足す → ロックアップは「ミス（原因）」としてのみ起きる（原則 3 と整合）。`v_target` には触らない。
+
+**撤回済み PDC-7 との関係（開示）**: PDC-7（TASK-2-3）はフロント軸の横力摩擦円だけで `brake_raw` を絞る案で、`t_ai_01`（運動学プラント）を
+壊し、当時の失敗（lateral weave）に無関係だったため撤回された。PDC-8 は (a) 実物理テレメトリで `slip_ratio=-1.0` を確認した上での対策、
+(b) 直線制動を含む縦方向のロック限界そのものを扱う点で別物。`t_ai_01` は現在 K-1（運動学プラント）で ignore 中のため判定に使えない。
+**margin の選定は運動学プラントの `t_ai_07`（反応遅れによるラップタイム差 ≥0.1 s）にも拘束された**: 0.90 では 0.067 s で red、0.95 で green
+（運動学プラントは `decel = brake × 26 m/s²` でグリップ上限が無いので、どんな上限も制動を削るだけ）。0.95 は実物理側の頑健帯
+（全周クリーンが 0.80〜0.95 で成立・スイープは 0.95 で最良 19/51、0.90 で 27/51）の内側なので採用。Phase 3 で運動学プラントを廃止したら再評価。
+
+### Architect 修正ラウンドの結果（最終コード・Opus 再実行）
+
+```
+cargo fmt --all -- --check                               → clean
+cargo clippy --workspace --all-targets -- -D warnings    → 0
+cargo test --workspace --release                         → 185 passed（doctest 込み）/ 0 failed / 3 ignored
+  ignore 3 = t_core_ai_11（19/51）+ 凍結 t_ai_01 / t_drv_04（運動学プラント・Phase 3 で廃止予定）
+cargo build -p sim-wasm --target wasm32-unknown-unknown --release → OK
+cargo build -p sim-line --no-default-features            → OK
+t_core_ai_10_full（ignore 解除）                         → 全周 worst excursion 0.000 m
+t_core_ai_10_offline_spawn（t=0 spawn）                  → 検証範囲を 3100 → 全周へ拡張し 0.000 m
+t_core_ai_11                                             → 51/51 → 19/51 逸脱（下記）
+T-CORE-AI-09                                             → 1.228 ms/tick（予算 3.5）/ Driver::update 1.55 µs（予算 25）
+T-CORE-AI-07                                             → 4157 → 4129 ticks（ロックしない制動のほうが速い）
+```
+
+**`t_core_ai_11` の残り 19/51**: consistency=1.0 かつ error_rate=0 の 12 組は**全て 3 周・逸脱 0**。T3（s≈1544〜1594）の逸脱は**全組み合わせで消えた**
+（T3 の残差も実はロック起因だった）。残る 19 組は**全て consistency=0.5 または error_rate=0.5**（操舵ノイズ / ミス注入あり）で、
+ヘアピン進入 s≈3301〜3319、ヘアピン脱出 s≈3377〜3424、s≈3504〜3507、lap≥1 の s≈1176〜1223 に分布、逸脱量はいずれも 0.3〜12 cm。
+アブレーション: PDC-8 下で `beta_dot` 位相進みを外すと 33/51 に悪化（位相進みは頑健性に効いている）、ゲインスケジュールを外しても 19/51 で不変。
+
+### NEXT SONNET TASK — TASK-2-4 Phase 2 残り（Architect 起票）
+
+1. **診断が先（前ラウンドの教訓）**: 残り 19 組それぞれについて、逸脱の直前 3 s の `mistake_steer_bias` / `mistake_brake_bias`（`Driver::driver_state()`）、
+   `steer_noise`、4 輪 `slip_ratio` / `slip_angle`、`long_mode`、`throttle` を採取し、**逸脱がミス注入の発生中か否か**で分類して数表で示す。
+   **タイヤの状態（slip）を見ずに制御ゲインを触らないこと。**
+2. 分類結果で分岐:
+   - ミス非発生中（ノイズのみ）の逸脱 → Allowed Files 内で原因を特定して修正（ヘアピン脱出 s≈3377〜3424 はトラクション / スロットル再開を疑う）。
+   - ミス発生中の逸脱 → **仕様判断を Architect に上げる**（「ミスが原因の数 cm の逸脱」を T-CORE-AI-11 の『逸脱 0』から除外するのは
+     受け入れ数値の緩和＝設計変更。数値の緩和を勝手にしない）。
+3. その後に T-CORE-AI-03（静止発進 3 周）・T-AI-01R/05R/07R・Phase 3（運動学プラント廃止、`t_ai_01`/`t_drv_04` の実物理版を
+   `world_ai.rs` 側で先に緑にしてから旧版を消す）。Phase 3 で PDC-8 の margin とゲインスケジュールの要否を再評価。
+4. Allowed / Do Not Change は Phase 2 契約のまま。3 ラウンドで解けなければ停止・報告。
 
 ---
 

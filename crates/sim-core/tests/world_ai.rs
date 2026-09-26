@@ -46,7 +46,8 @@ fn world_with_line() -> World {
 /// 4 秒走らずコースアウトする（HEAD ではクリーンだった）。これは K-1（横方向インナーループの
 /// 安定余裕ゼロ）の一部で、Phase 1 では承認 B が無く直せない。初期条件をライン上へ固定するのは
 /// **T3 の失敗をこの straight-lane-change の失敗から切り離す**ためで、後者の回帰は
-/// `#[ignore]` の [`t_core_ai_10_offline_spawn`] が記録する（Architect HIGH-1）。運動学プラントの
+/// [`t_core_ai_10_offline_spawn`] が記録する（Architect HIGH-1。TASK-2-4 Phase 2 で解消し
+/// ignore 解除済み — 上記の「実行できず」は Phase 1 時点の記録）。運動学プラントの
 /// `Plant::spawn` も `t0 = line.trajectory.t_at(s0)` としている。
 fn line_t(world: &World, s: f64) -> f64 {
     world.racing_line().unwrap().trajectory().t_at(s)
@@ -166,15 +167,19 @@ fn t_core_ai_06_racing_line_generated_once() {
 
 /// 現在コース保持が緑を維持できる弧長の上限 [m]。
 ///
-/// **TASK-2-4 Phase 2（本ラウンド）で `1400 → 3100` へ復元**。K_HEADING/K_YAW_DAMP の速度
-/// スケジュール（[`sim_driver::controller`] の `k_heading_scaled`/`k_yaw_damp_scaled`）+
-/// `delta_cs` の `beta_dot` 位相進みで T3（s≈1561）は clean 0.6 で worst excursion 0.000 m
-/// まで解消した。`s < 3100` は T3 を含む Phase 1 検証区間全体をカバーする。
-/// **s ≥ 3100 は新規に発見したヘアピン進入（s≈3305）の未解決の逸脱を含むため、
-/// 全周版は引き続き `#[ignore]` の `t_core_ai_10_full`（`S_VALIDATED_FULL_M`）に温存する。**
+/// **TASK-2-4 Phase 2 で `1400 → 3100` へ復元**。T3（s≈1561）は `delta_cs` の `beta_dot`
+/// 位相進みで clean 0.6 の逸脱が消えた（Opus 監査のアブレーション: 位相進みを外すと s≈1584 で
+/// 再発。K_HEADING/K_YAW_DAMP の速度スケジュールは外しても結果不変＝この区間では無効）。
+/// 全周は `t_core_ai_10_full`（[`s_validated_full_m`]・Opus 監査ラウンドのスレッショルド
+/// ブレーキング上限でヘアピンのロックアップを解消して緑化）。
 const S_VALIDATED_M: f64 = 3100.0;
-/// 全周版（K-1 解消後・Phase 2 の受け入れ）の弧長上限 [m]。全周長そのもの。
-const S_VALIDATED_FULL_M: f64 = 4139.0;
+/// 全周版（K-1 解消後・Phase 2 の受け入れ）の走行距離上限 [m] = グリッドから 1 周して
+/// グリッドへ戻るまで（`track.length() + GRID_S`。弧長 `s` 単独では `wrap_s` で 0 に戻るため
+/// 全周を表現できない — Opus 監査 MEDIUM-2: 旧 `4139.0` は周長 4139.087 m 未満の 0.087 m 窓でしか
+/// 停止せず、クリーン走行でも "did not reach" で赤になる偽陰性だった）。
+fn s_validated_full_m() -> f64 {
+    track().length() + GRID_S
+}
 /// コリドー封じ込めの許容 [m]。Architect 契約どおり 0 m。
 const CONTAIN_TOL_M: f64 = 0.0;
 
@@ -207,6 +212,7 @@ fn clean_reference_driver() -> DriverModel {
 
 /// solo・クリーン基準ドライバー（ライン上に spawn）・seed 固定で `s` が `until_s` に達するまで
 /// 走らせ、各 tick で `f(&World)` を呼ぶ。到達前に打ち切られたら panic（回帰検出）。
+/// `until_s` は走行距離 `laps_completed·L + s`（`until_s < L` なら弧長そのもの）。
 fn run_solo_until(seed: u64, until_s: f64, f: impl FnMut(&World)) {
     run_solo_from_until(seed, None, until_s, f)
 }
@@ -222,10 +228,13 @@ fn run_solo_from_until(seed: u64, spawn_t: Option<f64>, until_s: f64, mut f: imp
         .spawn_with_driver(params(), GRID_S, gt, clean_reference_driver(), rng)
         .unwrap();
 
-    let max_ticks = 6000u64;
+    let len = world.track().length();
+    let max_ticks = 8000u64;
     for _ in 0..max_ticks {
         world.step_sim_tick();
-        if world.vehicles()[0].coord.s >= until_s {
+        // 走行距離（`laps_completed·L + s`）で打ち切る。`until_s < L` なら従来の `s >= until_s` と同一。
+        let e = &world.vehicles()[0];
+        if e.laps_completed as f64 * len + e.coord.s >= until_s {
             return;
         }
         if world.sim_tick() > WARMUP_TICKS {
@@ -284,16 +293,13 @@ fn run_solo_model_laps(seed: u64, model: DriverModel, laps: u32) -> Result<(), S
 /// `level ∈ {0.3,0.5,0.7,0.9}` × `consistency ∈ {0.5,1.0}` × `error_rate ∈ {0.0,0.5}` ×
 /// seed 3 本の全組み合わせ + `DriverModel::balanced()`（3 seed）で、全周 3 周・コリドー逸脱 0 m。
 #[test]
-#[ignore = "TASK-2-4 Phase 2（本ラウンド・未解決）: T3（s≈1561）はゲインスケジュール + \
-            delta_cs 位相進みで全組み合わせ解消したが、**51 組み合わせ中ほぼ全てが \
-            s≈3300〜3314 の新規ヘアピン進入で決定論的に逸脱する**（`t_core_ai_10_full` の \
-            ignore 理由を参照。乱数非依存・level 0.3〜0.9 のほぼ全域で再現）。level 0.5 / \
-            consistency 0.5 の一部と balanced() は T3 手前（s≈1546〜1594）でも逸脱が残り、\
-            T3 の安定余裕がまだゼロに近いモデルが存在することも示す。**3 周完走・0 逸脱は \
-            未達**。Allowed Files（controller.rs/planner.rs）の範囲で 3 ラウンド \
-            （ゲインスケジュール / delta_cs 位相進み / lookahead 下限）を試したが解消せず、\
-            contract の『3 ラウンドで解けない場合は止めて報告』に従い停止する。次の診断対象は \
-            s=3250〜3305 の進入区間（応答不足型・sim-line との相互作用を疑う）。"]
+#[ignore = "TASK-2-4 Phase 2（未解決・Opus 監査ラウンド 2026-09-26 時点で 19/51 が逸脱）: \
+            スレッショルドブレーキング上限（controller.rs `brake_lock_cap`）で 51/51 → 19/51。\
+            consistency=1.0 かつ error_rate=0 の 12 組は全て 3 周・逸脱 0。残る 19 組は全て \
+            consistency=0.5 または error_rate=0.5（操舵ノイズ / ミス注入あり）で、逸脱は \
+            ヘアピン進入 s≈3301〜3319・ヘアピン脱出 s≈3377〜3424・s≈3504〜3507・lap≥1 の \
+            s≈1176〜1223 に分布（いずれも 0.3〜12 cm）。ミス（mistake_*_bias）起因の逸脱を \
+            『逸脱 0』の対象に含めるかは Architect の仕様判断待ち（TODO.md Opus 監査 NEXT 参照）。"]
 fn t_core_ai_11_model_sweep_robustness() {
     let levels = [0.3, 0.5, 0.7, 0.9];
     let consistencies = [0.5, 1.0];
@@ -537,31 +543,21 @@ fn corridor_containment_check(spawn_t: Option<f64>, until_s: f64) {
 
 /// T-CORE-AI-10 — コリドー封じ込め（ライン上 spawn・`s < S_VALIDATED_M` = 3100・T3 を含む）。
 /// TASK-2-4 Phase 2 で T3（K-1）を解消したため `S_VALIDATED_M` を 1400 → 3100 へ復元した。
-/// s ≥ 3100（新規発見のヘアピン進入問題）は `t_core_ai_10_full`（`#[ignore]`）へ。
+/// 全周は `t_core_ai_10_full`。
 #[test]
 fn t_core_ai_10_corridor_containment_validated_section() {
     corridor_containment_check(None, S_VALIDATED_M);
 }
 
-/// T-CORE-AI-10-FULL — 全周版（ライン上 spawn・`s < S_VALIDATED_FULL_M` = 4139 = 全周）。
-/// **TASK-2-4 Phase 2 の受け入れ = この ignore を外す。**
+/// T-CORE-AI-10-FULL — 全周版（ライン上 spawn・グリッドから 1 周してグリッドへ戻るまで）。
+///
+/// TASK-2-4 Phase 2（Opus 監査ラウンド）で緑化: ヘアピン（s≈3230〜3315）の逸脱の真因は
+/// **ABS の無い車で `brake = 1.0` を踏み続けたことによる前輪ロック**（`slip_ratio = -1.0` が
+/// 約 75 m 継続・ロック中は操舵が効かずフルロックでも曲がらない）。`controller.rs` の
+/// スレッショルドブレーキング上限（荷重感度 + 前後・左右荷重移動込みのロック限界 × 0.95）で解消。
 #[test]
-#[ignore = "TASK-2-4 Phase 2（本ラウンド）: T3（s≈1561、K-1 の起票根拠）は K_HEADING/K_YAW_DAMP \
-            の速度スケジュール + delta_cs の beta_dot 位相進みで解消し、clean 0.6 は s=3100 まで \
-            worst excursion 0.000 m。**しかし s≈3300〜3310 のヘアピン進入で新規の逸脱を発見**: \
-            kappa_traj が s=3300 の 0.0085 から s=3305 で 0.037（R≈27 m）まで短い距離で急増する \
-            区間で steer_raw が s=3302.5〜3307 の間ほぼ全区間 -1.0（フルロック）に張り付き、\
-            heading_error はロック中も -0.28→-0.39 rad と拡大し続ける（=フルロックでも要求ヨー \
-            レートに追いつけない）。clean 0.6 で s=3310.5 に t=-7.585（limit -7.500 を 8.6 cm 超え）。\
-            T3 のような発散振動ではなく、進入区間全体（s=3250〜3300）で yaw_rate がカーブ曲率の \
-            増加に対し一貫して遅れる**応答不足**型で、T3 の対策（ゲインスケジュール/位相進み）を \
-            この区間にも適用したが解消しなかった。T-CORE-AI-11 でモデルスイープすると ほぼ全ての \
-            level/consistency/error_rate 組み合わせが同じ s≈3300〜3314 で同じ向きに逸脱する \
-            （決定論的・乱数非依存）。sim-line（速度プロファイル or 基準ライン）とこの区間の \
-            相互作用を疑うが、Allowed Files（controller.rs/planner.rs）の範囲では未解決。\
-            次ラウンドの診断対象として TODO.md に申し送る。"]
 fn t_core_ai_10_full() {
-    corridor_containment_check(None, S_VALIDATED_FULL_M);
+    corridor_containment_check(None, s_validated_full_m());
 }
 
 /// T-CORE-AI-10-OFFLINE — 実グリッド位置（`t = 0` = センターライン）から spawn したときの
@@ -569,9 +565,9 @@ fn t_core_ai_10_full() {
 ///
 /// TASK-2-4 Phase 2（本ラウンド）で解消: Pure Pursuit の `LOOKAHEAD_MIN_M` を 5.0 → 9.0 へ
 /// 引き上げ、発進直後の低速・大横オフセット（S/F ストレートで `t_at(GRID_S) ≈ +4.6 m`）による
-/// `delta_pp` 飽和 → スピンを防いだ。`S_VALIDATED_M`（= 3100・T3 を含む）まで worst excursion
-/// 0.000 m を確認。
+/// `delta_pp` 飽和 → スピンを防いだ。Opus 監査ラウンドで検証範囲を `S_VALIDATED_M` から
+/// 全周（[`s_validated_full_m`]）へ拡張（worst excursion 0.000 m）。
 #[test]
 fn t_core_ai_10_offline_spawn() {
-    corridor_containment_check(Some(0.0), S_VALIDATED_M);
+    corridor_containment_check(Some(0.0), s_validated_full_m());
 }

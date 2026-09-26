@@ -117,6 +117,15 @@ const MU_TRACTION: f64 = 1.316;
 /// 浅くして名前付き定数にする。実際の絞りはこの後の `move_towards`（`pedal_rate`）で
 /// レート制限されるので過渡は滑らか。
 const SLIDE_CUT_DEPTH: f64 = 0.5;
+/// スレッショルドブレーキング上限の安全率（`1.0` = 推定ロック限界ちょうど）。
+///
+/// TASK-2-4 Phase 2（Opus 監査ラウンド）: 本車（`gt_proto_a`）は ABS を持たず、
+/// `brake = 1.0` の制動トルクは中低速で前後軸とも縦グリップを超える。ヘアピン
+/// （s≈3230〜3315）と T3 進入（s≈1430〜1456）で実測すると前輪 `slip_ratio = -1.0`
+/// （完全ロック）が数十 m 続き、ロック中は操舵が効かず（フルロックでも曲がらない）
+/// 減速度も摩擦ピークから滑り摩擦へ落ちていた。[`Controller::brake_lock_cap`] は
+/// `sim-vehicle` と同じ荷重感度式で推定したロック限界にこの率を掛ける。
+const BRAKE_LOCK_MARGIN: f64 = 0.95;
 /// ダウンシフト後に許す最大回転数割合。
 const DOWNSHIFT_TARGET_FRACTION: f64 = 0.92;
 /// ダウンシフトを起動する現在ギアの回転数割合（これを下回ると 1 段落とす）。
@@ -155,6 +164,26 @@ pub struct Controller {
     peak_drive_torque: f64,
     /// 駆動系伝達効率 `0..1`。
     driveline_eff: f64,
+    // --- スレッショルドブレーキング上限（Opus 監査ラウンド）---
+    /// フロントのダウンフォース係数 × 前面投影面積 [m^2]。
+    cl_a_front: f64,
+    /// `brake = 1.0` のときのフロント軸（2 輪）の制動力 [N]。`sim-vehicle` の導出と同式。
+    brake_force_front: f64,
+    /// `brake = 1.0` のときのリア軸（2 輪）の制動力 [N]。
+    brake_force_rear: f64,
+    /// 重心高 / ホイールベース（縦荷重移動の比）。
+    cg_over_wheelbase: f64,
+    /// 重心高 [m]（横荷重移動）。
+    cg_height: f64,
+    /// フロント / リアのトレッド [m]（横荷重移動）。
+    track_front: f64,
+    track_rear: f64,
+    /// タイヤ基準摩擦係数 `mu0`（`sim-vehicle` の荷重感度式と同じ入力）。
+    mu0: f64,
+    /// 荷重感度係数 `LS`。
+    load_sensitivity: f64,
+    /// 荷重感度の基準 1 輪荷重 [N]（`None` なら静的 1 輪平均 = `sim-vehicle` と同じ既定）。
+    nominal_load: f64,
     // --- ドライバー由来のゲイン ---
     precision: f64,
     cornering_skill: f64,
@@ -193,6 +222,29 @@ impl Controller {
                 .map(|pt| pt[1])
                 .fold(0.0_f64, f64::max),
             driveline_eff: params.drivetrain.driveline_efficiency,
+            cl_a_front: params.aero.cl_front * params.aero.frontal_area,
+            brake_force_front: {
+                let b = &params.brakes;
+                let ref_bias = b.max_torque_front / (b.max_torque_front + b.max_torque_rear);
+                2.0 * b.max_torque_front * (b.bias_front / ref_bias) / params.tyre.front.radius
+            },
+            brake_force_rear: {
+                let b = &params.brakes;
+                let ref_bias = b.max_torque_front / (b.max_torque_front + b.max_torque_rear);
+                2.0 * b.max_torque_rear * ((1.0 - b.bias_front) / (1.0 - ref_bias))
+                    / params.tyre.rear.radius
+            },
+            cg_over_wheelbase: params.mass.cg_height / params.dimensions.wheelbase,
+            cg_height: params.mass.cg_height,
+            track_front: params.dimensions.track_front,
+            track_rear: params.dimensions.track_rear,
+            mu0: params.tyre.mu0,
+            load_sensitivity: params.tyre.load_sensitivity,
+            nominal_load: params
+                .tyre
+                .nominal_load
+                .unwrap_or(params.mass.total_kg * GRAVITY * 0.25)
+                .max(1.0),
             precision: model.precision().clamp(0.0, 1.0),
             cornering_skill: model.cornering_skill.clamp(0.0, 1.0),
             braking_skill: model.braking_skill.clamp(0.0, 1.0),
@@ -319,6 +371,9 @@ impl Controller {
         let trail = lerp(1.0, TRAIL_MIN, saturate(kappa_traj.abs() / KAPPA_TRAIL));
         let reduction = (1.0 - trail) * lerp(1.0, 0.6, self.braking_skill);
         brake_raw *= 1.0 - reduction;
+        // スレッショルドブレーキング（Opus 監査ラウンド）: 推定ロック限界を超えて踏まない。
+        // ミス（`mistake_brake_bias`）はこの上限の後に足す = ロックアップはミスとしてのみ起きる。
+        brake_raw = brake_raw.min(self.brake_lock_cap(stabilise.speed, kappa_traj));
         brake_raw = saturate(brake_raw + state.mistake_brake_bias);
 
         // スライド中のスロットル絞り。
@@ -392,6 +447,70 @@ impl Controller {
         } else {
             1.0
         }
+    }
+
+    /// スレッショルドブレーキング上限（Opus 監査ラウンド・PDC-3 の制動側の対）。
+    ///
+    /// ペダル `b` の制動力 `b·F_axle` が、その軸の縦グリップ
+    /// `μ(Fz)·Fz_axle`（`Fz_axle` = 静荷重 + ダウンフォース ± 縦荷重移動 `b·(F_f+F_r)·h/L`）を
+    /// 摩擦円で横力分だけ差し引いた残りを超えない最大の `b` を前後軸それぞれ求め、小さい方を返す。
+    /// 同じ軸の左右は同じ制動トルクなので、軸の限界は横荷重移動で荷重が抜ける**旋回内輪**で決まる
+    /// （トレイルブレーキング中に内側前輪だけがロックするのを実測で確認）。
+    ///
+    /// `μ(Fz)` は `sim-vehicle` と同じ荷重感度式 `mu0 / (1 + LS·(Fz_wheel/Fz_nom − 1))`。
+    /// 一定 μ（[`MU_TRACTION`] = 1 輪 1.5 倍荷重相当）だと、制動中に荷重が乗るフロント
+    /// （1 輪 ≈ 1.8 倍荷重・実効 μ ≈ 1.22）を過大評価してロックする（実測で確認）。
+    /// `μ` が `b` に依存するので固定点反復（決定的・3 回）で解く。空力抗力・エンジンブレーキは
+    /// 無視し、残差は [`BRAKE_LOCK_MARGIN`] で吸収する。`v_target` は変えない。
+    fn brake_lock_cap(&self, speed: f64, kappa_traj: f64) -> f64 {
+        let v = speed.max(0.0);
+        let q = 0.5 * AIR_DENSITY * v * v;
+        let front_frac = 1.0 - self.rear_weight_frac;
+        let weight = self.mass_kg * GRAVITY;
+        let front_base = weight * front_frac + q * self.cl_a_front;
+        let rear_base = weight * self.rear_weight_frac + q * self.cl_a_rear;
+        let f_total = self.brake_force_front + self.brake_force_rear;
+        let lat_force = self.mass_kg * v * v * kappa_traj.abs();
+
+        // 横荷重移動のロールモーメント `m·a_lat·h` [N·m]。軸ごとの 1 輪荷重変化は
+        // `モーメント × 軸配分 / トレッド`（ロール剛性配分は静的荷重配分で近似）。
+        let lat_transfer_total = lat_force * self.cg_height;
+
+        // 1 輪（荷重 `fz`・横力 `lat`）で縦方向に使えるグリップ [N]（荷重感度 + 摩擦円）。
+        let wheel_long_grip = |fz: f64, lat: f64| {
+            let fz = fz.max(0.0);
+            let mu =
+                self.mu0 / (1.0 + self.load_sensitivity * (fz / self.nominal_load - 1.0)).max(0.1);
+            let cap = mu * fz;
+            (cap * cap - lat * lat).max(0.0).sqrt()
+        };
+        // 軸の縦グリップ上限 = 弱い側（旋回内輪）が 1 輪分の制動力 `F_axle/2` を受け止められる限界 ×2。
+        // 同じ軸の左右は同じ制動トルクなので、内輪がロックした時点で軸としてロックが始まる。
+        let axle_long_grip = |axle_n: f64, lat_axle: f64, d_lat: f64| {
+            let axle_n = axle_n.max(1e-9);
+            let inner = 0.5 * axle_n - d_lat;
+            let outer = 0.5 * axle_n + d_lat;
+            let g_in = wheel_long_grip(inner, lat_axle * inner.max(0.0) / axle_n);
+            let g_out = wheel_long_grip(outer, lat_axle * outer.max(0.0) / axle_n);
+            2.0 * g_in.min(g_out)
+        };
+
+        let d_lat_f = lat_transfer_total * front_frac / self.track_front.max(0.1);
+        let d_lat_r = lat_transfer_total * self.rear_weight_frac / self.track_rear.max(0.1);
+        let mut b = 1.0_f64;
+        for _ in 0..3 {
+            let transfer = b * f_total * self.cg_over_wheelbase;
+            let grip_f = axle_long_grip(front_base + transfer, lat_force * front_frac, d_lat_f);
+            let grip_r = axle_long_grip(
+                rear_base - transfer,
+                lat_force * self.rear_weight_frac,
+                d_lat_r,
+            );
+            let cap_f = grip_f / self.brake_force_front.max(1e-9);
+            let cap_r = grip_r / self.brake_force_rear.max(1e-9);
+            b = saturate(cap_f.min(cap_r));
+        }
+        saturate(BRAKE_LOCK_MARGIN * b)
     }
 
     /// 現在速度から推定エンジン回転数 [rpm]。`gear` は前進ギア番号（1..=n）。
