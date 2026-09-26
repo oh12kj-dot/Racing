@@ -1,4 +1,7 @@
 import {test,expect} from '@playwright/test';
+import {buildEntrants} from '../src/config.js';
+import {createVehicleState,performanceFactors} from '../src/simulation/vehicle.js';
+import {createRaceSimulation} from '../src/simulation/race.js';
 import {
   createComponentDamage,
   applyImpactComponentDamage,
@@ -13,9 +16,12 @@ function collision({longitudinal=0,lateral=0,impactSpeed=8,impactImpulse=5000}={
     response:{normalLong:longitudinal,normalLat:lateral,impactSpeed,impactImpulse}
   };
 }
+function freshCar(){return createVehicleState(buildEntrants()[0],300,0);}
 
-test('DMG-01: fresh component damage state starts at zero',()=>{
-  expect(createComponentDamage()).toEqual({aero:0,powertrain:0,steering:0,brakes:0});
+test('DMG-01: fresh vehicle state starts with zero component damage',()=>{
+  const car=freshCar();
+  expect(car.incident.componentDamage).toEqual({aero:0,powertrain:0,steering:0,brakes:0});
+  expect(componentDamageHashValues(car.incident)).toEqual([0,0,0,0]);
 });
 
 test('DMG-02: longitudinal collision primarily damages aero and powertrain',()=>{
@@ -42,35 +48,41 @@ test('DMG-04: overlap separation without genuine impact cannot create component 
   expect(state.componentDamage).toEqual(createComponentDamage());
 });
 
-test('DMG-05: identical impacts produce identical authoritative hash values',()=>{
-  const a=incident(),b=incident(),{contact,response}=collision({longitudinal:.6,lateral:.8});
-  applyImpactComponentDamage(a,6.25,contact,response);
-  applyImpactComponentDamage(b,6.25,contact,response);
-  expect(a).toEqual(b);
-  expect(componentDamageHashValues(a)).toEqual(componentDamageHashValues(b));
-  b.componentDamage.brakes+=.001;
-  expect(componentDamageHashValues(a)).not.toEqual(componentDamageHashValues(b));
+test('DMG-05: authoritative race hash includes deterministic component damage state',()=>{
+  const a=createRaceSimulation(0xd0a005,{raceLaps:40});
+  const b=createRaceSimulation(0xd0a005,{raceLaps:40});
+  expect(a.stateHash()).toBe(b.stateHash());
+
+  a.cars[0].incident.componentDamage.brakes=.001;
+  expect(a.stateHash()).not.toBe(b.stateHash());
+
+  b.cars[0].incident.componentDamage.brakes=.001;
+  expect(a.stateHash()).toBe(b.stateHash());
 });
 
-test('DMG-06: each detailed component primarily affects its matching performance channel',()=>{
-  const aero=incident();aero.componentDamage.aero=.5;
-  const powertrain=incident();powertrain.componentDamage.powertrain=.5;
-  const steering=incident();steering.componentDamage.steering=.5;
-  const brakes=incident();brakes.componentDamage.brakes=.5;
+test('DMG-06: vehicle performance authority maps each component to its matching channel',()=>{
+  const aero=freshCar();aero.incident.componentDamage.aero=.5;
+  const powertrain=freshCar();powertrain.incident.componentDamage.powertrain=.5;
+  const steering=freshCar();steering.incident.componentDamage.steering=.5;
+  const brakes=freshCar();brakes.incident.componentDamage.brakes=.5;
 
-  const af=componentPerformanceFactors(aero);
+  const af=performanceFactors(aero);
   expect(af.aero).toBeLessThan(1);expect(af.drag).toBeGreaterThan(1);
   expect(af.drive).toBe(1);expect(af.steering).toBe(1);expect(af.brake).toBe(1);
 
-  const pf=componentPerformanceFactors(powertrain);
+  const pf=performanceFactors(powertrain);
   expect(pf.drive).toBeLessThan(1);expect(pf.top).toBeLessThan(1);
   expect(pf.aero).toBe(1);expect(pf.steering).toBe(1);expect(pf.brake).toBe(1);
 
-  const sf=componentPerformanceFactors(steering);
+  const sf=performanceFactors(steering);
   expect(sf.steering).toBeLessThan(1);
   expect(sf.aero).toBe(1);expect(sf.drive).toBe(1);expect(sf.brake).toBe(1);
 
-  const bf=componentPerformanceFactors(brakes);
+  const bf=performanceFactors(brakes);
   expect(bf.brake).toBeLessThan(1);
   expect(bf.aero).toBe(1);expect(bf.drive).toBe(1);expect(bf.steering).toBe(1);
+
+  // The pure mapping remains equivalent to the vehicle authority before
+  // mechanical derate/hybrid modifiers are applied.
+  expect(componentPerformanceFactors(aero.incident).aero).toBe(af.aero);
 });
