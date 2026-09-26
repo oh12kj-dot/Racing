@@ -24,6 +24,25 @@ async function expectTelemetryInViewport(page){
   expect(layout.telemetry.bottom).toBeLessThanOrEqual(layout.controls.top+.5);
 }
 
+async function expectEnergyTelemetryReadable(page){
+  const layout=await page.evaluate(()=>{
+    const line=[...document.querySelectorAll('#telemetry .muted')].find(node=>node.textContent?.trim().startsWith('ERS '));
+    if(!line)return null;
+    const rect=line.getBoundingClientRect();
+    const style=getComputedStyle(line);
+    return{
+      text:line.textContent?.trim()||'',
+      width:rect.width,
+      height:rect.height,
+      fontSize:parseFloat(style.fontSize)||11
+    };
+  });
+  expect(layout).not.toBeNull();
+  expect(layout.text).toContain('ERS ');
+  expect(layout.width).toBeGreaterThan(170);
+  expect(layout.height).toBeLessThanOrEqual(layout.fontSize*1.55);
+}
+
 test('iPhone WebKit boots, pauses/resumes and keeps touch controls usable',async({page})=>{
   await boot(page);
   expect(await page.evaluate(()=>matchMedia('(pointer:coarse)').matches)).toBeTruthy();
@@ -59,10 +78,12 @@ test('iPhone hybrid telemetry stays inside the safe HUD area in portrait and lan
   await page.locator(`.lb-row[data-id="${hybridId}"]`).tap();
   await expect(page.locator('#telemetry')).toContainText('ERS 63% · DEFEND · HARVEST 73% · RSV 24%');
   await expectTelemetryInViewport(page);
+  await expectEnergyTelemetryReadable(page);
 
   await page.setViewportSize({width:844,height:390});
   await page.waitForTimeout(100);
   await expectTelemetryInViewport(page);
+  await expectEnergyTelemetryReadable(page);
 });
 
 test('iPhone landscape resize updates camera aspect and keeps 24 car meshes',async({page})=>{
