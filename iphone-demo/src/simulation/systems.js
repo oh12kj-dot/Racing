@@ -61,6 +61,11 @@ function defenseEnergyRequested(car){
   return !attackEnergyRequested(car)&&!!car.racecraft?.defenseUsed;
 }
 
+function energyDeploymentPermitted(car){
+  const phase=car.pit?.phase;
+  return phase==null||phase==='TRACK'||phase==='PIT_APPROACH';
+}
+
 function remainingRaceLaps(car){
   const precise=car.strategy?.remainingDistanceLaps;
   if(Number.isFinite(precise))return Math.max(0,precise);
@@ -119,7 +124,7 @@ function updateEnergyStrategy(car,s,dt,reserveFraction){
 }
 
 function energyDeploymentRequested(car){
-  if(car.cautionNoPass)return false;
+  if(!energyDeploymentPermitted(car)||car.cautionNoPass)return false;
   if(remainingRaceLaps(car)<=1)return true;
   return attackEnergyRequested(car)||defenseEnergyRequested(car);
 }
