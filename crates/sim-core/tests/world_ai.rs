@@ -454,13 +454,6 @@ fn t_core_ai_11a_model_sweep_mistake_free() {
 /// 0 m であることが「この逸脱はミスに起因する」ことの反実仮想的な証明。代わりに要求するのは
 /// **帰結からの回復**: (a) 3 周完走、(b) 1 回の limits 外エピソードが [`REJOIN_MAX_S`] 以内に終わる。
 #[test]
-#[ignore = "TASK-2-4 Phase 2 残り（PDC-9/10/13・Opus 2026-09-26 第 4 ラウンド）: 7/27 が 10 s 以内に \
-            limits 内へ戻れない（PDC-13 = 制動上限の per-wheel split-μ で 10 → 7）。残りの起点は \
-            (F-6) 横方向追従の系統誤差 — 基準ラインから ±2〜6 m 外れて走り、s≈3460〜3500 では \
-            ミス無しでも limits まで 0.1 m しか余裕がない（3/7 がここ）、(F-7) クリーンなヘアピン \
-            トレイルブレーキングで内側前輪が約 0.8 s ロックする（PDC-12 のロック解放を入れると 11a が \
-            13/27 割れる）、T3 手前のミス由来ロック → スピン。トラクション側 H3 は F-6 の余裕ゼロ区間で \
-            11a を 5 cm 割るため保留。limits 外の速度上限（Required Change 2）は計測で不採用。TODO.md 参照。"]
 fn t_core_ai_11b_model_sweep_mistake_recovery() {
     let cases = sweep_cases(0.5);
     let results = run_sweep(&cases);

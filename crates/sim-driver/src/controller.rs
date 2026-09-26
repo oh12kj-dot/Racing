@@ -150,6 +150,51 @@ const LOW_PRECISION_STEER_RATE_FLOOR: f64 = 5.1;
 /// `consistency = 0` のときの操舵精度ノイズの標準偏差（正規化操舵 `-1..1` に対して）。
 const STEER_NOISE_MAX: f64 = 0.02;
 
+/// 制動 / 駆動の上限（[`Controller::brake_lock_cap`] / [`Controller::traction_throttle_cap`]）が
+/// 摩擦円の横成分と横荷重移動に使う曲率 [1/m]。
+///
+/// 両上限は「いまタイヤが横に負担している力」を差し引いて縦に使える残りを求める。計画曲率
+/// `kappa_traj` はライン上を計画速度で走っているときだけその力を表す。ラインから外れて戻る /
+/// ヘディング誤差を修正する / スライドしている間は、車体が実際に回っているヨーレート `r` から
+/// `a_lat ≈ v·r` の方が大きく、計画曲率で見積もると縦の残りを過大評価する（TASK-2-4 Phase 4:
+/// ヘアピン出口で `κ_traj` 由来 6 m/s² に対し `v·r` = 16.5 m/s²、リアの摩擦円は横で既に飽和して
+/// いたのにトラクション上限は 0.57 を許し、内側後輪がスリップ率 9 まで空転してスピンした）。
+/// 横加速度が大きい方の曲率（`r / v`）を返す。符号は内輪 / 外輪の写像に使うので保つ。
+/// 知覚は安定化経路（前庭感覚 = 体に掛かる横 G）のみ。
+fn load_curvature(speed: f64, yaw_rate: f64, kappa_traj: f64) -> f64 {
+    let v = speed.abs();
+    if v < 1.0 {
+        return kappa_traj;
+    }
+    let kappa_yaw = yaw_rate / v;
+    if kappa_yaw.abs() > kappa_traj.abs() {
+        kappa_yaw
+    } else {
+        kappa_traj
+    }
+}
+
+/// ダウンフォースの前後軸への配分（`cl·A` 換算 [m^2]、`(front, rear)`）。
+///
+/// `sim-vehicle::aero` はフロント / リアのダウンフォースを**圧力中心**（重心から `cop_front_x` /
+/// `cop_rear_x`、前方が正）に作用させる。軸荷重はその力を重心前後の軸位置
+/// （前軸 `+a = L·(1 − d_f)`・後軸 `−b = −L·d_f`、`d_f` = 静的前荷重配分）へモーメントで配分したもの:
+/// 力 `F` が `x` に作用すると前軸 `F·(x + b)/L`、後軸 `F·(a − x)/L`。
+/// `cl_front·A` / `cl_rear·A` をそのまま軸荷重とみなすと `gt_proto_a` では前軸を 21 % 過大
+/// （2.05 → 1.69 m²）、後軸を 11 % 過小（3.02 → 3.38 m²）に見積もる。
+fn aero_axle_cl_a(params: &VehicleParams) -> (f64, f64) {
+    let l = params.dimensions.wheelbase.max(1e-6);
+    let d_f = params.mass.distribution_front.clamp(0.0, 1.0);
+    let a = l * (1.0 - d_f);
+    let b = l * d_f;
+    let aero = &params.aero;
+    let f_front = aero.cl_front * aero.frontal_area;
+    let f_rear = aero.cl_rear * aero.frontal_area;
+    let front = (f_front * (aero.cop_front_x + b) + f_rear * (aero.cop_rear_x + b)) / l;
+    let rear = (f_front * (a - aero.cop_front_x) + f_rear * (a - aero.cop_rear_x)) / l;
+    (front, rear)
+}
+
 /// H3（PDC-13）: 4 輪それぞれの位置の路面 grip 倍率（`1.0` = 舗装）。`+t` が左。
 struct WheelGrip {
     front_left: f64,
@@ -185,6 +230,8 @@ pub struct Controller {
     peak_drive_torque: f64,
     /// 駆動系伝達効率 `0..1`。
     driveline_eff: f64,
+    /// LSD のパワー側バイアス（`sim-vehicle::distribute_lsd` と同じ入力。H3 トラクション側）。
+    lsd_power_ratio: f64,
     // --- スレッショルドブレーキング上限（Opus 監査ラウンド）---
     /// フロントのダウンフォース係数 × 前面投影面積 [m^2]。
     cl_a_front: f64,
@@ -238,7 +285,7 @@ impl Controller {
             tyre_radius: 0.5 * (params.tyre.front.radius + params.tyre.rear.radius),
             mass_kg: params.mass.total_kg,
             rear_weight_frac: (1.0 - params.mass.distribution_front).clamp(0.0, 1.0),
-            cl_a_rear: params.aero.cl_rear * params.aero.frontal_area,
+            cl_a_rear: aero_axle_cl_a(params).1,
             peak_drive_torque: params
                 .engine
                 .torque_curve
@@ -246,7 +293,8 @@ impl Controller {
                 .map(|pt| pt[1])
                 .fold(0.0_f64, f64::max),
             driveline_eff: params.drivetrain.driveline_efficiency,
-            cl_a_front: params.aero.cl_front * params.aero.frontal_area,
+            lsd_power_ratio: params.drivetrain.lsd_power_ratio.clamp(0.0, 0.499),
+            cl_a_front: aero_axle_cl_a(params).0,
             brake_force_front: {
                 let b = &params.brakes;
                 let ref_bias = b.max_torque_front / (b.max_torque_front + b.max_torque_rear);
@@ -414,7 +462,12 @@ impl Controller {
         // スロットル上限を絞る。**`v_target` には一切触らない**（Planner + SpeedProfile が
         // 唯一の権限。ここは「いま何割開けてよいか」だけを決める）。
         // バンク / 標高勾配の補正はしない（二重補正禁止。SpeedProfile の担当）。
-        throttle_raw = throttle_raw.min(self.traction_throttle_cap(stabilise.speed, kappa_traj));
+        let kappa_load = load_curvature(stabilise.speed, stabilise.yaw_rate, kappa_traj);
+        throttle_raw = throttle_raw.min(self.traction_throttle_cap(
+            stabilise.speed,
+            kappa_load,
+            self.drive_axle_grip(&grip),
+        ));
 
         // ★構造的保証: ペダルもレート制限を通す。
         let pedal_rate = lerp(3.0, 8.0, self.precision); // [1/s]
@@ -449,13 +502,13 @@ impl Controller {
     /// 縦方向の残り（横力を摩擦円で差し引いたあと）を超えるとき、その比で
     /// スロットル上限を返す（超えないなら `1.0`）。**グリップは低めに、駆動力は
     /// ピークトルクで高めに見積もる**（保守側）。`v_target` は変えない。
-    fn traction_throttle_cap(&self, speed: f64, kappa_traj: f64) -> f64 {
-        let v = speed.max(0.0);
+    fn traction_throttle_cap(&self, speed: f64, kappa_traj: f64, surface_grip: f64) -> f64 {
+        let v = speed.abs();
 
         // リア軸で使えるグリップ [N]（静荷重 + ダウンフォース）。
         let rear_static = self.mass_kg * GRAVITY * self.rear_weight_frac;
         let rear_downforce = 0.5 * AIR_DENSITY * v * v * self.cl_a_rear;
-        let rear_grip = MU_TRACTION * (rear_static + rear_downforce);
+        let rear_grip = MU_TRACTION * surface_grip * (rear_static + rear_downforce);
 
         // 軌跡追従に要る横力のうちリア軸の負担分（静的配分で近似）。
         let lat_force = self.mass_kg * v * v * kappa_traj.abs();
@@ -564,6 +617,17 @@ impl Controller {
         saturate(BRAKE_LOCK_MARGIN * b)
     }
 
+    /// H3 トラクション側（TASK-2-4 Phase 4）: 駆動軸（後軸）の実効路面 grip 倍率。
+    ///
+    /// `sim-vehicle::distribute_lsd` は弱い側の車輪にも最低 `T·(1/2 − bias)` を配るので、弱い側が
+    /// 空転し始める軸トルクは `g_min / (1 − 2·bias)` 相当、両輪の合計で使えるのは平均 `(g_l+g_r)/2`
+    /// 相当 — 小さい方が軸の上限（第 4 ラウンド記録の式。`gt_proto_a` の bias 0.45 では実質平均）。
+    fn drive_axle_grip(&self, grip: &WheelGrip) -> f64 {
+        let avg = 0.5 * (grip.rear_left + grip.rear_right);
+        let weak = grip.rear_left.min(grip.rear_right);
+        avg.min(weak / (1.0 - 2.0 * self.lsd_power_ratio))
+    }
+
     /// H3（PDC-13）: 4 輪それぞれの位置の路面 grip 倍率（`SurfaceKind::properties().grip_multiplier`）。
     ///
     /// 車輪位置は安定化経路の `(s, t)`（重心）から、軸は `s ± 重心–軸距離`、左右は `t ± トレッド/2`
@@ -665,5 +729,58 @@ mod tests {
         // 右カーブでは写像が反転する。
         let r_inner_kerb = c.brake_lock_cap(25.0, -kappa, &grip(1.0, 0.9, 1.0, 0.9));
         assert!((r_inner_kerb - inner_kerb).abs() < 1e-12);
+    }
+
+    /// TASK-2-4 Phase 4: トラクション上限は「実際に回っている」横負荷と駆動輪の路面で割り引く。
+    /// 11b の level 0.3 / seed 3 ヘアピン出口の実測値（v ≈ 15.7 m/s、r ≈ 1.05 rad/s、κ_traj ≈ 0.012）。
+    #[test]
+    fn traction_cap_uses_actual_yaw_load_and_drive_surface() {
+        let params = VehicleParams::from_json_str(SPEC_JSON).expect("spec loads");
+        let c = Controller::new(&DriverModel::balanced(), &params);
+        let (v, r, kappa) = (15.7, -1.05, -0.012);
+        // 計画曲率だけならまだ半分以上開けてよいと見積もる（旧挙動）…
+        let planned = c.traction_throttle_cap(v, kappa, 1.0);
+        assert!(planned > 0.4, "planned-curvature cap {planned}");
+        // …が、ヨーレート由来の横 G ではリアの摩擦円が横で埋まっており、ほぼ開けられない。
+        let k_load = load_curvature(v, r, kappa);
+        assert!(
+            (k_load - r / v).abs() < 1e-12,
+            "sign/magnitude of yaw curvature"
+        );
+        let actual = c.traction_throttle_cap(v, k_load, 1.0);
+        assert!(
+            actual < 0.1 * planned,
+            "yaw-load cap {actual} vs planned {planned}"
+        );
+        // ライン上（ヨーレートが計画どおり）では計画曲率がそのまま使われる（11a を変えない）。
+        assert_eq!(load_curvature(40.0, 40.0 * 0.01, 0.012), 0.012);
+        // 静止付近は計画曲率へ戻す（ゼロ割回避）。
+        assert_eq!(load_curvature(0.5, 2.0, 0.003), 0.003);
+        // 駆動輪が芝（0.45）なら上限はその分下がる。LSD bias 0.45 では片輪芝 ≈ 左右平均。
+        let straight = c.traction_throttle_cap(20.0, 0.0, 1.0);
+        let grass = c.traction_throttle_cap(20.0, 0.0, 0.45);
+        assert!(
+            grass < 0.5 * straight + 1e-9,
+            "grass {grass} vs asphalt {straight}"
+        );
+        let half = c.drive_axle_grip(&grip(1.0, 1.0, 1.0, 0.45));
+        assert!((half - 0.725).abs() < 1e-9, "split-mu drive grip {half}");
+    }
+
+    /// TASK-2-4 Phase 4: ダウンフォースの軸配分は圧力中心から（`sim-vehicle::aero` と同じ作用点）。
+    #[test]
+    fn aero_axle_split_matches_pressure_centres() {
+        let params = VehicleParams::from_json_str(SPEC_JSON).expect("spec loads");
+        let (f, r) = aero_axle_cl_a(&params);
+        let total = (params.aero.cl_front + params.aero.cl_rear) * params.aero.frontal_area;
+        assert!(
+            (f + r - total).abs() < 1e-9,
+            "split must conserve total downforce"
+        );
+        // gt_proto_a: 前 1.691 m² / 後 3.379 m²（`cl·A` 直読みの 2.048 / 3.023 ではない）。
+        assert!(
+            (f - 1.691).abs() < 5e-3 && (r - 3.379).abs() < 5e-3,
+            "front {f} rear {r}"
+        );
     }
 }
