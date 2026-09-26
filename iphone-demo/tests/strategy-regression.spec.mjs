@@ -27,3 +27,28 @@ test('STRATEGY: remaining laps follows the authoritative current-lap index',()=>
   car.lap=7;expect(evaluatePitStrategy(car,track,8).remainingLaps).toBe(1);
   car.lap=8;expect(evaluatePitStrategy(car,track,8).remainingLaps).toBe(0);
 });
+
+test('STRATEGY: fuel projection follows fractional remaining distance within the current lap',()=>{
+  const track={total:10000,wrapS(s){return((s%this.total)+this.total)%this.total;}};
+  const car=createVehicleState(buildEntrants()[0],7500,2);
+  car.pit.served=true;
+  car.systems.fuel=20.5;
+
+  let decision=evaluatePitStrategy(car,track,8);
+  const expectedLate=car.systems.burnPerKm*(track.total/1000)*5.25*1.08;
+  expect(decision.remainingLaps).toBe(6);
+  expect(decision.remainingDistanceLaps).toBeCloseTo(5.25,6);
+  expect(decision.projectedFuel).toBeCloseTo(expectedLate,6);
+  expect(decision.projectedFuel).toBeLessThan(car.systems.fuel);
+  expect(decision.reason).toBe(PIT_REASON.NONE);
+  expect(decision.request).toBeFalsy();
+
+  car.s=1000;
+  decision=evaluatePitStrategy(car,track,8);
+  const expectedEarly=car.systems.burnPerKm*(track.total/1000)*5.9*1.08;
+  expect(decision.remainingDistanceLaps).toBeCloseTo(5.9,6);
+  expect(decision.projectedFuel).toBeCloseTo(expectedEarly,6);
+  expect(decision.projectedFuel).toBeGreaterThan(car.systems.fuel);
+  expect(decision.reason).toBe(PIT_REASON.FUEL);
+  expect(decision.request).toBeTruthy();
+});
