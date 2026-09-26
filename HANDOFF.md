@@ -1,6 +1,23 @@
 # HANDOFF.md — 引き継ぎ資料
 
-Last updated: 2026-09-26（T-CORE-AI-11b 診断 3 ラウンド → BLOCKED BY ARCHITECTURE）/ **T-CORE-AI-11b
+Last updated: 2026-09-26（Opus 5・第 3 ラウンド裁定後）/ **Sonnet の T-CORE-AI-11b `BLOCKED BY ARCHITECTURE`（`6a59cd1`）は
+棄却。** Opus が独立に再現・計測すると「物理の天井（ピークスリップ超過後は戻らない）」ではなく、(1) **`sim-track::Track::world_to_track`
+の Newton 反復が `g'≈1` 仮定でコーナー外側 `|t| > R` に発散**（ヘアピン外 25〜60 m で再埋め込み誤差 0.6〜12 m → `TrackGround` の
+接地平面が車輪ごとに食い違い、コースアウトした車が 4 輪中 0〜1 輪しか接地しない。Sonnet ② の「何を入れても向きが変わらない」の正体）、
+(2) **ヘアピン手前の直線制動で前輪がロックし 2.5 s 解放されない**（MF の縦滑り摩擦はピークの 0.63 でロックが自己保持・Controller に
+ロック解放が無い）、(3) **H3（制動/トラクション上限が路面 μ を見ない。Sonnet は単離していなかった — 単独で 10→9/27）**の重なり。
+横力はピーク後もほぼ落ちない（α=0.5/0.65 rad で 0.97/0.95）。**PDC-10（`world_to_track` の歩幅を真のヤコビアン `1−κt` で割る・
+凍結 sim-track・Architect 承認）を land** + 回帰テスト `track_world_to_track_converges_outside_tight_corner`（アブレーションで旧式を検出）。
+実験（未 land）: PDC-10 + H3（車体中心）で 11b 7/27・ヘアピン外 18〜20 m から 7.9/8.3 s で復帰、車幅内最小 grip で 3/27（11a 1/27 割れ）。
+H3 は凍結・運動学プラントの `t_ai_07` を 0.083 s < 0.1 s で割るので land せず、**PDC-11**（実物理 T-AI-07R が緑になったら運動学
+`t_ai_07` を退役）で順序を解く。(b) タイヤ調整・(c) `REJOIN_MAX_S` 緩和は不採用（10 s は実測で達成可能）、(a) は**車輪ロック
+（縦スリップ）を安定化経路で知覚**に限定して条件付き承認（**PDC-12**）。`t_core_ai_11b` は **10/27 のまま ignore・TASK-2-4 Phase 2 の
+受け入れ条件として維持**（文言のみ更新）。`cargo test --workspace --release` = **188 passed / 0 failed / 3 ignored** / clippy 0 /
+fmt clean / no-default-features / wasm32 OK。`sim-driver` は無変更。詳細は `TODO.md`「## TASK-2-4 Phase 2 — Opus 5 裁定（第 3 ラウンド）」。
+**次: 同節 NEXT SONNET TASK = Part 1 T-AI-01R/05R/07R（テストのみ）→ Part 2 運動学 `t_ai_07` 退役（PDC-11）→ Part 3 11b（H3 split-μ・
+limits 外の速度計画・必要なら PDC-12 のロック解放）→ Phase 3。**
+
+Last updated (previous, Sonnet 5): 2026-09-26（T-CORE-AI-11b 診断 3 ラウンド → BLOCKED BY ARCHITECTURE）/ **T-CORE-AI-11b
 （コース外からの復帰）は 3 ラウンド試行（aim 点の近点化+速度上限／先読み固定+ヨーレート・摩擦上限の
 ライン依存ゼロ化／ヘディング誤差ベースの早期発火）のいずれも 27/27 に届かず、③ でも主要指標
 （失敗数）がベースライン 10/27 を下回れなかった（12/27）ため `BLOCKED BY ARCHITECTURE` として

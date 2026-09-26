@@ -339,7 +339,16 @@ impl Track {
             if g.abs() <= 1.0e-9 {
                 break;
             }
-            s = self.wrap_s(s + clamp(-g, -max_step, max_step));
+            // PDC-10（Opus 2026-09-26）: 真のヤコビアン `g'(s) = 1 - κ·t` で割る。
+            // 旧実装は `g' ≈ 1`（センターライン近傍でのみ妥当）で、急コーナーの**外側**
+            // （左カーブ κ > 0 で t < 0 など、κ·t < 0）では反復の誤差倍率が `|κ·t|` になり、
+            // `|t| > R`（ヘアピン R≈13〜19 m の外 20 m 超）で発散・振動していた（再埋め込み誤差
+            // 0.6〜12 m・`TrackGround` の接地平面が車輪ごとに食い違い 4 輪中 0〜1 輪しか接地しない）。
+            // 内側で曲率中心に近づく（κ·t → 1）と `g'` → 0 で不定になるので下限 0.2 で抑える
+            // （方向は正しいまま歩幅が小さくなるだけ。粗探索 + `max_step` の外枠は従来どおり）。
+            let t_est = (p - f.position).dot(f.lateral);
+            let jac = (1.0 - f.curvature * t_est).max(0.2);
+            s = self.wrap_s(s + clamp(-g / jac, -max_step, max_step));
         }
         let f = self.frame_at(s);
         let t = (p - f.position).dot(f.lateral);

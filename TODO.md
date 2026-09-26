@@ -5,10 +5,12 @@
 
 Last updated: 2026-09-26
 Current Phase: **Phase 2 進行中**。TASK-2-1 `4710d63` / 2-2 `ac80e03` / 2-3 `1fd08ca` / **2-4 Phase 1 `54e050a`（Opus APPROVED）** /
-**2-4 Phase 2 部分: `72ad7c9`（Sonnet・Opus APPROVED）+ Opus 修正ラウンド（PDC-8・19/51）+ Sonnet 分類ラウンド
-（ヘアピン脱出の低 precision ステアリングレート根治・19/51→16/51、残り 16/51 は PROPOSED DESIGN CHANGE 未裁定）**。
-次: TASK-2-4 Phase 2 §2b の PROPOSED DESIGN CHANGE 裁定待ち（「## TASK-2-4 Phase 2 — 残り 19/51 の分類・ヘアピン脱出の根治」）→
-裁定後 T-CORE-AI-03 / T-AI-01R/05R/07R / Phase 3 ／ 並行で TASK-05-1 UE5 M3/M4。
+**2-4 Phase 2: PDC-8/9 + T-CORE-AI-03 緑・`t_core_ai_11a` 27/27 緑。`t_core_ai_11b`（コース外からの復帰）は Sonnet の
+BLOCKED BY ARCHITECTURE（`6a59cd1`）を Opus が棄却 — 「物理の天井」ではなく `world_to_track` の発散（PDC-10 で land）・
+前輪ロックの自己保持・路面 μ を見ない上限の重なり。11b は 10/27 のまま ignore・受け入れ条件は維持。**
+次: 「## TASK-2-4 Phase 2 — Opus 5 裁定（第 3 ラウンド）」の NEXT SONNET TASK（Part 1 T-AI-01R/05R/07R →
+Part 2 運動学 `t_ai_07` 退役（PDC-11）→ Part 3 11b（H3 split-μ・limits 外速度計画・必要なら PDC-12））→ Phase 3 ／
+並行で TASK-05-1 UE5 M3/M4。
 
 ---
 
@@ -1669,6 +1671,284 @@ T-CORE-AI-09                                              → 1.217 ms/tick（�
   `≈0.743` にちょうど収まる値として選んだ。Phase 3 で運動学プラント（`t_ai_07` を含む
   `sim-driver/tests/driver.rs` の T-AI-01〜08）を廃止し実物理版へ移行したら、この分岐点の
   拘束が外れるので、`FLOOR` を再評価してよい（上げても `t_ai_07` を気にする必要がなくなる）。
+
+---
+
+## TASK-2-4 Phase 2 — Opus 5 裁定（第 3 ラウンド）: T-CORE-AI-11b の BLOCKED BY ARCHITECTURE を棄却・PDC-10 land（2026-09-26）
+
+**RULING: BLOCKED BY ARCHITECTURE（`6a59cd1`）の結論「物理層の限界（タイヤがピークスリップ角を超えると
+数秒戻らない）」は棄却する。** 独立に再現・計測すると、Sonnet が「物理の天井」と読んだ現象は
+(1) **`sim-track::Track::world_to_track` の Newton 反復の発散**（ヘアピン外側 20 m 超でタイヤが接地を失う
+＝ワールドモデルの欠陥）、(2) **ヘアピン手前の直線制動で前輪がロックし、そのまま解放されない**
+（Controller にロック解放の振る舞いが無い）、(3) **H3（路面 μ を見ない制動/トラクション上限）**の 3 つの
+具体的な欠陥の重なりだった。タイヤモデルの横力はピーク後もほとんど落ちない（下記）。
+**選択肢 (b)（`tyre.rs` のピーク後特性を調整）と (c)（`REJOIN_MAX_S` の見直し）は不採用。(a) は範囲を
+絞って条件付き承認（PDC-12）。** 新規に **PDC-10（`world_to_track` のヤコビアン修正・凍結 `sim-track`）を
+Architect 承認・本ラウンドで land**。`t_core_ai_11b` は **ignore のまま**（10/27・数値は下記）で、
+**TASK-2-4 Phase 2 の受け入れ条件からは外さない**（降格・閾値緩和なし）。
+
+人間不在のため本ラウンドも Opus が最終判断者（ユーザー指示）。凍結ファイルの変更承認は下記 PDC の形で記録する。
+
+### 監査対象・スコープ
+
+- ワークツリーは当初 `ead1032`（古いブランチ先端・`6a59cd1` の祖先）に置かれていた →
+  `git merge --ff-only 6a59cd1` で前進（履歴の破棄・force なし）。
+- `6a59cd1` は docs のみ（`HANDOFF.md` / `TODO.md`）。`git diff 10cf1a0 6a59cd1 -- crates/` 空。申告どおり。
+- **ベースライン再現**: `t_core_ai_11b` = **10/27 失敗**（ケース・起点 s とも Sonnet の表と一致）。
+
+### 独立検証で分かったこと（Opus が一時 `diagtmp` テストで計測・全て削除済み）
+
+**F-1（新規・決定的）: ヘアピン外側でワールド座標 → トラック座標の写像が発散し、タイヤが接地を失う。**
+`Track::world_to_track` の Newton 反復は `g'(s) ≈ 1` を仮定する（`closest_s` のコメントどおり「曲率と偏差が
+小さい領域で妥当」）。真のヤコビアンは `g'(s) = 1 − κ·t` で、コーナー外側（`κ·t < 0`）では誤差倍率が
+`|κ·t|` になり `|t| > R` で発散・振動する。Aoyama のヘアピン（s≈3310: R=13.2 m、s≈3325/3340: R≈19 m）で
+`frame.position + lateral·t` を逆写像した再埋め込み誤差:
+
+| `t` [m]（外側） | −15 | −20 | −25 | −30 | −40 | −60 |
+|---|---|---|---|---|---|---|
+| s=3310（R 13.2） | 0.010 | 0.123 | 0.839 | 3.746 | 6.471 | 7.200 |
+| s=3325（R 19.2） | 0.002 | 0.088 | 0.592 | 2.849 | 7.911 | 12.293 |
+
+（T3 R=62.7 m・直線では誤差 0。）`TrackGround::probe` はこの座標の路面平面で接地を判定するので、車輪ごとに
+違う `s` の平面を引き、ケース A（0.3/0.5/1）では `t≈−23 m` 以降 **4 輪中 0〜1 輪しか接地していない**
+（`grounded` を 10 s 観測。`grip_usage = 0.00` が続く）。**Sonnet ② の「ステア入力を弱めても強めても
+`heading_error` が 1 秒以上ほぼ不変」はこれで説明がつく — 接地していないタイヤは何を入れても力を出さない。**
+テストが報告する「85〜124 m 外」も同じ発散した座標で測っており水増しされていた（修正後 44〜58 m）。
+
+**F-2（Sonnet の「ピーク後は戻らない」の反証）: タイヤモデルに横力の崩落は無い。**
+`gt_proto_a` は `By=9, Cy=1.35`（`alpha_peak = tan(π/2/Cy)/By ≈ 0.259 rad`）。`Fy/Fy_peak = sin(Cy·atan(By·α))`
+は α=0.50 rad で **0.968**、α=0.65 rad で **0.949**。「スリップ角 0.47〜0.65 rad = ピークを超えたので横力が
+出ない」は定量的に成り立たない。**PDC-10 を当てた状態でケース A を再計測すると、芝の上・左フルロックで
+車体の向き（接線比）は −0.40 → 0.00 rad へ約 2.5 s で戻る**（接地 4/4）。その後の失敗は 1 速・スロットル
+0.3〜0.5 で後輪が空転（`slip_ratio` +0.8 → +7）してスピンする＝ H3（トラクション上限が舗装 μ 前提）。
+
+**F-3（新規・ケース A の本当の起点）: ヘアピン手前の直線制動で前輪がロックし、2.5 s 解放されない。**
+ケース A は芝に出る 70 m 手前、**s≈3228〜3255 の直線・舗装・操舵ほぼ 0** で `brake≈0.66〜0.69` のまま
+前右 → 前左の順に `slip_ratio = −1.00` になり、以後ターンイン・縁石・芝まで **約 2.5 s ロックしたまま**
+（`brake` は 0.42〜0.69 を踏み続ける）。ミスの `mistake_brake_bias` はこの時点で ≈ +0.01（PDC-8 の
+`BRAKE_LOCK_MARGIN = 0.95` の余裕 5 % を食う大きさ）。ロックが自己保持するのはタイヤの縦特性による:
+`Bx=12, Cx=1.65` で `κ = −1`（完全ロック）の縦力は `sin(1.65·atan 12)` = **ピークの 0.63**。ロック限界の
+0.95 倍で踏んでいる制動トルクは、ロック後の摩擦トルク（0.63）では押し返せない。**実際のドライバーはロックを
+音・振動・ステアの軽さで感じて即座に抜く**が、Controller にはその振る舞いも、それを知る入力も無い。
+PDC-8 の注記「ロックアップはミスとしてのみ起きる」は正しいが、**ミスの帰結から戻る手段（ロック解放）が
+欠けていた**。これが PDC-9 の「帰結からの回復」の中身。
+
+**F-4（H3 は単独で効く — Sonnet は単離していなかった）。** Sonnet の ① は H3 を aim 点の近点化・`v_target`
+12 m/s 上限と**同時に**入れて 13/27（悪化）と測っており、H3 単独の寄与は測られていない。Opus が単離して計測:
+
+| 構成（全て 11a / 11b を同一コードで再実行） | 11b 失敗 | 11a | 凍結 `t_ai_07` |
+|---|---|---|---|
+| ベースライン（`6a59cd1` = `10cf1a0`） | 10/27 | 27/27 | 緑 |
+| **PDC-10 のみ（本コミットで land）** | **10/27**（最悪 44〜58 m・156 m は T3 系） | **27/27** | **緑** |
+| H3 のみ（`surface_grip` を車体中心 1 点で・両上限に掛ける） | 9/27 | 27/27 | — |
+| PDC-10 + H3（車体中心） | **7/27** | 27/27 | **赤（0.083 s < 0.1 s）** |
+| H3（車幅 ±0.85 m の最小 grip）のみ | 4/27 | 1/27 赤（7 cm） | — |
+| PDC-10 + H3（車幅内最小） | **3/27** | 1/27 赤（s=3510・7 cm） | — |
+| PDC-10 + H3（車幅内最小）+ 素朴なロック解放（真値の `slip_ratio < −0.35` で `brake ← 0.5·prev`） | 6/27 | **9/27 赤** | — |
+
+- PDC-10 + H3（車体中心）では、**ヘアピン外側 18〜20 m まで出た 0.3/0.5/1・0.9/0.5/1 が 7.9 s / 8.3 s で
+  limits 内へ戻って 3 周完走**した。「10 s 以内に戻るのは物理的に不可能」ではない。
+- 車幅内最小版が 3/27 まで減らすのは、T3 系（balanced/2 等）の起点が**右 2 輪だけ縁石/グラベルに落ちた
+  split-μ 制動**（右前・右後が `slip_ratio −1.00` → ヨーレート +0.75 rad/s → スピン）だから。車体中心 1 点の
+  H3 はこれを拾わない。
+- 素朴なロック解放は 11a を 9/27 壊した（通常のスレッショルドブレーキングでも瞬間的に −0.35 を超える区間が
+  あり、抜いた分だけヘアピンでオーバーランする）。**(a) はレバーとして有効そうだが、閾値・ヒステリシスの
+  設計が要る** — 下記 PDC-12 の制約はこの失敗を踏まえたもの。
+- **H3 を本ラウンドで land しなかった理由**: H3（車体中心）は 11a・`t_core_ai_10*`・`t_core_ai_03` を壊さないが、
+  **凍結・運動学プラントの `t_ai_07`（反応遅れのラップタイム差 ≥ 0.1 s）を 0.100 → 0.083 s で割る**
+  （アブレーションで H3 が原因と確認）。運動学プラントには路面 grip の概念が無く、縁石上で Controller だけが
+  μ を割り引くのはプラントとの不整合。`t_ai_07` を H3 回避のために書き換える・縁石だけ除外する、は
+  どちらもテストへの当て込みなので採らない。**順序で解く**: 実物理版 T-AI-07R を先に緑にし、それを根拠に
+  運動学版を Phase 3 の計画どおり退役させてから H3 を入れる（PDC-11）。
+
+**F-5（未検証のまま Sonnet の申告を受け入れた部分）**: ケース B（0.3/0.5/2・s≈3667「limits 外でも
+`throttle = 1.0`」）は Opus は再トレースしていない（Planner の `v_target` が路面も limits も見ないことは
+コード上自明なので機序は受け入れる）。ケース C は同系統の balanced/2 を Opus がトレースし、上記 split-μ を
+確認した（Sonnet の「縁石で 2 輪ロック」と整合。ただし原因は「車体中心の μ」ではなく「片側 2 輪の μ」）。
+Sonnet の 3 ラウンドの 11a 無回帰の申告は、コードが復元済みなので再検証していない。
+
+### `REJOIN_MAX_S = 10 s`（PDC-9・Opus 起票）の再較正
+
+PDC-9 で 10 s を置いたときの根拠は「芝上 10 m/s で 100 m 走れる」という見積もりだけで、実測は無かった。
+本ラウンドの実測: PDC-10 + H3 でヘアピン外側 18〜20 m のオーバーランからの復帰が **7.9 s / 8.3 s**、
+グラベル/縁石の軽い逸脱は 1.5〜2.8 s。つまり **10 s は達成可能だが緩くはない**（実際のレースでもヘアピンの
+グラベルからは 5〜10 s で戻るか、埋まってリタイアする）。**据え置く。** 10 s に届かない残りは全て上記の
+具体的な欠陥（split-μ・ロック解放なし・limits 外の速度計画）に帰着しており、「物理的に 10 s では戻れない」
+という証拠は 1 本も無い。緩めれば「テスト削除や閾値の無根拠緩和で PASS にしない」に反する。
+
+### 判定（Sonnet `6a59cd1` の BLOCKED BY ARCHITECTURE への回答）
+
+| 提案 | 裁定 | 理由 |
+|---|---|---|
+| (a) `perception.rs` に低遅延のスリップ信号 | **条件付き承認（PDC-12）** — ただし「スリップ角」ではなく**車輪ロック（縦スリップ）**、安定化経路のみ | F-3: 起点は前輪ロックの自己保持。ロックは実ドライバーが知覚できる（音・振動・ステアが軽くなる）。素朴版は 11a を壊したので、使う前に H3/PDC-10/速度計画で届くか先に確かめる（順序は NEXT タスク） |
+| (b) `tyre.rs` のピーク後回復特性を調整 | **不採用** | F-2: 横力はピーク後もほぼ落ちない。凍結タイヤモデルを AI テストのために変える理由が無い（縦の 0.63 は物理的に妥当なロック特性） |
+| (c) 11b の受け入れ基準の見直し | **不採用** | 上記再較正。10 s は実測で達成可能 |
+| （Opus 追加）`sim-track::world_to_track` の修正 | **承認・land（PDC-10）** | F-1。ワールドモデル自体の欠陥で、コースアウトした全車に効く（将来の多車・観戦カメラも同じ座標を使う） |
+
+**T-CORE-AI-11b の位置づけ**: 引き続き **TASK-2-4 Phase 2 の受け入れ条件**（降格しない）。`#[ignore]` は
+維持し、文言を本ラウンドの数値へ更新した（「10/27・物理の天井ではない・残りの欠陥 3 つ」）。
+T-AI-01R/05R/07R を先に進めるのは 11b を後回しにするためではなく、**H3 を入れる前提（運動学 `t_ai_07` の
+退役）を満たすため**の順序（PDC-11）。
+
+### PDC-10（Opus 起票・Opus 承認・本ラウンドで適用）— `Track::world_to_track` の Newton 反復を真のヤコビアンで
+
+```
+ARCHITECT DECISION（凍結 sim-track の変更。人間不在のため Architect 承認として記録）
+Current Design:
+  world_to_track: closest_s（粗探索 + g'≈1 の Newton・悪化時は粗探索にフォールバック）の後、
+  Newton 8 回 `s += clamp(-g, ±4 m)`（g'≈1 仮定・フォールバック無し）。
+Problem:
+  g'(s) = 1 − κ·t。コーナー外側（κ·t < 0）で誤差倍率 |κ·t|、|t| > R で発散・振動。
+  Aoyama ヘアピン外 25〜60 m で再埋め込み誤差 0.6〜12 m、TrackGround の接地平面が車輪ごとに
+  食い違い、コースアウトした車が 4 輪中 0〜1 輪しか接地しない（F-1）。
+Decision:
+  反復の歩幅を `-g / max(1 − κ·t_est, 0.2)` にする（t_est = 現反復の frame での横位置）。
+  max_step・反復回数・粗探索は不変。内側で曲率中心に近づく（κ·t → 1）と g' → 0 で不定なので
+  下限 0.2（方向は正しく歩幅が小さくなるだけ）。sim-math::Spline::closest_s は粗探索への
+  フォールバックがあるので変更しない。
+Verification:
+  新規 `sim-track/tests/track.rs::track_world_to_track_converges_outside_tight_corner`
+  （R=15 m の円で外側 0.5R〜4R・50 地点、再埋め込み誤差 < 1e-6 m・t 一致）。
+  アブレーション: 旧式（jac = 1）に戻すと s=1.88 t=+18 で 0.0156 m の誤差で FAIL → 本修正で PASS。
+  Aoyama のヘアピン外 −25〜−60 m の再埋め込み誤差 0.6〜12 m → 0.000 m。
+  全ゲート緑（11a 27/27・t_core_ai_10_full/offline_spawn 0 m・t_core_ai_03 のラップタイム
+  97.5/95.9/94.2 s 不変・t_core_ai_09 性能 OK・凍結 sim-driver テスト無改変で緑）。
+Risk:
+  コース内（|κ·t| ≪ 1）では同じ根へ収束するが、反復の丸めが変わるのでビット一致の履歴は変わりうる
+  （ゴールデン値を持つテストは無い。決定性テスト T-CORE-AI-08 は同一コード 2 回比較なので無関係）。
+Affected Files: crates/sim-track/src/track.rs（反復 1 行 + コメント）、crates/sim-track/tests/track.rs（テスト 1 本）。
+```
+
+### PDC-11（Opus 裁定・次ラウンドで適用）— 運動学プラント版 `t_ai_07` の退役条件
+
+```
+Decision:
+  sim-driver/tests/driver.rs::t_ai_07_perception_delay_changes_behaviour（凍結・運動学プラント）は、
+  実物理版 T-AI-07R（world_ai.rs）が下記を満たして緑になった後に限り、削除してよい
+  （Phase 3「運動学プラント廃止・実物理版を先に緑 → 旧版削除」の前倒し。t_ai_07 1 本だけ）:
+    (1) reaction_time 0.0 と 0.30 で ControlInput 6 成分の to_bits 列ハッシュが異なる
+    (2) 走行距離（laps·L + s）の差 ≥ 1 m（60 s 走行）
+    (3) **ラップタイム差 ≥ 0.1 s**（運動学版の基準そのもの。TASK-2-4 Acceptance 5。緩めない）
+    (4) reaction_time 0.0 でも recovered_steps == 0・T-AI-01R の帯を満たす
+Reason:
+  運動学プラントは路面 grip を持たないので、H3（Controller が縁石/芝で μ を割り引く）とは構造的に
+  整合しない。同じ性質を実物理で（より強い条件で）守るテストへ置き換えるのであって、閾値緩和ではない。
+Not allowed:
+  T-AI-07R が緑になる前の削除、t_ai_07 の閾値変更、H3 を t_ai_07 に合わせて縁石だけ除外すること。
+  t_ai_01 / t_drv_04（ignore 中）の扱いは従来どおり Phase 3。
+```
+
+### PDC-12（Opus 裁定・条件付き承認）— 自車の車輪ロックを安定化経路で知覚させる（BLOCKED 提案 (a) の範囲限定版）
+
+```
+Decision:
+  PerceivedSelf に「車輪ロックの度合い」を 1 フィールド追加してよい（例: `wheel_lock` =
+  4 輪の max(−slip_ratio, 0)、または前後軸別 2 値）。driver.rs::assemble_truth で真値から作り、
+  Controller は **stabilise（0.08 s 遅延）経由でのみ**読む（予見経路の Planner には使わない）。
+  PerceivedSelf::zeroed に 0 を入れる。凍結テストは `..PerceivedSelf::zeroed()` で構築しているので改変不要。
+Conditions（全て必須）:
+  - 使ってよいのは「ロックしたら抜く」ための制動の上限だけ。mistake_*_bias を読む・error_rate で
+    分岐する・ロックを未然に防ぐ目的で制動点を動かす、は禁止（ミスの打ち消しになる）。
+  - 閾値は MF の縦ピーク `kappa_peak = tan(π/(2·Cx))/Bx ≈ 0.117` に対して十分上（素朴な 0.35 固定 +
+    即 50 % 抜きは 11a 9/27 を壊した — 通常のスレッショルドブレーキングでも瞬間的に超える）。
+    持続時間（数 tick）とヒステリシス・再踏み込みのレート制限を持つ「人間のロック解放」にすること。
+  - 11a 27/27・0 m、t_core_ai_10_full/offline_spawn 0 m、t_core_ai_03 のラップタイム ±0.1 s 以内。
+  - スリップ角（横）は追加しない（F-2 によりレバーにならない）。
+When:
+  NEXT タスクの Part 3 で、H3（split-μ 版）+ limits 外の速度計画だけでは 27/27 に届かない場合にのみ使う。
+Affected Files: crates/sim-driver/src/{perception.rs, driver.rs}（それぞれフィールド 1 つ分のみ）。
+```
+
+### 本ラウンドの変更（本コミット）
+
+- `crates/sim-track/src/track.rs`: PDC-10（`world_to_track` の反復歩幅をヤコビアンで割る。1 行 + コメント）。
+- `crates/sim-track/tests/track.rs`: `track_world_to_track_converges_outside_tight_corner`（新規・アブレーションで旧式を検出）。
+- `crates/sim-core/tests/world_ai.rs`: `t_core_ai_11b` の `#[ignore]` 文言を本ラウンドの数値へ更新のみ（合否ロジック・`REJOIN_MAX_S`・`sweep_cases` 無変更）。
+- `crates/sim-driver/**`: **無変更**（H3・ロック解放の実験は計測後に全て revert。`grep -rni diagtmp crates/` = 0 件）。
+
+### ゲート（最終コード・Opus 実行）
+
+```
+cargo fmt --all -- --check                               → clean
+cargo clippy --workspace --all-targets -- -D warnings    → 0
+cargo test --workspace --release                         → 188 passed（doctest 込み・+1 = PDC-10 のテスト）/ 0 failed / 3 ignored
+  ignore 3 = t_core_ai_11b（10/27）+ 凍結 t_ai_01 / t_drv_04（運動学プラント・Phase 3）
+cargo build -p sim-wasm --target wasm32-unknown-unknown --release → OK
+cargo build -p sim-line --no-default-features            → OK
+t_core_ai_11a                                            → 27/27・0.000 m
+t_core_ai_11b（ignored）                                 → 10/27 失敗（最悪 44〜58 m〔ヘアピン系〕/ 112〜156 m〔T3 系〕）
+t_core_ai_03                                             → 101.6/97.5/97.5・100.0/95.9/95.9・98.5/94.2/94.2 s（0.1 s 単位で不変）
+```
+
+### NEXT SONNET TASK — TASK-2-4 Phase 2 残り: T-AI-01R/05R/07R → `t_ai_07` 退役 → T-CORE-AI-11b（Architect 起票）
+
+**3 つの Part を順に。Part ごとに全ゲートを回し、Part 1 と Part 2 はそれぞれ単独でコミットしてよい
+（Part 3 が解けなくても Part 1〜2 は land する）。**
+
+#### Part 1 — T-AI-01R / T-AI-05R / T-AI-07R を実物理で（テスト追加のみ）
+
+**Goal**: TASK-2-4「Required Tests」表（本ファイル TASK-2-4 節）の T-AI-01R / 05R / 07R を
+`crates/sim-core/tests/world_ai.rs` に実装し緑にする。**T-AI-07R にはラップタイム差 ≥ 0.1 s も含める**
+（TASK-2-4 Acceptance 5・PDC-11 (3)。運動学版 `t_ai_07` の基準をそのまま実物理へ移す）。
+参考: T-CORE-AI-03 の実測で level 0.2/0.5/0.9 = 97.5/95.9/94.2 s/周（単調・差 3.3 s）は既に出ている。
+
+**Allowed Files**: `crates/sim-core/tests/world_ai.rs`（テスト追加のみ）。
+**Do Not Change**: `crates/**/src/**`（Part 1 はテストだけで通る想定。通らない場合は定数を触らず停止・報告）、
+既存テスト・閾値。
+**Stop**: いずれかが赤なら、数値（各ラップタイム・差・逸脱）を添えて停止・報告（`PROPOSED DESIGN CHANGE`）。
+
+#### Part 2 — 運動学 `t_ai_07` の退役（PDC-11）
+
+Part 1 の T-AI-07R が PDC-11 の (1)〜(4) を全て満たして緑になった場合に限り、
+`crates/sim-driver/tests/driver.rs::t_ai_07_perception_delay_changes_behaviour` を削除し、削除箇所に
+「PDC-11 により `world_ai.rs::t_ai_07r_*` へ移行」の 1 行コメントを残す。他の凍結テストは触らない。
+完了報告に T-AI-07R の実測値（ハッシュ不一致・距離差・ラップタイム差）を書く。
+
+#### Part 3 — コース外からの復帰（T-CORE-AI-11b を緑に）
+
+**Goal**: `t_core_ai_11b_model_sweep_mistake_recovery` の `#[ignore]` を外して 27/27。
+**開始点は PDC-10 land 済みの本コミット（10/27）。** 上記 F-1〜F-4 の計測表を出発点にし、同じ診断を
+繰り返さないこと。
+
+**Allowed Files**: `crates/sim-driver/src/{controller.rs, planner.rs}`、`crates/sim-core/tests/world_ai.rs`
+（診断の一時追加と 11b の `#[ignore]` 削除のみ）。**PDC-12 を使う場合に限り** `crates/sim-driver/src/perception.rs`
+（フィールド 1 つ + `zeroed`）と `crates/sim-driver/src/driver.rs`（`assemble_truth` の 1 フィールド分）。
+**Do Not Change**: `REJOIN_MAX_S`・11a/11b の合否ロジック・`sweep_cases`、`sim-vehicle` / `sim-track` / `sim-line` /
+`sim-math` / `sim-core/src/**` / `sim-wasm/**`、`model.rs` / `decision.rs`、ミスの大きさ・発生率
+（`driver.rs` の `MISTAKE_*`）。PDC-1〜12 を勝手に revert しない。
+
+**Required Changes**（この順で・1 つずつ・都度 11a / `t_core_ai_10*` / `t_core_ai_03` / 全テスト）:
+1. **H3（split-μ 対応）**: `brake_lock_cap` / `traction_throttle_cap` に路面 grip を掛ける
+   （`sim-vehicle::tyre.rs::effective_mu` と同じ掛け方）。grip は**軸ごとの左右輪位置**（`t ± track/2`）の
+   `track.surface_at(...)` から作り、軸の上限はその軸の弱い側で決める（既存の「旋回内輪で決まる」構造に
+   合わせる）。座標は安定化経路（`stabilise.s / stabilise.t`）。Opus 実験では車体中心 1 点 = 7/27（PDC-10 込み）、
+   車幅 ±0.85 m の最小 = 3/27 だが 11a が 1/27（s=3510・7 cm）割れた — **縁石（grip 0.90）をまたぐ通常走行で
+   制動点が変わる**ことが原因候補。軸・輪ごとに正しく配分すれば過剰な割引は減るはず。11a を割るなら、
+   縁石を除外するのではなく原因を数値で示して停止・報告。
+2. **limits 外の速度計画（Sonnet ケース B）**: Planner は limits 外で `v_target` を路面 μ で上限する
+   （例: `v ≤ sqrt(μ_surface · g · R_rejoin)`。`R_rejoin` はコース内へ浅い角度で戻る旋回半径の見積もり）。
+   **`v_target ≤ v_cap` の構造保証（T-AI-04）は維持**。limits 内では bit-exact に無変更であること。
+   Sonnet ① の `12 m/s` 固定上限は aim 点変更と同時に入れたので単独効果が未計測 — 単独で測ること。
+3. **（必要な場合のみ）PDC-12 のロック解放**。条件は PDC-12 のとおり。
+4. **やらないこと**: Pure Pursuit の aim 点の近点化（Sonnet ① で悪化）、`heading_error` 早期発火の
+   recovery モード（③）— PDC-10 前の座標発散下で測った結果なので、再挑戦するなら 1〜3 の後に単独で測り直す。
+
+**禁止**（従来どおり）: ミスの検知・打ち消し（`mistake_*_bias` を読む・`error_rate` で分岐）、区間依存で
+ミスを抑える、`VehicleState` / Transform を触る、11b の閾値を動かす、`#[ignore]` を増やす。
+
+**Required Tests / Acceptance**:
+- `t_core_ai_11b` が ignore なしで 27/27（3 周完走・各エピソード ≤ 10 s）。
+- `t_core_ai_11a` 27/27・0 m、`t_core_ai_10_full` / `t_core_ai_10_offline_spawn` 0 m、`t_core_ai_03` 無回帰、
+  T-AI-01R/05R/07R 緑のまま、`t_core_ai_09`（性能）緑。
+- clippy 0 / fmt clean / `sim-line --no-default-features` / wasm32 OK。`grep -rni diagtmp crates/` = 0。
+- 完了報告に: 変更ごとの 11b 失敗数（単独 → 累積）、11b 各走行の最長エピソード [s] と最大逸脱 [m]、
+  変えた定数の前 → 後。
+- **3 ラウンドで 27/27 に届かなければ停止・報告**。その際「物理の天井」を主張するなら、**接地輪数
+  （`WheelState::grounded`）・車輪ロック（`slip_ratio`）・路面（4 輪それぞれの `surface_at`）を同じ表に
+  並べ**、力が出ているのに向きが変わらないことを示すこと（本ラウンドの F-1/F-3 のような交絡を先に排除する）。
+
+**その後（別タスク）**: Phase 3（`t_ai_01` / `t_drv_04` の実物理版 → 運動学プラント廃止・MEDIUM-1 の
+`LOW_PRECISION_STEER_RATE_FLOOR` 再導出・PDC-8 の margin 再評価）。
 
 ---
 
