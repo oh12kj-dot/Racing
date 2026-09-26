@@ -6,7 +6,7 @@ import {createEnvironment,stepEnvironment,environmentSnapshot,rainRateAt,TYRE_CO
 import {evaluatePitStrategy,PIT_REASON} from '../src/simulation/strategy.js';
 import {createRaceSimulation} from '../src/simulation/race.js';
 
-function strategyCar(compound,wetness=0){
+function strategyCar(compound){
   const track=createTrack();
   const car=createVehicleState(buildEntrants().find(e=>e.type==='gt'),track.total*.45,2);
   car.pit.served=true;
@@ -17,7 +17,7 @@ function strategyCar(compound,wetness=0){
   car.systems.mechanicalStress=0;
   car.systems.powerDerate=0;
   car.incident.damage=0;
-  return{car,track,wetness};
+  return{car,track};
 }
 
 test('WET-18: deterministic rain timeline exposes a short-term authoritative forecast',()=>{
@@ -131,4 +131,14 @@ test('WET-22: identical evolving-rain race inputs remain deterministic including
   expect(a.stateHash()).toBe(b.stateHash());
   expect(a.snapshot().environment).toEqual(b.snapshot().environment);
   expect(a.snapshot().environment.forecastRacingLineWetness).toBeGreaterThan(a.snapshot().environment.racingLineWetness);
+});
+
+test('WET-23: state hash distinguishes different future rain schedules before physical weather diverges',()=>{
+  const common={initialWetness:.12,rainRate:0,dryingRate:.4,forecastHorizonSeconds:120};
+  const dryLater=createRaceSimulation(0x51f0cb,{raceLaps:20,environment:{...common,rainTimeline:[{time:180,rainRate:0}]}});
+  const rainLater=createRaceSimulation(0x51f0cb,{raceLaps:20,environment:{...common,rainTimeline:[{time:180,rainRate:.8}]}});
+
+  expect(dryLater.environment.wetness).toBe(rainLater.environment.wetness);
+  expect(dryLater.environment.rainRate).toBe(rainLater.environment.rainRate);
+  expect(dryLater.stateHash()).not.toBe(rainLater.stateHash());
 });
