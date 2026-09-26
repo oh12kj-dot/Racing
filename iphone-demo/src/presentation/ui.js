@@ -17,7 +17,13 @@ function fmtEnergy(sys){
   if(capacity<=0)return '';
   const soc=Math.max(0,Math.min(1,(sys.energyMJ||0)/capacity));
   const reserve=Math.max(0,Math.min(1,sys.energyReserveTarget||0));
-  return `ERS ${Math.round(soc*100)}% · ${sys.energyStrategy||'BALANCED'} · ${sys.energyMode||'BALANCED'} · RSV ${Math.round(reserve*100)}%`;
+  const deploy=Math.max(0,Math.min(1,sys.energyDeploy||0));
+  const harvest=Math.max(0,Math.min(1,sys.energyHarvest||0));
+  let activity='READY';
+  if(harvest>.02)activity=`HARVEST ${Math.round(harvest*100)}%`;
+  else if(deploy>.02)activity=`DEPLOY ${Math.round(deploy*100)}%`;
+  else if(sys.energyMode==='RESERVE')activity='RESERVE';
+  return `ERS ${Math.round(soc*100)}% · ${sys.energyStrategy||'BALANCED'} · ${activity} · RSV ${Math.round(reserve*100)}%`;
 }
 export function createUI(root,callbacks={}){
   root.innerHTML=`
