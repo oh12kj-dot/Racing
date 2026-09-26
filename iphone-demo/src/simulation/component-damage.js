@@ -44,17 +44,26 @@ export function applyImpactComponentDamage(incident,deltaV,contact,response){
 
 export function componentPerformanceFactors(incident={}){
   const legacy=clamp(Number(incident.damage)||0,0,1);
-  // Detailed component state is authoritative for damage identity and hashing,
-  // but remains performance-neutral in this foundation step. Keep the proven
-  // aggregate envelope unchanged while component channels are introduced and
-  // validated individually in later work.
+  const aeroDamage=clamp(Number(incident.componentDamage?.aero)||0,0,1);
+  const detailedAero=aeroDamage>1e-9;
+
+  // Aero/drag are the first staged component-specific performance channels.
+  // A pure longitudinal impact allocates 0.80 * severity to aero, so 0.40 and
+  // 0.275 reproduce the legacy 0.32 aero-loss / 0.22 drag-rise calibration.
+  // Lateral impacts therefore preserve the same aggregate damage contract while
+  // naturally producing less aero-specific performance loss.
+  const aero=detailedAero?clamp(1-aeroDamage*.40,.68,1):clamp(1-legacy*.32,.68,1);
+  const drag=detailedAero?1+aeroDamage*.275:1+legacy*.22;
+
+  // Remaining channels stay on the proven aggregate envelope until introduced
+  // one at a time with dedicated long-run regression coverage.
   return{
-    aero:clamp(1-legacy*.32,.68,1),
+    aero,
     drive:clamp(1-legacy*.22,.35,1),
     steering:clamp(1-legacy*.28,.65,1),
     brake:1,
     top:clamp(1-legacy*.10,.78,1),
-    drag:1+legacy*.22
+    drag
   };
 }
 
