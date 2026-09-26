@@ -21,24 +21,35 @@ test('RC-07: one defensive move is allowed per continuous attack episode',()=>{
   let p=planRacecraft(defender,[defender,attacker],track,10);
   expect(p.reason).toBe('DEFEND_ONE_MOVE');
   expect(defender.racecraft.defenseUsed).toBeTruthy();
+  expect(defender.racecraft.defenseActive).toBeTruthy();
   const firstDefenseLane=p.targetLane;
   expect(Math.abs(firstDefenseLane-defender.lane)).toBeGreaterThan(1);
 
   p=planRacecraft(defender,[defender,attacker],track,11);
   expect(p.reason).not.toBe('DEFEND_ONE_MOVE');
   expect(defender.racecraft.defenseUsed).toBeTruthy();
+  expect(defender.racecraft.defenseActive).toBeTruthy();
+
+  attacker.v=44;
+  p=planRacecraft(defender,[defender,attacker],track,12.3);
+  expect(p.reason).not.toBe('DEFEND_ONE_MOVE');
+  expect(defender.racecraft.defenseUsed).toBeTruthy();
+  expect(defender.racecraft.defenseActive).toBeFalsy();
 
   p=planRacecraft(defender,[defender,attacker],track,20);
   expect(p.reason).not.toBe('DEFEND_ONE_MOVE');
   expect(defender.racecraft.defenseUsed).toBeTruthy();
+  expect(defender.racecraft.defenseActive).toBeFalsy();
 
   attacker.s=track.wrapS(defender.s-60);
   planRacecraft(defender,[defender,attacker],track,21);
   expect(defender.racecraft.defenseUsed).toBeFalsy();
+  expect(defender.racecraft.defenseActive).toBeFalsy();
 
-  attacker.s=track.wrapS(defender.s-14);
+  attacker.s=track.wrapS(defender.s-14);attacker.v=48;
   p=planRacecraft(defender,[defender,attacker],track,22);
   expect(p.reason).toBe('DEFEND_ONE_MOVE');
+  expect(defender.racecraft.defenseActive).toBeTruthy();
 });
 
 test('BLUE FLAG: yield context cancels attack intent without abrupt braking or position change',()=>{
@@ -56,5 +67,6 @@ test('BLUE FLAG: yield context cancels attack intent without abrupt braking or p
   expect(p.state).toBe('YIELD');
   expect(p.targetSpeed).toBe(Infinity);
   expect(Math.abs(p.targetLane-track.idealLane(slow.s))).toBeLessThan(1e-9);
+  expect(slow.racecraft.defenseActive).toBeFalsy();
   expect({s:slow.s,v:slow.v,lane:slow.lane}).toEqual(before);
 });
