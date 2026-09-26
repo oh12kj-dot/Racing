@@ -25,6 +25,9 @@ export function tyreIdealTemperature(compound,wetness){
 
 function normalizeRainTimeline(config,initialRainRate){
   const raw=Array.isArray(config.rainTimeline)?config.rainTimeline:[];
+  // No explicit timeline means legacy mutable rainRate mode. Existing tests and
+  // runtime tools can still inject an authoritative rainRate directly.
+  if(raw.length===0)return[];
   const points=[{time:0,rainRate:initialRainRate,order:-1}];
   raw.forEach((point,index)=>{
     const time=Number(point?.time);
@@ -133,7 +136,7 @@ export function createEnvironment(config={}){
   const rainTimeline=normalizeRainTimeline(config,initialRainRate);
   const environment={
     wetness,
-    rainRate:rainTimeline[0]?.rainRate??initialRainRate,
+    rainRate:initialRainRate,
     rainTimeline,
     rainTimelineKey:rainTimeline.map(point=>`${point.time.toFixed(3)}:${point.rainRate.toFixed(4)}`).join('|'),
     forecastHorizonSeconds:clamp(config.forecastHorizonSeconds??DEFAULT_FORECAST_HORIZON_SECONDS,10,600),
