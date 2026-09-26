@@ -40,10 +40,11 @@ test('DMG-03: lateral collision primarily damages steering',()=>{
   expect(state.componentDamage.steering).toBeGreaterThan(state.componentDamage.brakes);
 });
 
-test('DMG-04: overlap separation without genuine impact cannot create component damage',()=>{
+test('DMG-04: overlap separation preserves legacy aggregate damage without component damage',()=>{
   const state=incident(),{contact,response}=collision({lateral:1,impactSpeed:0,impactImpulse:0});
-  applyImpactComponentDamage(state,7,contact,response);
-  expect(state.damage).toBe(0);
+  const severity=applyImpactComponentDamage(state,7,contact,response);
+  expect(severity).toBe(0);
+  expect(state.damage).toBeCloseTo((7-1.5)*.010,12);
   expect(state.componentDamage).toEqual(createComponentDamage());
 });
 
