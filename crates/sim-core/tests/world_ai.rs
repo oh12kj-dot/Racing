@@ -249,10 +249,33 @@ fn run_solo_from_until(seed: u64, spawn_t: Option<f64>, until_s: f64, mut f: imp
     );
 }
 
+/// T-CORE-AI-11b: track limits の外へ出た 1 回の逸脱エピソードが終わる（車体中心が
+/// limits 内へ戻る）までの上限 [s]（Architect 裁定 PDC-9・Opus 2026-09-26）。
+///
+/// `TESTING.md` T-RACE-08（インシデントからの復帰: 全車が走行を再開 or 正常リタイア）の solo 版。
+/// ミスの大きさは `MISTAKE_STEER_SIGMA = 0.010` / `MISTAKE_BRAKE_SIGMA = 0.05`（`driver.rs`）と
+/// 小さく、ヘアピンでのオーバーラン（ラン-オフ 20〜50 m）からでも 10 s あれば芝上 10 m/s で
+/// 100 m 走れる。これを超えて戻れないのは「ミスの帰結」ではなく「コース外で運転できない」欠陥。
+const REJOIN_MAX_S: f64 = 10.0;
+
+/// [`run_solo_model_laps`] の 1 走行分の集計（`laps` 周完走した場合）。
+struct SweepRun {
+    /// 最大コリドー逸脱 [m]（0 なら一度も割っていない）と、その位置の説明。
+    worst_outside: f64,
+    worst_at: String,
+    /// track limits 外エピソードの数と、最長エピソード [sim tick]。
+    episodes: u32,
+    longest_episode_ticks: u64,
+}
+
 /// solo・任意の `DriverModel`（ライン上 spawn）で `laps` 周完走するまで走らせ、
-/// 各 tick でコリドー封じ込めを検証する（TASK-2-4 Phase 2・T-CORE-AI-11）。
-/// 逸脱があれば最初の 1 件を `Err` で返す（panic せず sweep 全体を続けられるように）。
-fn run_solo_model_laps(seed: u64, model: DriverModel, laps: u32) -> Result<(), String> {
+/// 各 tick でコリドー封じ込めを計測する（TASK-2-4 Phase 2・T-CORE-AI-11a/11b）。
+///
+/// **最初の逸脱で打ち切らない**（PDC-9: 旧実装は最初の逸脱 tick で `Err` を返していたため、
+/// 「逸脱 0.2〜8 cm」はその 1 tick の値でしかなく、その後の帰結 — 芝へのオーバーランから
+/// 戻れず 100 m 以上離れて周回不能になる — を観測できていなかった）。
+/// `Err` は (1) `laps` 周を完走できない、(2) 1 回の limits 外エピソードが [`REJOIN_MAX_S`] を超える。
+fn run_solo_model_laps(seed: u64, model: DriverModel, laps: u32) -> Result<SweepRun, String> {
     let line_corridor = world_with_line();
     let corridor = line_corridor.racing_line().unwrap().corridor();
     let mut world = world_with_line();
@@ -262,23 +285,62 @@ fn run_solo_model_laps(seed: u64, model: DriverModel, laps: u32) -> Result<(), S
         .spawn_with_driver(params(), GRID_S, gt, model, rng)
         .unwrap();
 
+    let rejoin_max_ticks = (REJOIN_MAX_S / SIM_DT).round() as u64;
+    let mut run = SweepRun {
+        worst_outside: 0.0,
+        worst_at: String::new(),
+        episodes: 0,
+        longest_episode_ticks: 0,
+    };
+    // 現在の limits 外エピソード: (開始 tick, 開始時の説明)。
+    let mut episode: Option<(u64, String)> = None;
     let max_ticks = 20_000u64;
     for _ in 0..max_ticks {
         world.step_sim_tick();
+        let tick = world.sim_tick();
         let e = &world.vehicles()[0];
-        if world.sim_tick() > WARMUP_TICKS {
+        if tick > WARMUP_TICKS {
             let (t_right, t_left) = corridor.limit_bounds(e.coord.s);
             let outside = (t_right - e.coord.t).max(e.coord.t - t_left).max(0.0);
             if outside > CONTAIN_TOL_M {
-                return Err(format!(
-                    "corridor breach at s={:.1} lap={}: t={:+.3} not in [{:+.3}, {:+.3}] \
-                     (outside by {:.3} m)",
-                    e.coord.s, e.laps_completed, e.coord.t, t_right, t_left, outside
-                ));
+                let ds = world.driver(VehicleId(0)).unwrap().driver_state();
+                let desc = || {
+                    format!(
+                        "s={:.1} lap={}: t={:+.3} not in [{:+.3}, {:+.3}] (outside by {:.3} m; \
+                         {} ticks since last mistake)",
+                        e.coord.s,
+                        e.laps_completed,
+                        e.coord.t,
+                        t_right,
+                        t_left,
+                        outside,
+                        ds.ticks_since_mistake.min(99_999),
+                    )
+                };
+                if outside > run.worst_outside {
+                    run.worst_outside = outside;
+                    run.worst_at = desc();
+                }
+                let (start, start_desc) = episode.get_or_insert_with(|| {
+                    run.episodes += 1;
+                    (tick, desc())
+                });
+                let len = tick - *start;
+                run.longest_episode_ticks = run.longest_episode_ticks.max(len);
+                if len > rejoin_max_ticks {
+                    return Err(format!(
+                        "did not rejoin within {REJOIN_MAX_S} s: episode began at {start_desc}; \
+                         now {} (worst so far {:.3} m)",
+                        desc(),
+                        run.worst_outside
+                    ));
+                }
+            } else {
+                episode = None;
             }
         }
         if e.laps_completed >= laps {
-            return Ok(());
+            return Ok(run);
         }
     }
     let e = &world.vehicles()[0];
@@ -289,58 +351,146 @@ fn run_solo_model_laps(seed: u64, model: DriverModel, laps: u32) -> Result<(), S
     ))
 }
 
-/// T-CORE-AI-11 — 堅牢性スイープ（TASK-2-4 Phase 2・K-1 の実質的合否判定）。
-/// `level ∈ {0.3,0.5,0.7,0.9}` × `consistency ∈ {0.5,1.0}` × `error_rate ∈ {0.0,0.5}` ×
-/// seed 3 本の全組み合わせ + `DriverModel::balanced()`（3 seed）で、全周 3 周・コリドー逸脱 0 m。
-#[test]
-#[ignore = "TASK-2-4 Phase 2（未解決・Sonnet 5 分類ラウンド 2026-09-26 時点で 16/51 が逸脱）: \
-            Opus 監査ラウンドで 51/51 → 19/51（brake_lock_cap）。本ラウンドで残り 19 組を \
-            `mistake_steer_bias`/`mistake_brake_bias` の有無で分類し（診断は破棄済み・TODO.md \
-            に数表を記録）、error_rate=0（ミス不可能・ノイズのみ）の 3 組はヘアピン脱出 \
-            （s≈3377、3 seed とも決定論的）を controller.rs の `LOW_PRECISION_STEER_RATE_FLOOR` \
-            で解消 → 19/51 → 16/51。残る 16 組は全て（error_rate=0.5 または balanced()）逸脱 \
-            直前 3 s 以内に mistake_*_bias が有意（consistency=1 の 1 組も含め、この 16 組は \
-            **すべて** ミス発生中の逸脱で、ノイズのみで割れたケースは残っていない）。ミス \
-            （mistake_*_bias）起因の数 cm 逸脱を『逸脱 0』の対象に含めるかは PROPOSED DESIGN \
-            CHANGE として Architect の仕様判断待ち（TODO.md 本タスクの節を参照）。"]
-fn t_core_ai_11_model_sweep_robustness() {
+/// T-CORE-AI-11 のスイープ対象: `level ∈ {0.3,0.5,0.7,0.9}` × `consistency ∈ {0.5,1.0}` ×
+/// seed 3 本 + `DriverModel::balanced()` × seed 3 本（計 27 走行）を、指定の `error_rate` で。
+///
+/// 11a（`error_rate = 0`）と 11b（`error_rate = 0.5`）は**同じ 27 組の対**になる。ミス注入は
+/// `Driver` 内の独立ストリーム `rng.derive("mistake")` だけを使い、`error_rate` は
+/// `maybe_make_mistake` 以外に効かないので、対の差は「ミスの有無」だけ（反実仮想）。
+fn sweep_cases(error_rate: f64) -> Vec<(String, DriverModel, u64)> {
     let levels = [0.3, 0.5, 0.7, 0.9];
     let consistencies = [0.5, 1.0];
-    let error_rates = [0.0, 0.5];
     let seeds = [1u64, 2u64, 3u64];
-
-    let mut failures = Vec::new();
-    let mut runs = 0u32;
-
+    let mut cases = Vec::new();
     for &level in &levels {
         for &consistency in &consistencies {
-            for &error_rate in &error_rates {
-                for &seed in &seeds {
-                    let mut model = driver_model(level);
-                    model.consistency = consistency;
-                    model.error_rate = error_rate;
-                    runs += 1;
-                    if let Err(e) = run_solo_model_laps(seed, model, 3) {
-                        failures.push(format!(
-                            "level={level} consistency={consistency} error_rate={error_rate} \
-                             seed={seed}: {e}"
-                        ));
-                    }
-                }
+            for &seed in &seeds {
+                let mut model = driver_model(level);
+                model.consistency = consistency;
+                model.error_rate = error_rate;
+                cases.push((
+                    format!(
+                        "level={level} consistency={consistency} error_rate={error_rate} \
+                         seed={seed}"
+                    ),
+                    model,
+                    seed,
+                ));
             }
         }
     }
     for &seed in &seeds {
-        runs += 1;
-        if let Err(e) = run_solo_model_laps(seed, DriverModel::balanced(), 3) {
-            failures.push(format!("balanced() seed={seed}: {e}"));
+        let mut model = DriverModel::balanced();
+        model.error_rate = error_rate;
+        cases.push((
+            format!("balanced() error_rate={error_rate} seed={seed}"),
+            model,
+            seed,
+        ));
+    }
+    cases
+}
+
+/// `cases` を 3 周ずつ走らせる。各走行は独立・決定論的（走行ごとに World / Driver / Rng を
+/// 新規生成・共有状態なし）なのでスレッドへ分配して壁時計を短縮し、結果は入力順に戻す。
+fn run_sweep(cases: &[(String, DriverModel, u64)]) -> Vec<Result<SweepRun, String>> {
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .clamp(1, 8);
+    let mut indexed: Vec<(usize, Result<SweepRun, String>)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers)
+            .map(|w| {
+                scope.spawn(move || {
+                    (w..cases.len())
+                        .step_by(workers)
+                        .map(|i| (i, run_solo_model_laps(cases[i].2, cases[i].1, 3)))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().expect("sweep worker panicked"))
+            .collect()
+    });
+    indexed.sort_by_key(|(i, _)| *i);
+    indexed.into_iter().map(|(_, r)| r).collect()
+}
+
+/// T-CORE-AI-11a — 堅牢性スイープ・**ミス無し**（TASK-2-4 Phase 2・K-1 の実質的合否判定）。
+///
+/// [`sweep_cases`]`(0.0)` の 27 走行すべてで全周 3 周・コリドー逸脱 **0 m**（`CONTAIN_TOL_M`）。
+/// 操舵ノイズ（`consistency = 0.5`）を含む — K-1「わずかなノイズで決定論的に破綻する安定余裕
+/// ゼロ」を否定するのがこのテストの目的であり、**ここは一切緩めない**（Architect 裁定 PDC-9）。
+#[test]
+fn t_core_ai_11a_model_sweep_mistake_free() {
+    let cases = sweep_cases(0.0);
+    let results = run_sweep(&cases);
+    let mut failures = Vec::new();
+    for ((label, _, _), result) in cases.iter().zip(&results) {
+        match result {
+            Err(e) => failures.push(format!("{label}: {e}")),
+            Ok(run) if run.worst_outside > CONTAIN_TOL_M => failures.push(format!(
+                "{label}: corridor breach ({} episodes), worst at {}",
+                run.episodes, run.worst_at
+            )),
+            Ok(_) => {}
         }
     }
-
     assert!(
         failures.is_empty(),
-        "T-CORE-AI-11: {}/{runs} combinations breached the corridor:\n{}",
+        "T-CORE-AI-11a (mistake-free, 0 m): {}/{} runs failed:\n{}",
         failures.len(),
+        results.len(),
+        failures.join("\n")
+    );
+}
+
+/// T-CORE-AI-11b — 堅牢性スイープ・**ミス発生**（`error_rate = 0.5`・11a と同じ 27 組の対）。
+///
+/// ミスは原則 3 の「原因」であり、実際の帰結（コース幅を使い切る・ラン-オフへのオーバーラン）を
+/// 生むことは**意図された挙動**なので、逸脱量は問わない（Architect 裁定 PDC-9）。対の 11a が
+/// 0 m であることが「この逸脱はミスに起因する」ことの反実仮想的な証明。代わりに要求するのは
+/// **帰結からの回復**: (a) 3 周完走、(b) 1 回の limits 外エピソードが [`REJOIN_MAX_S`] 以内に終わる。
+#[test]
+#[ignore = "TASK-2-4 Phase 2 残り（PDC-9・Opus 2026-09-26）: 10/27 が 10 s 以内に limits 内へ \
+            戻れない（全て 48〜161 m 離れて周回不能）。17/27 は完走（うち 6 本は最大 5.8 m・最長 \
+            3.1 s の逸脱から回復 = 許容される帰結）。最初の逸脱で打ち切らずに走らせ続けると、 \
+            (1) ヘアピン進入 s≈3301〜3319（6/10）で外側の芝へ数 cm 出た後、フルロック操舵のまま \
+            芝上を直進・旋回し続けて戻れない、(2) グラベル/縁石に乗ったまま次の制動に入り \
+            （brake_lock_cap は舗装の μ を仮定）2 輪ロック → スピン → 芝で同じく復帰不能。 \
+            コース外からの復帰（rejoin）能力の欠如。TODO.md の NEXT SONNET TASK 参照。"]
+fn t_core_ai_11b_model_sweep_mistake_recovery() {
+    let cases = sweep_cases(0.5);
+    let results = run_sweep(&cases);
+    let mut failures = Vec::new();
+    let mut with_excursion = 0u32;
+    for ((label, _, _), result) in cases.iter().zip(&results) {
+        match result {
+            Err(e) => failures.push(format!("{label}: {e}")),
+            Ok(run) if run.episodes > 0 => {
+                with_excursion += 1;
+                eprintln!(
+                    "T-CORE-AI-11b (permitted): {label}: {} episodes, longest {:.2} s, worst at {}",
+                    run.episodes,
+                    run.longest_episode_ticks as f64 * SIM_DT,
+                    run.worst_at
+                );
+            }
+            Ok(_) => {}
+        }
+    }
+    eprintln!(
+        "T-CORE-AI-11b: {} runs, {with_excursion} completed with a recovered excursion, {} failed",
+        results.len(),
+        failures.len()
+    );
+    assert!(
+        failures.is_empty(),
+        "T-CORE-AI-11b (mistake regime, must recover): {}/{} runs failed:\n{}",
+        failures.len(),
+        results.len(),
         failures.join("\n")
     );
 }
@@ -573,4 +723,74 @@ fn t_core_ai_10_full() {
 #[test]
 fn t_core_ai_10_offline_spawn() {
     corridor_containment_check(Some(0.0), s_validated_full_m());
+}
+
+/// T-CORE-AI-03 — 静止発進から 3 周完走（TASK-2-4 Required Tests 4・Opus 2026-09-26 で追加）。
+///
+/// 実グリッド位置（`s = GRID_S`・`t = 0` = センターライン）に**静止状態で** spawn し、
+/// ミス無し（`consistency = 1.0` / `error_rate = 0`）の `level ∈ {0.2, 0.5, 0.9}` がそれぞれ
+/// 3 周を完走する。各周（1 周目はグリッドから S/F まで = `L − GRID_S`）のタイムが
+/// `[40, 200] s`、全 tick でコリドー逸脱 0 m（`CONTAIN_TOL_M`）。ラップタイムは Tick の
+/// 積み重ねとして計測するだけで、順位・結果は一切生成しない（原則 2）。
+/// `level = 0.2` は T-CORE-AI-11 のスイープ下限 0.3 の外側（T-AI-05R が使う最低能力値）。
+#[test]
+fn t_core_ai_03_standing_start_three_laps() {
+    const LAP_TIME_RANGE_S: (f64, f64) = (40.0, 200.0);
+    let mut report = Vec::new();
+    for level in [0.2, 0.5, 0.9] {
+        let mut model = driver_model(level);
+        model.consistency = 1.0;
+        model.error_rate = 0.0;
+        let corridor_world = world_with_line();
+        let corridor = corridor_world.racing_line().unwrap().corridor();
+        let mut world = world_with_line();
+        let rng = sim_core::rng::driver_rng(&Rng::from_seed(3), VehicleId(0));
+        world
+            .spawn_with_driver(params(), GRID_S, 0.0, model, rng)
+            .unwrap();
+
+        let mut lap_start_tick = 0u64;
+        let mut laps_seen = 0u32;
+        let mut lap_times = Vec::new();
+        let max_ticks = 20_000u64;
+        for _ in 0..max_ticks {
+            world.step_sim_tick();
+            let tick = world.sim_tick();
+            let e = &world.vehicles()[0];
+            if tick > WARMUP_TICKS {
+                let (t_right, t_left) = corridor.limit_bounds(e.coord.s);
+                let outside = (t_right - e.coord.t).max(e.coord.t - t_left).max(0.0);
+                assert!(
+                    outside <= CONTAIN_TOL_M,
+                    "level {level}: corridor breach at s={:.1} lap={}: t={:+.3} not in \
+                     [{t_right:+.3}, {t_left:+.3}] (outside by {outside:.3} m)",
+                    e.coord.s,
+                    e.laps_completed,
+                    e.coord.t,
+                );
+            }
+            if e.laps_completed > laps_seen {
+                laps_seen = e.laps_completed;
+                lap_times.push((tick - lap_start_tick) as f64 * SIM_DT);
+                lap_start_tick = tick;
+            }
+            if laps_seen >= 3 {
+                break;
+            }
+        }
+        assert_eq!(
+            laps_seen, 3,
+            "level {level}: did not complete 3 laps within {max_ticks} sim ticks \
+             (lap times so far {lap_times:?})"
+        );
+        for (i, &lt) in lap_times.iter().enumerate() {
+            assert!(
+                (LAP_TIME_RANGE_S.0..=LAP_TIME_RANGE_S.1).contains(&lt),
+                "level {level}: lap {} time {lt:.3} s outside {LAP_TIME_RANGE_S:?}",
+                i + 1
+            );
+        }
+        report.push(format!("level {level}: {lap_times:.3?}"));
+    }
+    eprintln!("T-CORE-AI-03 lap times [s]: {}", report.join(" / "));
 }

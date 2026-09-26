@@ -1672,6 +1672,186 @@ T-CORE-AI-09                                              → 1.217 ms/tick（�
 
 ---
 
+## TASK-2-4 Phase 2 — Opus 5 裁定（PDC-9）+ Sonnet 分類ラウンド監査（2026-09-26）
+
+**VERDICT（Sonnet 分類ラウンド `7bcd2ae`）: APPROVED。** コード変更（`LOW_PRECISION_STEER_RATE_FLOOR`）は実在する修正で、
+アブレーションで確認した（下記）。**ただし PROPOSED DESIGN CHANGE（§2b）の前提データ「ミス起因の逸脱は 0.2〜8 cm と小さい」は
+誤り（HIGH-1）** — 旧スイープは**最初の逸脱 tick で打ち切って**いたため、その後の帰結を一度も観測していなかった。
+打ち切らずに走らせると、ミス発生レジーム 27 走行のうち **10 本は 48〜161 m コース外へ出て二度と戻れない**。
+これを踏まえて Architect として **PDC-9（下記）を裁定・実装**し、`T-CORE-AI-11` を 11a（ミス無し・0 m・**ignore 解除して
+ゲート入り**）と 11b（ミス発生・回復を要求・ignore＝次タスク）に分割した。あわせて **T-CORE-AI-03（静止発進 3 周）を追加・緑**。
+人間不在のため本ラウンドも Opus が最終判断者（ユーザー指示）。
+
+### 監査対象・スコープ（独立再実行）
+
+- ワークツリーは当初 `ead1032`（無関係な古いブランチ先端・`7bcd2ae` の祖先）に置かれていた → `git merge --ff-only 7bcd2ae` で
+  前進（履歴の破棄・force なし）。
+- `git diff a8ceb8e...7bcd2ae --stat` = `HANDOFF.md` / `TODO.md` / `crates/sim-core/tests/world_ai.rs`（ignore 文言のみ）/
+  `crates/sim-driver/src/controller.rs`（定数 1 個 + 1 行）の 4 ファイル。**`planner.rs` は無変更（申告どおり）**。凍結対象は無変更。**OK。**
+- `grep -rni diagtmp crates/` = 0 件（申告どおり）。
+
+### 独立再実行（Opus・本コンテナ・監査対象 HEAD `7bcd2ae`）
+
+| 項目 | Sonnet 申告 | Opus 再実行 |
+|---|---|---|
+| `cargo fmt --all -- --check` | clean | clean |
+| `cargo clippy --workspace --all-targets -- -D warnings` | 0 | 0 |
+| `cargo test --workspace --release` | 0 failed / ignore 3 | **185 passed（doctest 込み）/ 0 failed / 3 ignored** |
+| wasm32 build / `sim-line --no-default-features` | OK | OK（`rustup target add wasm32-unknown-unknown` 後）|
+| `t_core_ai_11`（ignored） | 16/51 | **16/51 を再現**（ただし breach 位置は Sonnet の数表と一部異なる → LOW-1）|
+
+### `LOW_PRECISION_STEER_RATE_FLOOR` の検証
+
+- **アブレーション**: FLOOR を実質無効（`0.0`）に戻して新 `t_core_ai_11a` を走らせると、**ちょうど
+  `level=0.3 / consistency=0.5 / error_rate=0` の seed 1/2/3 の 3 本だけ**が s≈3377.1〜3377.2（ヘアピン脱出）で落ちる。
+  5.1 に戻すと 27/27 で 0 m。→ **申告どおりの本物の修正**（当て推量の定数ではない）。
+- **高 precision への影響**: `lerp(2.5,6.0,p).max(5.1)` は `p ≥ 2.6/3.5 ≈ 0.743` で恒等。clean 基準（p=0.8）・
+  `t_ai_07`（`model(0.5,0.5,0.5,1.0,…)` → p = 0.5·1.0 + 0.5·0.5 = **0.75**）は構造的に無変更。申告どおり。
+- **MEDIUM-1 を参照**（能力軸の圧縮）。
+
+### Findings
+
+| # | 重大度 | 内容 | 処置 |
+|---|---|---|---|
+| **HIGH-1** | HIGH | **PROPOSED DESIGN CHANGE の前提が打ち切りデータ。** `run_solo_model_laps` は最初の逸脱 tick で `Err` を返していたため、「逸脱 0.2〜8 cm」「数 cm」は**その 1 tick の値**でしかない。打ち切らずに走らせると（本ラウンドで実装）ミス発生 27 走行中 **10 本は 10 s 以内に limits 内へ戻れず 48〜161 m 離れて周回不能**（6/10 はヘアピン進入 s≈3301〜3319 の外側へ数 cm 出たのが起点）。案 A（「ミス時は ≤15 cm」）はこの帰結を議論の外に置いたまま閾値を決める提案になっていた。**同じ盲点は前ラウンドの Opus 監査（「0.3〜12 cm」と記載）にもあった — Architect 側の見落としでもある。** 悪意ではなくハーネスの仕様による | 本ラウンドで修正（PDC-9: スイープを打ち切らない計測へ）|
+| **MEDIUM-1** | MEDIUM | **`precision` → 操舵レートの能力軸が圧縮された。** `max_steer_rate` は `p ∈ [0, 0.743]`（定義域の 74 %）で一定 5.1 になり、実効レンジは 2.5〜6.0 → 5.1〜6.0。分岐点は凍結された**運動学プラント**テスト `t_ai_07` の動作点 0.75 のわずか 0.007 下に置かれており、テストへの当て込みの性格がある。物理的には妥当（正規化操舵 0→フルロック 0.2 s はレーシングドライバーとして普通。旧下限 2.5/s = 0.4 s は鈍すぎた）で、`precision` は `steer_tau` / `pedal_rate` / ノイズでまだ効くので**暫定として受け入れる** | Phase 3 で `t_ai_07`（運動学プラント）廃止後に**折れ線をやめて単一の `lerp` に再導出**し、T-AI-05R/07R（実物理）で能力差が残ることを確認する（NEXT タスクの 4.）|
+| **LOW-1** | LOW | 分類表（§1）は**修正前**の breach 位置。修正後は #4〜#19 の一部で位置が移動している（例: #6 s=3377.3 → 3507.1、#11 s=3423.7 → 3461.0）のに、「全て引き続きミス発生中」は再計測なしの主張（診断は削除済み）| PDC-9 の対比較（下記）で構造的に置き換えたので追加対応不要 |
+| **LOW-2** | LOW | 帰属基準「逸脱直前 3 s 以内に `mistake_*_bias` が有意」は弱い。`error_rate = 0.5` では発火率 0.15 Hz なので、任意の瞬間に直前 3 s 以内にミスが発火している確率は 1 − e^(−0.45) ≈ 36 %。より強い証拠 — **同じ `(level, consistency, seed)` の `error_rate = 0` 走行が 0 m**（ミスは独立ストリーム `rng.derive("mistake")` なので操舵ノイズ系列は同一 = 厳密な反実仮想）— が手元にあったのに使っていない | PDC-9 でスイープ構造そのものに組み込んだ |
+
+CRITICAL: なし。
+
+### PDC-9（Opus 起票・Opus 裁定・本ラウンドで適用）— T-CORE-AI-11 の受け入れ基準をミス有無で分割
+
+```
+ARCHITECT DECISION（PROPOSED DESIGN CHANGE §2b への回答）
+Current Design:
+  T-CORE-AI-11 は error_rate を含む 51 組すべてで「3 周・コリドー逸脱 0 m」。最初の逸脱で打ち切る。
+Decision:
+  案 A（ミス時 ≤15 cm）・案 B（区間依存でミスを抑制）・案 C（現状維持）はいずれも不採用。代わりに:
+  T-CORE-AI-11a（ミス無し: error_rate = 0 の 27 走行）
+    = 3 周・コリドー逸脱 0 m。操舵ノイズ（consistency 0.5）を含む。一切緩めない。ignore なしでゲート入り。
+  T-CORE-AI-11b（ミス発生: error_rate = 0.5 の同じ 27 組）
+    = 逸脱量は問わない。要求は「回復」: (a) 3 周完走、(b) 1 回の track-limits 外エピソードが
+      REJOIN_MAX_S = 10 s 以内に終わる（車体中心が limits 内へ戻る）。
+  両者は同じ (level, consistency, seed) の対。balanced() は error_rate 0.5 / 0.0 の両方を持つ（旧 51 組 → 54 走行）。
+  スイープは最初の逸脱で打ち切らず、最後まで（または 10 s 復帰失敗まで）走らせる。
+Reason:
+  1. 原則 3（乱数は原因に作用させる）: ミスは「原因」であり、実際の帰結（コース幅を使い切る・ラン-オフへの
+     オーバーラン）を生むことが仕様の意図。帰結を 0 m に押さえ込む基準は、チューニングを「ミスを
+     打ち消す」方向へ歪める（Sonnet の指摘どおり）。よって 11b は逸脱量を問わない。
+  2. T-CORE-AI-11 の起票目的は K-1「わずかな操舵ノイズで決定論的に破綻する＝閉ループ安定余裕ゼロ」の否定
+     （TODO.md TASK-2-4 Required Tests 6）。これはノイズの話でありミスの話ではない。11a がそれを 0 m で担保する。
+  3. 帰属は閾値ではなく構造で証明する: ミス注入は Driver 内の独立ストリームで、error_rate は
+     maybe_make_mistake 以外に効かない（grep 確認）。よって 11b の逸脱は、対の 11a が 0 m である限り
+     厳密にミスの下流。「直前 N s にミスがあったか」の窓判定は不要（LOW-2）。
+  4. しかし「ミスの帰結」には上限がある。観戦シミュレーターでコースアウトした車が永遠に芝を走り続けるのは
+     帰結ではなく欠陥。TESTING.md T-RACE-08（インシデント後は全車が走行を再開 or 正常リタイア）の solo 版として
+     「10 s 以内に limits 内へ戻る」を課す。10 s の根拠: ミスの大きさは MISTAKE_STEER_SIGMA 0.010 /
+     MISTAKE_BRAKE_SIGMA 0.05 と小さく、ヘアピンのオーバーラン（ラン-オフ 20〜50 m）でも芝上 10 m/s で 100 m 走れる。
+  5. 案 B は不採用: 区間の余裕を見てミスの発火を変えるのは「結果を見て原因を調整する」そのもので原則 3 に反し、
+     しかも現実のミスは余裕の少ない所（高負荷）でこそ起きやすい。
+  6. 案 C は不採用: 裁定の先送りで、しかも ignore のままでは K-1 の解消（11a 相当）すらゲートで守られない。
+Risk:
+  11b が緑になるまで、ミス発生時の回復は ignore 中のテストでしか見えない → ignore 文に現状数値を明記し、
+  次 Sonnet タスクの主目標にする。11a は PDC-8 の margin 破壊など真の回帰を 0 m で検出する（ミス無しレジームで
+  ロックが起きれば必ず割る）。
+Affected Files: crates/sim-core/tests/world_ai.rs（テストのみ）。sim-driver 無変更。
+```
+
+### Architect ラウンドの実装（本コミット）
+
+- `world_ai.rs`: `run_solo_model_laps` を**打ち切らない計測**へ（最大逸脱・エピソード数・最長エピソード、`REJOIN_MAX_S` 超過/未完走で `Err`）。
+  `sweep_cases(error_rate)`（27 組）+ `run_sweep`（`std::thread::scope` で並列。走行ごとに World/Driver/Rng を新規生成・結果は入力順 → 決定性不変）。
+  `t_core_ai_11_model_sweep_robustness` を **`t_core_ai_11a_model_sweep_mistake_free`（ignore なし）** と
+  **`t_core_ai_11b_model_sweep_mistake_recovery`（ignore・現状 10/27）** に置換。
+- `world_ai.rs`: **`t_core_ai_03_standing_start_three_laps`（新規・緑）**。実グリッド（`s = 40`・`t = 0`）に静止 spawn、
+  ミス無し level 0.2/0.5/0.9 が 3 周完走・全 tick 0 m・各周 40〜200 s。
+
+### 結果（最終コード・Opus 再実行）
+
+```
+cargo fmt --all -- --check                               → clean
+cargo clippy --workspace --all-targets -- -D warnings    → 0
+cargo test --workspace --release                         → 187 passed（doctest 込み）/ 0 failed / 3 ignored
+  ignore 3 = t_core_ai_11b（10/27）+ 凍結 t_ai_01 / t_drv_04（運動学プラント・Phase 3 で廃止予定）
+cargo build -p sim-wasm --target wasm32-unknown-unknown --release → OK
+cargo build -p sim-line --no-default-features            → OK
+t_core_ai_11a（27 走行・ミス無し）                       → 27/27 が 3 周・0.000 m（壁時計 ≈10 s・4 コア）
+t_core_ai_11b（27 走行・ミス発生・ignored）              → 17/27 完走（うち 6 本は最大 5.8 m・最長 3.1 s の逸脱から回復）
+                                                           10/27 は 10 s 以内に戻れず 48〜161 m 離脱
+t_core_ai_03（静止発進 3 周）                            → level 0.2: 101.6 / 97.5 / 97.5 s
+                                                           level 0.5: 100.0 / 95.9 / 95.9 s
+                                                           level 0.9:  98.5 / 94.2 / 94.2 s（全周 0 m）
+```
+
+**11b 失敗 10 本の内訳**（`level/consistency/seed` → 復帰失敗エピソードの起点）: 0.3/0.5/1 s=3310.7、0.3/0.5/2 s=3667.5、
+0.3/0.5/3 s=3303.3（lap 2）、0.5/0.5/1 s=3301.9、0.7/0.5/1 s=1517.1、0.7/0.5/2 s=3461.0、0.9/0.5/1 s=3318.6、
+0.9/0.5/3 s=1347.9（lap 2）、balanced/1 s=3303.2、balanced/3 s=3308.5（lap 2）。**10 本とも consistency=0.5**
+（consistency=1.0・error_rate=0.5 の 12 本は全て完走）。
+
+**Opus の一時診断（削除済み）で見た 3 例のテレメトリ**（`slip_ratio` / 路面 / 操舵 / 向き）:
+- **0.3/0.5/1（ヘアピン進入）**: 逸脱開始 v=19 m/s・`brake=0.18`・1 輪 `slip_ratio=-0.83`・**`steer=-1.00`（右フルロック、
+  左ヘアピンなのに外側へ）**。以後 5 s 間 `steer=-1.00` のまま芝（`SurfaceKind::Grass`）上を進み、向きは接線方向のまま
+  `t` が -7.5 → -46 m。その後向きが反転し（`cos_head` −1）、芝の上で旋回を続けて 15 s 後に 117 m 外・v=2.8 m/s。
+  `throttle` は芝の上でずっと 0.50 に張り付く。
+- **0.7/0.5/1**: s≈1187 で 2 cm 外（グラベル）に出た後 54 m/s のまま 2 s ほどグラベル/縁石を走って自力で戻るが、
+  縁石上で T3 の制動に入り **2 輪 `slip_ratio=-1.00`**（`brake_lock_cap` は舗装 μ を仮定）→ s≈1504 でヨーレート −1.8 rad/s のスピン →
+  芝へ出て同じく復帰不能。
+- **0.9/0.5/3**: s≈3385 の 2 cm 逸脱は 0.5 s で戻り、正常に走行継続（= 許容される帰結の例）。
+
+### 次のシーケンス（Architect 判断）
+
+旧シーケンス（T-CORE-AI-03 → T-AI-01R/05R/07R → Phase 3）は **T-CORE-AI-03 を本ラウンドで完了**。残りの順序は:
+
+1. **T-CORE-AI-11b（コース外からの復帰）** — TASK-2-4 の受け入れ（「T-CORE-AI-11 全組み合わせ」= 11a + 11b）の最後の赤。
+2. **T-AI-01R / 05R / 07R**（実物理の能力値創発・反応遅れ）。参考: T-CORE-AI-03 の実測で level 0.2/0.5/0.9 の周回
+   97.5 / 95.9 / 94.2 s は既に単調・差 ≥ 0.5 s/lap（ミス無し・consistency 1.0 の場合）。
+3. **Phase 3**（運動学プラント廃止。`t_ai_01`/`t_drv_04` の実物理版を `world_ai.rs` で先に緑 → 旧版削除）。
+   Phase 3 で PDC-8 の margin・ゲインスケジュールの要否・`LOW_PRECISION_STEER_RATE_FLOOR`（MEDIUM-1）を再評価。
+
+1 と 2 は独立なので、1 が 3 ラウンドで解けなければ停止・報告して 2 に進んでよい。
+
+### NEXT SONNET TASK — TASK-2-4 Phase 2 残り: コース外からの復帰（T-CORE-AI-11b）（Architect 起票）
+
+**Goal**: `t_core_ai_11b_model_sweep_mistake_recovery` の `#[ignore]` を外して緑にする。**ミスの帰結（コースアウト）を消すのではなく、
+コースアウトから戻れるドライバーにする。**
+
+**Allowed Files**: `crates/sim-driver/src/{controller.rs, planner.rs}`、`crates/sim-core/tests/world_ai.rs`（診断の一時追加と、11b の
+`#[ignore]` 属性の削除のみ）。
+**Do Not Change**: `REJOIN_MAX_S`・11a/11b の合否ロジック・`sweep_cases`（**受け入れ数値の緩和は設計変更**）、
+`crates/sim-driver/src/{lib.rs, driver.rs, model.rs, perception.rs, decision.rs}`（ミスの大きさ・発生率を含む）、
+`sim-line` / `sim-vehicle` / `sim-track` / `sim-math` / `sim-core/src/**` / `sim-wasm/**` / `assets` / `tools`。
+PDC-1〜9 は既定値のまま着手し、勝手に revert しない。
+
+**Required Changes**（1 つずつ・都度 11a / `t_core_ai_10*` / `t_core_ai_03` / 全テスト）:
+1. **診断が先（3 ラウンド連続の教訓）。** 失敗 10 本のうち最低 3 本（ヘアピン型 1・3667/3461 型 1・グラベル→縁石制動型 1）について、
+   逸脱開始の 1 s 前から 10 s 間、`delta_pp` / `delta_ff` / `delta_cs` / `delta_hd`（Controller 内部。一時的な `eprintln!` 等で可・
+   **最終差分に残さない**）、4 輪 `slip_ratio` / `slip_angle`、`surface_at(coord)`、向きの接線との角度、Pure Pursuit の
+   aim 点と自車の相対位置を採る。**特に「左ヘアピンで右フルロック」を 5 s 保持している項がどれか**を数値で示してから触る。
+   仮説（どれも未検証）: (H1) `delta_cs`（逆操舵）/ `delta_hd` が芝上の大スリップで飽和し続ける、(H2) Pure Pursuit の aim 点が
+   コース外の大きな `t` / 大きな向き誤差（>90°）で幾何的に破綻する、(H3) トラクション上限（PDC-3）/ 制動上限（PDC-8）が
+   舗装 μ を仮定しており芝・グラベル・縁石でロック/ホイールスピンする。
+2. 原因に応じて Allowed Files 内で直す。**方向性**（仕様ではなく指針）: limits 外・大きな横偏差・大きな向き誤差のときは
+   「ラインを追う」ではなく「安全に戻る」モード（戻り先はラインではなくコース内の近い点・浅い角度・低い目標速度）。
+   自車直下の路面は `track.surface_at(perceived.coord)` で読んでよい（`Controller::update` / `Planner::update` は既に `&Track` を受け取る。
+   自分の車が芝の上にいるのは運転者が知覚できる情報）。**予見経路（先の路面）に使う場合は perception の遅れ/ノイズを通すこと。**
+3. **禁止**: ミスの検知・打ち消し（`mistake_*_bias` を読んで補償する、`error_rate` で分岐する）、区間依存でミスを抑える、
+   `VehicleState` を書き換える・Transform を触る（原則 1/8）、11b の閾値を動かす、`#[ignore]` を増やす。
+   復帰ロジックが**limits 内の通常走行に効かない**こと（11a・`t_core_ai_10_full`・`t_core_ai_03` が 0 m のまま）。
+
+**Required Tests / Acceptance**:
+- `t_core_ai_11b` が ignore なしで 27/27（3 周完走・各エピソード ≤ 10 s）。
+- `t_core_ai_11a` 27/27・0 m、`t_core_ai_10_full` / `t_core_ai_10_offline_spawn` / `t_core_ai_03` 無回帰。
+- `T-CORE-AI-09`: `step_sim_tick` ≤ 3.5 ms / 24 台、`Driver::update` ≤ 25 µs。
+- clippy 0 / fmt clean / `sim-line --no-default-features` / wasm32 OK。`grep -rni diagtmp crates/` = 0。
+- 完了報告に: 診断の数表（どの項が飽和していたか）、変更した定数/ロジックの前 → 後、11b の各走行の最長エピソード [s] と最大逸脱 [m]。
+- **3 ラウンドで解けなければ停止・報告**（`sim-vehicle` の芝の μ・`DriverObservation` への路面情報追加など凍結側の判断が要る場合は
+  `BLOCKED BY ARCHITECTURE` 形式で）。
+
+**その後（別タスク・本タスクでは着手しない）**: T-AI-01R/05R/07R → Phase 3（上記「次のシーケンス」）。
+
+---
+
 ## TASK-2-4 Phase 1 — land 完了報告（2026-09-10）
 
 **Opus 5（Architect / Quality Gate）Round-2 再監査 = APPROVED。commit 済み。**
