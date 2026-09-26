@@ -328,7 +328,9 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
     const values=[
       Math.round(time*60),raceControl.flag,Math.round(raceControl.cautionUntil*60),raceControl.incidentId??-1,
       raceControl.restartPhase,Math.round((raceControl.restartStartedAt||0)*60),[...raceControl.incidentIds].sort((a,b)=>a-b).join(','),
-      Math.round(environment.wetness*1e6),Math.round(environment.rainRate*1e6),Math.round(environment.visibility*1e6),Math.round(environment.ambientTemp*100)
+      Math.round(environment.wetness*1e6),Math.round(environment.rainRate*1e6),Math.round(environment.visibility*1e6),Math.round(environment.ambientTemp*100),
+      environment.rainTimelineKey??'',Math.round((environment.forecastHorizonSeconds||0)*1000),Math.round((environment.forecastRainRate||0)*1e6),
+      Math.round((environment.forecastRacingLineWetness||0)*1e6),environment.forecastTrend??'STEADY'
     ];
     for(let i=0;i<environment.surfaceLine.length;i++){
       values.push(Math.round(environment.surfaceLine[i]*1e6),Math.round(environment.surfaceOffLine[i]*1e6));
@@ -341,7 +343,7 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
         Math.round((c.systems.energyMJ||0)*1e6),Math.round((c.systems.energyDeploy||0)*1e6),Math.round((c.systems.energyHarvest||0)*1e6),
         Math.round((c.systems.energyReserveTarget||0)*1e6),Math.round((c.systems.energyStrategyHold||0)*1e6),c.systems.energyControllerActive?1:0,c.systems.energyStrategy??'NONE',c.systems.energyMode??'NONE',
         Math.round((c.tyre?.slipRatio??0)*1e6),Math.round((c.tyre?.slipAngle??0)*1e6),Math.round((c.tyre?.loadTransfer??0)*1e6),
-        Math.round((c.incident.spinTimer||0)*1000),c.incident.yawTransient?1:0,Math.round((c.incident.redRecoveryTimer||0)*1000),c.strategy?.reason??'NONE',c.pit.phase,c.finished?1:0,c.retired?1:0
+        Math.round((c.incident.spinTimer||0)*1000),c.incident.yawTransient?1:0,Math.round((c.incident.redRecoveryTimer||0)*1000),c.strategy?.reason??'NONE',c.strategy?.forecastHold?1:0,c.pit.phase,c.finished?1:0,c.retired?1:0
       );
     }
     return fnv1a(values);
@@ -363,7 +365,11 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
           c.systems.mechanicalStress,c.systems.powerDerate,c.systems.energyMJ,c.systems.energyDeploy,c.systems.energyHarvest,c.systems.energyReserveTarget,c.systems.energyStrategyHold,
           c.incident.spinTimer||0,c.incident.redRecoveryTimer||0,
           c.tyre?.slipRatio??0,c.tyre?.slipAngle??0,c.tyre?.loadTransfer??0,c.tyre?.longitudinalAccel??0,c.tyre?.forceUsage??0
-        ].every(Number.isFinite))&&[environment.wetness,environment.rainRate,environment.visibility,environment.ambientTemp,...environment.surfaceLine,...environment.surfaceOffLine].every(Number.isFinite),
+        ].every(Number.isFinite))&&[
+          environment.wetness,environment.rainRate,environment.visibility,environment.ambientTemp,
+          environment.forecastHorizonSeconds,environment.forecastRainRate,environment.forecastRacingLineWetness,
+          ...environment.surfaceLine,...environment.surfaceOffLine
+        ].every(Number.isFinite),
         maxSpeedKph:Math.max(...cars.map(c=>c.v*3.6)),
         pitCars:cars.filter(c=>c.pit.phase!=='TRACK').length,
         contacts:totalContacts,
@@ -382,6 +388,8 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
         racingLineWetness:environment.racingLineWetness,
         offLineWetness:environment.offLineWetness,
         standingWater:environmentState.standingWater,
+        forecastRacingLineWetness:environmentState.forecastRacingLineWetness,
+        forecastTrend:environmentState.forecastTrend,
         wetTyreCars:cars.filter(c=>c.systems.tyreCompound==='WET').length,
         redFlag:raceControl.flag==='RED',
         restartPhase:raceControl.restartPhase,

@@ -28,6 +28,9 @@ export function evaluatePitStrategy(car,track,raceLaps,environment=null){
   // Tyre calls use the representative racing-line condition, not one local
   // puddle under this car. Local surface water still affects vehicle grip.
   const wetness=environment?.racingLineWetness??environment?.wetness??0;
+  const forecastWetness=environment?.forecastRacingLineWetness??wetness;
+  const forecastRainRate=environment?.forecastRainRate??environment?.rainRate??0;
+  const forecastTrend=environment?.forecastTrend??'STEADY';
   const currentCompound=s.tyreCompound||TYRE_COMPOUND.SLICK;
   let desiredCompound=currentCompound;
   if(currentCompound===TYRE_COMPOUND.SLICK){
@@ -40,6 +43,20 @@ export function evaluatePitStrategy(car,track,raceLaps,environment=null){
     if(wetness<.08)desiredCompound=TYRE_COMPOUND.SLICK;
     else if(wetness<.44)desiredCompound=TYRE_COMPOUND.INTERMEDIATE;
   }
+
+  // Forecast is deliberately allowed to veto only a drying-direction change.
+  // It never installs a wetter tyre early on a still-dry track. This prevents
+  // WET->INT->WET and INT->SLICK->INT churn when the authoritative short-term
+  // forecast says the crossing will reverse inside the forecast horizon.
+  let forecastHold=false;
+  if(forecastTrend==='WETTER'){
+    if(currentCompound===TYRE_COMPOUND.INTERMEDIATE&&desiredCompound===TYRE_COMPOUND.SLICK&&forecastWetness>.18){
+      desiredCompound=currentCompound;forecastHold=true;
+    }else if(currentCompound===TYRE_COMPOUND.WET&&desiredCompound===TYRE_COMPOUND.INTERMEDIATE&&forecastWetness>.62){
+      desiredCompound=currentCompound;forecastHold=true;
+    }
+  }
+
   const weatherStop=desiredCompound!==currentCompound;
   let reason=PIT_REASON.NONE;
 
@@ -64,6 +81,10 @@ export function evaluatePitStrategy(car,track,raceLaps,environment=null){
     remainingLaps,
     remainingDistanceLaps,
     wetness,
+    forecastWetness,
+    forecastRainRate,
+    forecastTrend,
+    forecastHold,
     service:{
       tyres:tyreService,
       tyreCompound:tyreService?desiredCompound:currentCompound,
