@@ -12,7 +12,10 @@ export const PIT_REASON=Object.freeze({
 
 export function evaluatePitStrategy(car,track,raceLaps,environment=null){
   const s=car.systems;
-  const remainingLaps=Math.max(0,raceLaps-Math.max(0,car.lap));
+  const completedLaps=Math.max(0,car.lap);
+  const currentLapProgress=car.lap>=0&&track.total>0?Math.max(0,Math.min(1,track.wrapS(car.s)/track.total)):0;
+  const remainingLaps=Math.max(0,raceLaps-completedLaps);
+  const remainingDistanceLaps=Math.max(0,raceLaps-completedLaps-currentLapProgress);
   const projectedFuel=s.burnPerKm*(track.total/1000)*remainingLaps*1.08;
   const damage=car.incident?.damage||0;
   const lastServicedDamage=car.pit.lastServiceDamage??0;
@@ -51,6 +54,7 @@ export function evaluatePitStrategy(car,track,raceLaps,environment=null){
     reason,
     projectedFuel,
     remainingLaps,
+    remainingDistanceLaps,
     wetness,
     service:{
       tyres:tyreService,
