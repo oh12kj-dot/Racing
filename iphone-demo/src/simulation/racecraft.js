@@ -1,5 +1,6 @@
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const TAU=Math.PI*2;
+const G=9.81;
 const wrapAngle=a=>((a+Math.PI)%TAU+TAU)%TAU-Math.PI;
 
 function signedDelta(track,a,b){
@@ -9,8 +10,17 @@ function signedDelta(track,a,b){
   return d;
 }
 function safeLat(a,b){return (a.width+b.width)*.5+.45;}
+function laneLimit(car,track,candidate=car.lane){
+  const base=Math.max(0,track.sample(car.s).halfWidth-car.width*.55-.35);
+  const dir=Math.sign(candidate);
+  const outwardSpeed=dir!==0&&Math.sign(car.laneV||0)===dir?Math.abs(car.laneV||0):0;
+  const lateralBrake=Math.max(1.5,(car.spec.laneChangeG??.7)*G*.8);
+  const stoppingRoom=Math.min(.95,outwardSpeed*outwardSpeed/(2*lateralBrake));
+  return Math.max(0,base-stoppingRoom);
+}
+function boundedLane(car,lane,track){const limit=laneLimit(car,track,lane);return clamp(lane,-limit,limit);}
 function laneAvailable(car,candidate,cars,track,horizon=1.25){
-  if(Math.abs(candidate)>track.sample(car.s).halfWidth-car.width*.55-.35)return false;
+  if(Math.abs(candidate)>laneLimit(car,track,candidate))return false;
   for(const o of cars){
     if(o===car||o.retired||o.finished||o.pit.phase!=='TRACK')continue;
     const d=signedDelta(track,car,o);
@@ -60,6 +70,9 @@ function ensureState(state){
 }
 function resetPass(state,next='RESET'){
   state.state=next;state.targetId=null;state.attackKind=null;state.setupUntil=0;state.switchUntil=0;state.alongsideAt=0;
+}
+function abortPass(state,time){
+  state.state='ABORT';state.targetId=null;state.attackKind=null;state.setupUntil=0;state.switchUntil=0;state.alongsideAt=0;state.commitUntil=time+.8;
 }
 function attackChoice(car,front,cars,track){
   const k=track.curvature(car.s+35);
@@ -139,6 +152,7 @@ export function planRacecraft(car,cars,track,time){
       }
     }
     state.state='SPECIAL';
+    targetLane=boundedLane(car,targetLane,track);
     return{targetLane,targetSpeed,reason,state:state.state,attackKind:state.attackKind};
   }
 
@@ -154,6 +168,10 @@ export function planRacecraft(car,cars,track,time){
   let activeTarget=activeTargetFor(state,cars);
   if(state.targetId!=null&&!activeTarget&&['SETUP','COMMIT','ALONGSIDE','SWITCHBACK'].includes(state.state))resetPass(state);
   activeTarget=activeTargetFor(state,cars);
+  if(activeTarget&&['SETUP','COMMIT','ALONGSIDE','SWITCHBACK'].includes(state.state))state.lane=boundedLane(car,state.lane,track);
+  if(activeTarget&&(state.state==='COMMIT'||state.state==='ALONGSIDE')&&state.commitUntil>0&&time>=state.commitUntil){
+    abortPass(state,time);targetLane=ideal;reason='PASS_TIMEOUT_ABORT';activeTarget=null;
+  }
 
   if(state.state==='SETUP'&&activeTarget&&!car.blueFlag){
     const d=signedDelta(track,car,activeTarget);
@@ -176,7 +194,10 @@ export function planRacecraft(car,cars,track,time){
     }else{
       targetLane=state.lane;
       if(Math.abs(d)<=body*.72&&lateral>=safe*.82){
-        if(state.state!=='ALONGSIDE')state.alongsideAt=time;
+        if(state.state!=='ALONGSIDE'){
+          state.alongsideAt=time;
+          state.commitUntil=Math.max(state.commitUntil,time+1.4);
+        }
         state.state='ALONGSIDE';reason=`PASS_ALONGSIDE_${state.attackKind||'STRAIGHT'}`;
       }else reason=`PASS_COMMIT_${state.attackKind||'STRAIGHT'}`;
 
@@ -194,6 +215,7 @@ export function planRacecraft(car,cars,track,time){
   }
 
   if(state.state==='SWITCHBACK'&&activeTarget&&!car.blueFlag){
+    state.lane=boundedLane(car,state.lane,track);
     targetLane=state.lane;reason='SWITCHBACK_EXIT';
     if(time>=state.switchUntil){state.state='COMMIT';state.commitUntil=time+2.2;}
   }
@@ -269,7 +291,7 @@ export function planRacecraft(car,cars,track,time){
       if(ttc<1.15&&currentLat<safe*.86){targetSpeed=Math.min(targetSpeed,other.v+Math.max(0,(currentLat/safe-.55)*4));reason='PASS_BUILD_OVERLAP';}
       if(ttc<.55&&currentLat<safe*.68){
         targetSpeed=Math.min(targetSpeed,Math.max(0,other.v-2));reason='PASS_ABORT_SAFETY';
-        state.state='ABORT';state.targetId=null;state.attackKind=null;state.commitUntil=time+.7;targetLane=car.lane;
+        abortPass(state,time);targetLane=car.lane;
       }
     }
   }
@@ -286,11 +308,14 @@ export function planRacecraft(car,cars,track,time){
     if(crosses||converges){
       const dir=sepNow===0?(car.id<o.id?-1:1):Math.sign(sepNow);
       const candidate=o.lane+dir*safe;
-      if(Math.abs(candidate)<=6.5)targetLane=candidate;
+      const bounded=boundedLane(car,candidate,track);
+      if(Math.abs(bounded-o.lane)>=safe*.88)targetLane=bounded;
+      else targetSpeed=Math.min(targetSpeed,o.v);
       if(Math.abs(sepNow)<safe*.6)targetSpeed=Math.min(targetSpeed,o.v);
       reason='COLLISION_AVOID';
     }
   }
 
+  targetLane=boundedLane(car,targetLane,track);
   return{targetLane,targetSpeed,reason,state:state.state,attackKind:state.attackKind};
 }
