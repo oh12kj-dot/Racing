@@ -84,6 +84,42 @@ function mainTrackMergeBlocked(car,cars,track){
 function sameTeamService(car,cars){return cars.find(o=>o!==car&&!o.retired&&!o.finished&&o.teamId===car.teamId&&['SERVICE','QUEUE'].includes(o.pit.phase));}
 function pitApproachDecel(car){return clamp(car.spec.brake*.20,3.2,6.5);}
 function brakeEnvelope(car,dist,target){const a=pitApproachDecel(car);return Math.sqrt(Math.max(target*target,target*target+2*a*Math.max(0,dist)));}
+
+export function pitServiceDuration(car,servicePlan=null){
+  // Preserve the established stop duration for legacy callers and for the tyre
+  // operation that dominates the normal planned stop. Other work is modelled as
+  // parallel pit activity and only extends the stop when it physically takes
+  // longer than the tyre job.
+  const legacyTyreTime=3.2+(car.id%4)*.35;
+  if(servicePlan==null)return legacyTyreTime;
+
+  const work=[1.2];
+  if(servicePlan.tyres)work.push(legacyTyreTime);
+
+  if(servicePlan.fuel){
+    const s=car.systems;
+    const target=Math.min(s.fuelCapacity,Math.max(s.fuel,s.fuelCapacity*.82));
+    const litres=Math.max(0,target-s.fuel);
+    const connectTime=.9;
+    const deliveryRate=18; // litres per second inside the simplified service model
+    work.push(connectTime+litres/deliveryRate);
+  }
+
+  if(servicePlan.repair){
+    const damage=clamp(car.incident?.damage||0,0,1);
+    work.push(1.6+damage*6);
+  }
+
+  if(servicePlan.cooling){
+    const s=car.systems;
+    const heat=Math.max(0,(s.engineTemp||0)-94);
+    const stress=clamp(s.mechanicalStress||0,0,1.2);
+    work.push(1.6+heat*.08+stress*3);
+  }
+
+  return Math.max(...work);
+}
+
 export function maybeRequestPit(car,track,emit,decision=null){
   if(car.pit.requested){
     if(decision?.service)car.pit.servicePlan={...decision.service};
@@ -150,7 +186,7 @@ export function planPit(car,cars,track,dt,emit){
       emit?.('PIT_MISSED',car,`${car.name} MISSED THE BOX`);
     }else if(occupied&&toBox<10){p.phase='QUEUE';p.queue=true;}
     else if(Math.abs(toBox)<1.5&&car.v<1.8&&laterallyCaptured){
-      p.phase='SERVICE';p.serviceTimer=3.2+(car.id%4)*.35;p.queue=false;p.missedCount=0;p.serviceApplied=false;
+      p.phase='SERVICE';p.serviceTimer=pitServiceDuration(car,p.servicePlan);p.queue=false;p.missedCount=0;p.serviceApplied=false;
       emit?.('PIT_SERVICE',car,`${car.name} IN THE BOX`);
     }
   }
