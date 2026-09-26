@@ -15,9 +15,18 @@ export function ensureComponentDamage(incident){
 }
 
 export function applyImpactComponentDamage(incident,deltaV,contact,response){
-  if(!incident||!(response?.impactImpulse>0)||!(response?.impactSpeed>0))return 0;
+  if(!incident)return 0;
   const severity=Math.max(0,(Number(deltaV)||0)-1.5)*.010;
   if(severity<=0)return 0;
+
+  // Preserve the legacy aggregate contract exactly: once contact resolution has
+  // been applied, aggregate damage is derived from delta-V even when the
+  // response contains separation correction rather than genuine impact impulse.
+  incident.damage=clamp((Number(incident.damage)||0)+severity,0,1);
+
+  // Detailed component state is stricter than the legacy aggregate. Pure
+  // separation correction must never manufacture directional component damage.
+  if(!(response?.impactImpulse>0)||!(response?.impactSpeed>0))return 0;
 
   const damage=ensureComponentDamage(incident);
   const longitudinal=clamp(Math.abs(contact?.normalLong??response?.normalLong??0),0,1);
@@ -30,9 +39,6 @@ export function applyImpactComponentDamage(incident,deltaV,contact,response){
   damage.powertrain=clamp(damage.powertrain+severity*(.62*longitudinal+.10*lateral),0,1);
   damage.steering=clamp(damage.steering+severity*(.12*longitudinal+.82*lateral),0,1);
   damage.brakes=clamp(damage.brakes+severity*(.18*longitudinal+.45*lateral),0,1);
-
-  // Preserve the legacy aggregate contract while detailed consumers migrate.
-  incident.damage=clamp((Number(incident.damage)||0)+severity,0,1);
   return severity;
 }
 
