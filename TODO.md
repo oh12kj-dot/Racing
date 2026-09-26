@@ -2994,3 +2994,67 @@ cargo fmt --all -- --check                             → clean
 cargo clippy --workspace --all-targets -- -D warnings  → 0
 cargo test --workspace --release                       → 195 passed / 0 failed / 1 ignored（不変）
 ```
+
+---
+
+## TASK-2-4 Phase 4a — F-7 分解: `brake_lock_cap` の推定 Fz は実測より 25〜60% 過大（Sonnet 5・2026-09-26）
+
+**要約**: Phase 4a 項目 4（F-7 分解: `s 3290〜3315` の各輪 `slip_ratio`・`brake_lock_cap` の推定内輪
+荷重 vs 物理側の実荷重を tick 表で）を実施。**結論: `brake_lock_cap` の前輪内側（ヘアピン左折で
+FL）推定 Fz は、ロック中を通じて実測 Fz より 25〜60% 大きい。原因は PDC-14 が `traction_throttle_cap`
+で特定・修正したのと同じ欠陥クラス（横荷重推定に `kappa_traj`（計画曲率）を使い、実ヨーレート
+`r/v` を見ない）が `brake_lock_cap` にも残っていること。ただし PDC-14 の A 案自体が「制動上限に
+入れると 11a が壊れる」ことを既に確認済み（`TODO.md` PDC-14 節）であり、本ラウンドはその既知の
+制約を実測で裏付けただけで、新しい修正案は提示しない**。
+
+### 一時計装（診断後に完全 revert・`grep -rni diagtmp crates/` = 0・`git diff --stat` = 空）
+
+- `crates/sim-driver/src/controller.rs::brake_lock_cap`: 環境変数 `DIAGTMP_F7` ゲートで、収束後の
+  `b`・前輪内外の推定 Fz を `eprintln!`。
+- `crates/sim-core/tests/world_ai.rs`: `diagtmp_f7_trace_hairpin_entry`（`#[ignore]`）。
+  `driver_model(0.9)`・`consistency=1.0`・`error_rate=0.0`（クリーンな 1 周）で `s=3283〜3320`
+  の毎 tick、前輪 `slip_ratio`・実 `load`（`WheelState::load` = 物理側 Fz）・`brake` を記録。
+
+### トレース実測（`seed=1`。抜粋。FL = ヘアピン内輪、左カーブで `kappa_traj > 0`）
+
+```
+s=3301.09 brake=0.404 FL(sr=-1.000 fz=2605.8)   推定: b=0.426 fz_FL_est=3243.9   比 1.245
+s=3303.78 brake=0.376 FL(sr=-1.000 fz=2289.5)   推定: b=0.388 fz_FL_est=2982.0   比 1.303
+s=3304.83 brake=0.399 FL(sr=-1.000 fz=2117.9)   推定: b=0.445 fz_FL_est=3367.8   比 1.590 ← 最大乖離
+s=3308.55 brake=0.232 FL(sr=-1.000 fz=1934.5)   推定: b=0.000 fz_FL_est=1100.1   比 0.569 ← ロック末期は逆転
+```
+
+FL は `s=3301.09〜3311.76`（約 10.7 m・速度 20〜25 m/s で概算 0.45〜0.5 s）の間 `slip_ratio ≈ -1.000`
+に張り付き続ける。ロック区間の大半（`s≈3301〜3306`）で推定 Fz は実測の **1.25〜1.6 倍**。つまり
+`brake_lock_cap` は「まだ縦に踏める余地がある」と過大評価して `b`（許容 brake）を高く保ち続け、
+実際にはとうに飽和している内輪をロックさせ続ける。末期（`s≈3308.5` 以降）は逆に推定が実測を
+下回る局面もあるが、その時点では既に `b=0.000`（制動を完全に諦めている）ため実害はない。
+
+### 原因（PDC-14 と同型）
+
+`brake_lock_cap` の `lat_transfer_total = lat_force * cg_height`・`lat_force = mass·v²·kappa_traj` は
+**計画軌道の曲率**を使っており、トレイルブレーキング中の**実ヨーレート**（旋回の立ち上がり・
+車体の実際の横加速度 `v·r`）を見ない。PDC-14 の「因果連鎖」節が `traction_throttle_cap` について
+報告したのと同じ形の乖離で、ヘアピン進入の turn-in 過渡で実ヨーレートが定常旋回の見積もり
+（`v·kappa_traj`）を上回ると、実際の荷重移動は計画値より大きく（＝内輪 Fz は計画値より小さく）
+なる。今回の実測（1.25〜1.6 倍の過大評価）はこの機序と符号・オーダーとも整合する。
+
+### 判断: 新規 PDC は起票しない（既知の制約の確認のみ）
+
+PDC-14 節が既に記録済みのとおり、`load_curvature()` の横負荷見積もり改善（A 案）を制動上限にも
+適用すると **11a が全面赤化する**（ヘアピン進入の制動がヨーで削られ全車オーバーラン）。本ラウンドの
+実測はこの制約の物理的な理由（推定 Fz が実測を系統的に超過している構造）を裏付けたに留まり、
+「A 案を制動側にも安全に適用する方法」は本ラウンドでは見つけていない（`v·r` を直接使うと過渡の
+一瞬だけ横負荷が跳ね上がり、健全な走行でも `brake_lock_cap` が瞬間的に絞られてしまうため、
+`κ_traj` と `r/v` の単純な `max` では効きすぎる可能性がある — フィルタリングや遅延ブレンドなどの
+設計が要り、これは Sonnet の診断スコープを超える）。F-6/F-7 の PDC 裁定を Architect に委ねる。
+
+### ゲート（変更なし・確認のみ。一時計装は削除済み）
+
+```
+grep -rni diagtmp crates/                              → 0 件
+git diff --stat                                        → 空（診断のみ・commit なし）
+cargo fmt --all -- --check                             → clean
+cargo clippy --workspace --all-targets -- -D warnings  → 0
+cargo test --workspace --release                       → 195 passed / 0 failed / 1 ignored（不変）
+```
