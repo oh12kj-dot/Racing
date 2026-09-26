@@ -3,6 +3,7 @@ const mean=values=>values.length?values.reduce((sum,value)=>sum+value,0)/values.
 
 export const TYRE_COMPOUND=Object.freeze({SLICK:'SLICK',INTERMEDIATE:'INTERMEDIATE',WET:'WET'});
 export const SURFACE_SECTORS=48;
+export const DEFAULT_FORECAST_HORIZON_SECONDS=120;
 
 export function tyreWeatherGrip(compound,wetness){
   const w=clamp(wetness??0,0,1);
@@ -22,6 +23,41 @@ export function tyreIdealTemperature(compound,wetness){
   return 92-7*w;
 }
 
+function normalizeRainTimeline(config,initialRainRate){
+  const raw=Array.isArray(config.rainTimeline)?config.rainTimeline:[];
+  const points=[{time:0,rainRate:initialRainRate,order:-1}];
+  raw.forEach((point,index)=>{
+    const time=Number(point?.time);
+    const rainRate=Number(point?.rainRate);
+    if(!Number.isFinite(time)||time<0||!Number.isFinite(rainRate))return;
+    points.push({time,rainRate:clamp(rainRate,0,1),order:index});
+  });
+  points.sort((a,b)=>a.time-b.time||a.order-b.order);
+  const merged=[];
+  for(const point of points){
+    const normalized={time:point.time,rainRate:point.rainRate};
+    if(merged.length&&Math.abs(merged[merged.length-1].time-point.time)<1e-9)merged[merged.length-1]=normalized;
+    else merged.push(normalized);
+  }
+  return merged;
+}
+
+export function rainRateAt(environment,time){
+  const timeline=environment?.rainTimeline;
+  if(!Array.isArray(timeline)||timeline.length===0)return clamp(environment?.rainRate??0,0,1);
+  const t=Math.max(0,Number.isFinite(time)?time:0);
+  if(t<=timeline[0].time)return timeline[0].rainRate;
+  for(let i=1;i<timeline.length;i++){
+    const next=timeline[i];
+    if(t>next.time)continue;
+    const prev=timeline[i-1];
+    const span=Math.max(1e-9,next.time-prev.time);
+    const u=clamp((t-prev.time)/span,0,1);
+    return prev.rainRate+(next.rainRate-prev.rainRate)*u;
+  }
+  return timeline[timeline.length-1].rainRate;
+}
+
 function ensureSurface(environment){
   const base=clamp(environment.wetness??0,0,1);
   if(!Array.isArray(environment.surfaceLine)||environment.surfaceLine.length!==SURFACE_SECTORS){
@@ -34,12 +70,36 @@ function ensureSurface(environment){
   environment.offLineWetness=mean(environment.surfaceOffLine);
 }
 
-function evolveWetness(wetness,environment,dt,dryingScale=1){
-  const rainGain=environment.rainRate*.010*(1-wetness);
-  const drying=environment.rainRate<.05
+function evolveWetness(wetness,environment,dt,dryingScale=1,rainRate=environment.rainRate){
+  const rain=clamp(rainRate??0,0,1);
+  const rainGain=rain*.010*(1-wetness);
+  const drying=rain<.05
     ?environment.dryingRate*.0015*(.35+wetness)*dryingScale
     :environment.dryingRate*.00025*wetness*dryingScale;
   return clamp(wetness+(rainGain-drying)*dt,0,1);
+}
+
+function projectWetness(environment,startWetness,horizon,dryingScale=1){
+  let wetness=clamp(startWetness??0,0,1);
+  let elapsed=0;
+  const total=Math.max(0,horizon||0);
+  while(elapsed<total-1e-9){
+    const dt=Math.min(5,total-elapsed);
+    const sampleTime=environment.elapsed+elapsed+dt*.5;
+    wetness=evolveWetness(wetness,environment,dt,dryingScale,rainRateAt(environment,sampleTime));
+    elapsed+=dt;
+  }
+  return wetness;
+}
+
+function refreshForecast(environment){
+  ensureSurface(environment);
+  const horizon=clamp(environment.forecastHorizonSeconds??DEFAULT_FORECAST_HORIZON_SECONDS,10,600);
+  environment.forecastHorizonSeconds=horizon;
+  environment.forecastRainRate=rainRateAt(environment,environment.elapsed+horizon);
+  environment.forecastRacingLineWetness=projectWetness(environment,environment.racingLineWetness,horizon,1.04);
+  const delta=environment.forecastRacingLineWetness-environment.racingLineWetness;
+  environment.forecastTrend=delta>.06?'WETTER':delta<-.06?'DRIER':'STEADY';
 }
 
 function sectorPosition(environment,track,s){
@@ -69,24 +129,33 @@ export function surfaceConditionAt(environment,track,s,lane=0){
 
 export function createEnvironment(config={}){
   const wetness=clamp(config.initialWetness??0,0,1);
-  const rainRate=clamp(config.rainRate??0,0,1);
+  const initialRainRate=clamp(config.rainRate??0,0,1);
+  const rainTimeline=normalizeRainTimeline(config,initialRainRate);
   const environment={
     wetness,
-    rainRate,
+    rainRate:rainTimeline[0]?.rainRate??initialRainRate,
+    rainTimeline,
+    rainTimelineKey:rainTimeline.map(point=>`${point.time.toFixed(3)}:${point.rainRate.toFixed(4)}`).join('|'),
+    forecastHorizonSeconds:clamp(config.forecastHorizonSeconds??DEFAULT_FORECAST_HORIZON_SECONDS,10,600),
+    forecastRainRate:initialRainRate,
+    forecastRacingLineWetness:wetness,
+    forecastTrend:'STEADY',
     dryingRate:clamp(config.dryingRate??1,0,3),
     ambientTemp:clamp(config.ambientTemp??24,-5,45),
-    visibility:clamp(1-rainRate*.45-wetness*.18,.35,1),
+    visibility:clamp(1-initialRainRate*.45-wetness*.18,.35,1),
     elapsed:0,
     surfaceLine:Array(SURFACE_SECTORS).fill(wetness),
     surfaceOffLine:Array(SURFACE_SECTORS).fill(wetness),
     racingLineWetness:wetness,
     offLineWetness:wetness
   };
+  refreshForecast(environment);
   return environment;
 }
 
 export function stepEnvironment(environment,dt,cars=null,track=null){
   environment.elapsed+=dt;
+  environment.rainRate=rainRateAt(environment,environment.elapsed);
   environment.wetness=evolveWetness(environment.wetness,environment,dt,1);
   ensureSurface(environment);
 
@@ -112,11 +181,13 @@ export function stepEnvironment(environment,dt,cars=null,track=null){
   environment.racingLineWetness=mean(environment.surfaceLine);
   environment.offLineWetness=mean(environment.surfaceOffLine);
   environment.visibility=clamp(1-environment.rainRate*.45-environment.wetness*.18,.35,1);
+  refreshForecast(environment);
   return environment;
 }
 
 export function environmentSnapshot(environment){
   ensureSurface(environment);
+  refreshForecast(environment);
   const wetness=clamp(environment.wetness,0,1);
   const racingLineWetness=clamp(environment.racingLineWetness,0,1);
   const offLineWetness=clamp(environment.offLineWetness,0,1);
@@ -128,6 +199,10 @@ export function environmentSnapshot(environment){
     offLineWetness,
     standingWater,
     rainRate:clamp(environment.rainRate,0,1),
+    forecastHorizonSeconds:environment.forecastHorizonSeconds,
+    forecastRainRate:clamp(environment.forecastRainRate,0,1),
+    forecastRacingLineWetness:clamp(environment.forecastRacingLineWetness,0,1),
+    forecastTrend:environment.forecastTrend,
     dryingRate:environment.dryingRate,
     ambientTemp:environment.ambientTemp,
     visibility:environment.visibility,
