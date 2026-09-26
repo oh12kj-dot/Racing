@@ -246,16 +246,26 @@ export function needsPit(car){
 
 export function serviceSystems(car,servicePlan=null){
   const s=car.systems;
-  if([TYRE_COMPOUND.SLICK,TYRE_COMPOUND.INTERMEDIATE,TYRE_COMPOUND.WET].includes(servicePlan?.tyreCompound))s.tyreCompound=servicePlan.tyreCompound;
-  s.fuel=Math.min(s.fuelCapacity,Math.max(s.fuel,s.fuelCapacity*.82));
-  s.tyreWear=0;
-  s.tyreTemp=s.tyreCompound===TYRE_COMPOUND.WET?70:s.tyreCompound===TYRE_COMPOUND.INTERMEDIATE?76:80;
-  s.brakeTemp=Math.min(s.brakeTemp,260);
-  s.engineTemp=Math.min(s.engineTemp,94);
-  s.mechanicalStress=Math.max(0,s.mechanicalStress-.35);
-  s.powerDerate=s.failed?1:0;
-  s.grip=1;
+  const fullService=servicePlan==null;
+  const tyreService=fullService||!!servicePlan?.tyres;
+  const fuelService=fullService||!!servicePlan?.fuel;
+  const repairService=fullService||!!servicePlan?.repair;
+  const coolingService=fullService||!!servicePlan?.cooling;
+
+  if(tyreService){
+    if([TYRE_COMPOUND.SLICK,TYRE_COMPOUND.INTERMEDIATE,TYRE_COMPOUND.WET].includes(servicePlan?.tyreCompound))s.tyreCompound=servicePlan.tyreCompound;
+    s.tyreWear=0;
+    s.tyreTemp=s.tyreCompound===TYRE_COMPOUND.WET?70:s.tyreCompound===TYRE_COMPOUND.INTERMEDIATE?76:80;
+    s.grip=1;
+    if(car.tyre){car.tyre.slipRatio=0;car.tyre.slipAngle=0;}
+  }
+  if(fuelService)s.fuel=Math.min(s.fuelCapacity,Math.max(s.fuel,s.fuelCapacity*.82));
+  if(coolingService){
+    s.brakeTemp=Math.min(s.brakeTemp,260);
+    s.engineTemp=Math.min(s.engineTemp,94);
+    s.mechanicalStress=Math.max(0,s.mechanicalStress-.35);
+    s.powerDerate=s.failed?1:0;
+  }
+  if(repairService&&car.incident)car.incident.damage=Math.max(0,car.incident.damage-.32);
   s.serviceCount++;
-  if(car.incident)car.incident.damage=Math.max(0,car.incident.damage-.32);
-  if(car.tyre){car.tyre.slipRatio=0;car.tyre.slipAngle=0;}
 }
