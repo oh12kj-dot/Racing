@@ -193,3 +193,36 @@ test('ERS-13: reserve target releases continuously with fractional race distance
   expect(plan.remainingLaps).toBe(6);
   expect(plan.remainingDistanceLaps).toBeCloseTo(5.75,6);
 });
+
+test('ERS-14: Formula, Hyper and LMH retain distinct deployment and regeneration character',()=>{
+  const types=['formula','hyper','lmh'];
+  const deploySpent={};
+  const harvestGained={};
+  const capacity={};
+
+  for(const type of types){
+    const attack=makeCar(type,55);
+    capacity[type]=attack.systems.energyCapacityMJ;
+    attack.strategy={remainingLaps:4,remainingDistanceLaps:4};
+    attack.racecraft.state='COMMIT';
+    attack.systems.energyMJ=attack.systems.energyCapacityMJ*.76;
+    attack.throttle=1;attack.brake=0;
+    const deployStart=attack.systems.energyMJ;
+    for(let i=0;i<120;i++)stepSystems(attack,FIXED_DT);
+    deploySpent[type]=deployStart-attack.systems.energyMJ;
+
+    const harvest=makeCar(type,48);
+    harvest.systems.energyMJ=harvest.systems.energyCapacityMJ*.25;
+    harvest.throttle=0;harvest.brake=1;
+    const harvestStart=harvest.systems.energyMJ;
+    for(let i=0;i<120;i++)stepSystems(harvest,FIXED_DT);
+    harvestGained[type]=harvest.systems.energyMJ-harvestStart;
+  }
+
+  expect(capacity.formula).toBeLessThan(capacity.hyper);
+  expect(capacity.hyper).toBe(capacity.lmh);
+  expect(deploySpent.hyper).toBeGreaterThan(deploySpent.lmh);
+  expect(deploySpent.lmh).toBeGreaterThan(deploySpent.formula);
+  expect(harvestGained.hyper).toBeGreaterThan(harvestGained.lmh);
+  expect(harvestGained.lmh).toBeGreaterThan(harvestGained.formula);
+});
