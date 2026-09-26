@@ -3,6 +3,7 @@ import {FIXED_DT,buildEntrants} from '../src/config.js';
 import {createVehicleState,stepVehicle} from '../src/simulation/vehicle.js';
 import {stepSystems,energyDriveFactor} from '../src/simulation/systems.js';
 import {createRaceSimulation} from '../src/simulation/race.js';
+import {evaluatePitStrategy} from '../src/simulation/strategy.js';
 
 const STRAIGHT_TRACK={
   total:100000,
@@ -165,4 +166,30 @@ test('ERS-11: authoritative hash and finite diagnostics include hybrid energy st
   expect(sim.stateHash()).not.toBe(baseline);
   car.systems.energyMJ=Number.NaN;
   expect(sim.snapshot().diagnostics.finite).toBeFalsy();
+});
+
+test('ERS-12: switchback remains an active attack deployment phase',()=>{
+  const car=makeCar('formula',52);
+  car.strategy={remainingLaps:4,remainingDistanceLaps:3.6};
+  car.racecraft.state='SWITCHBACK';car.throttle=1;car.brake=0;
+  stepSystems(car,FIXED_DT);
+  expect(car.systems.energyStrategy).toBe('ATTACK');
+  expect(car.systems.energyDeploy).toBeGreaterThan(.9);
+  expect(car.systems.energyMode).toBe('ATTACK');
+});
+
+test('ERS-13: reserve target releases continuously with fractional race distance',()=>{
+  const start=makeCar('formula',52),late=makeCar('formula',52);
+  start.racecraft.state=late.racecraft.state='COMMIT';
+  start.strategy={remainingLaps:6,remainingDistanceLaps:6};
+  late.strategy={remainingLaps:6,remainingDistanceLaps:5.1};
+  start.throttle=late.throttle=1;start.brake=late.brake=0;
+  stepSystems(start,FIXED_DT);stepSystems(late,FIXED_DT);
+  expect(start.systems.energyReserveTarget).toBeGreaterThan(late.systems.energyReserveTarget+.015);
+
+  const raceCar=makeCar('formula',52);
+  raceCar.lap=2;raceCar.s=STRAIGHT_TRACK.total*.25;
+  const plan=evaluatePitStrategy(raceCar,STRAIGHT_TRACK,8);
+  expect(plan.remainingLaps).toBe(6);
+  expect(plan.remainingDistanceLaps).toBeCloseTo(5.75,6);
 });
