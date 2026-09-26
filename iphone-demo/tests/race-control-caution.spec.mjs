@@ -115,3 +115,18 @@ test('RACE-12: safety car cannot release a compressed queue until physical gaps 
   rc.update(clearAt+.2,cars,track);
   expect(rc.flag).toBe('GREEN');
 });
+
+test('RACE-14: safety-car queue target can fall to a stop behind a stationary queue car',()=>{
+  const {track,cars}=field(4),rc=createRaceControl();
+  const [leader,stopped,follower,incident]=cars;
+  leader.s=leader.totalProgress=540;leader.v=18;
+  stopped.s=stopped.totalProgress=510;stopped.v=0;
+  follower.s=follower.totalProgress=493;follower.v=24;
+  incident.s=incident.totalProgress=450;incident.v=0;incident.incident.damage=.7;
+  rc.update(20,cars,track);
+  expect(rc.flag).toBe('SAFETY_CAR');
+  expect(rc.queueCars(cars)).toEqual([leader,stopped,follower]);
+  const target=rc.targetFor(follower,cars,track);
+  expect(target).toBeLessThan(7);
+  expect(target).toBeGreaterThanOrEqual(0);
+});

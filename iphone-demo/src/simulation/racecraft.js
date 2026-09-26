@@ -89,41 +89,55 @@ export function planRacecraft(car,cars,track,time){
   const nearby=cars.filter(o=>o!==car&&!o.retired&&!o.finished&&o.pit.phase==='TRACK').map(o=>({o,d:signedDelta(track,car,o)}));
   const ahead=nearby.filter(x=>x.d>0&&x.d<130).sort((a,b)=>a.d-b.d);
   const behind=nearby.filter(x=>x.d<0&&x.d>-45).sort((a,b)=>b.d-a.d);
+  const cautionNoPass=!!car.cautionNoPass;
 
   let targetLane=ideal,targetSpeed=Infinity,reason='RACING_LINE';
 
   const hazard=ahead.find(x=>x.d<85&&(x.o.incident.spinTimer>.2||x.o.v<4));
   if(hazard){
-    const horizon=clamp(hazard.d/Math.max(8,car.v),.65,1.45);
-    const sweep=hazardSweep(car,hazard.o,track,horizon);
-    const left=sweep.min,right=sweep.max;
-    const options=[left,right].filter(l=>laneAvailable(car,l,cars,track,.9));
-    if(options.length){
-      options.sort((a,b)=>Math.abs(a-car.lane)-Math.abs(b-car.lane));
-      targetLane=options[0];
+    // Under a neutralised field, a stationary hazard is approached as a stop,
+    // not as an overtaking opportunity. This keeps the queue in one corridor and
+    // prevents healthy cars from creating a secondary multi-lane blockage.
+    if(cautionNoPass&&hazard.o.v<4){
       const body=(car.length+hazard.o.length)*.5;
-      const usable=Math.max(.1,hazard.d-body);
-      const closing=Math.max(.1,car.v-hazard.o.v);
-      const ttc=usable/closing;
-      // Preserve enough time to complete the lateral escape. This is a speed
-      // plan, not a velocity clamp; vehicle physics still owns actual braking.
-      const lateralDistance=Math.abs(targetLane-car.lane);
-      const lateralTime=Math.max(1.0,lateralDistance/Math.max(1.5,car.spec.laneChangeG*2.1));
-      const safeTtc=clamp(lateralTime+.55,1.45,2.35);
-      if(ttc<safeTtc){
-        const allowedClosing=usable/safeTtc;
-        targetSpeed=Math.min(targetSpeed,hazard.o.v+allowedClosing);
-      }else targetSpeed=Math.min(targetSpeed,car.v);
-      reason='HAZARD_EVADE';
+      const usable=Math.max(0,hazard.d-body-3.0);
+      const brakeAuthority=followingBrakeAuthority(car);
+      const safeApproach=Math.sqrt(Math.max(0,hazard.o.v*hazard.o.v+2*brakeAuthority*usable));
+      targetLane=car.lane;
+      targetSpeed=Math.min(car.v,safeApproach);
+      if(usable<1.0)targetSpeed=Math.min(targetSpeed,Math.max(0,hazard.o.v-1));
+      reason='CAUTION_HAZARD_BRAKE';
     }else{
-      targetSpeed=Math.min(targetSpeed,Math.max(0,hazard.o.v-2));
-      reason='HAZARD_BRAKE';
+      const horizon=clamp(hazard.d/Math.max(8,car.v),.65,1.45);
+      const sweep=hazardSweep(car,hazard.o,track,horizon);
+      const left=sweep.min,right=sweep.max;
+      const options=[left,right].filter(l=>laneAvailable(car,l,cars,track,.9));
+      if(options.length){
+        options.sort((a,b)=>Math.abs(a-car.lane)-Math.abs(b-car.lane));
+        targetLane=options[0];
+        const body=(car.length+hazard.o.length)*.5;
+        const usable=Math.max(.1,hazard.d-body);
+        const closing=Math.max(.1,car.v-hazard.o.v);
+        const ttc=usable/closing;
+        // Preserve enough time to complete the lateral escape. This is a speed
+        // plan, not a velocity clamp; vehicle physics still owns actual braking.
+        const lateralDistance=Math.abs(targetLane-car.lane);
+        const lateralTime=Math.max(1.0,lateralDistance/Math.max(1.5,car.spec.laneChangeG*2.1));
+        const safeTtc=clamp(lateralTime+.55,1.45,2.35);
+        if(ttc<safeTtc){
+          const allowedClosing=usable/safeTtc;
+          targetSpeed=Math.min(targetSpeed,hazard.o.v+allowedClosing);
+        }else targetSpeed=Math.min(targetSpeed,car.v);
+        reason='HAZARD_EVADE';
+      }else{
+        targetSpeed=Math.min(targetSpeed,Math.max(0,hazard.o.v-2));
+        reason='HAZARD_BRAKE';
+      }
     }
     state.state='SPECIAL';
     return{targetLane,targetSpeed,reason,state:state.state,attackKind:state.attackKind};
   }
 
-  const cautionNoPass=!!car.cautionNoPass;
   if(cautionNoPass){
     resetPass(state,'CAUTION');targetLane=car.lane;reason='CAUTION_HOLD_LINE';
   }else if(car.blueFlag){

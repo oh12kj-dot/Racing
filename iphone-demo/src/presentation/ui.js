@@ -12,6 +12,19 @@ function fmtDelta(row,metersKey,secondsKey,leader=false){
   return '--';
 }
 function fmtCompound(compound){return compound==='INTERMEDIATE'?'INT':compound||'SLICK';}
+function fmtEnergy(sys){
+  const capacity=Math.max(0,sys?.energyCapacityMJ||0);
+  if(capacity<=0)return '';
+  const soc=Math.max(0,Math.min(1,(sys.energyMJ||0)/capacity));
+  const reserve=Math.max(0,Math.min(1,sys.energyReserveTarget||0));
+  const deploy=Math.max(0,Math.min(1,sys.energyDeploy||0));
+  const harvest=Math.max(0,Math.min(1,sys.energyHarvest||0));
+  let activity='READY';
+  if(harvest>.02)activity=`HARVEST ${Math.round(harvest*100)}%`;
+  else if(deploy>.02)activity=`DEPLOY ${Math.round(deploy*100)}%`;
+  else if(sys.energyMode==='RESERVE')activity='RESERVE';
+  return `ERS ${Math.round(soc*100)}% · ${sys.energyStrategy||'BALANCED'} · ${activity} · RSV ${Math.round(reserve*100)}%`;
+}
 export function createUI(root,callbacks={}){
   root.innerHTML=`
   <div class="hud">
@@ -106,12 +119,14 @@ export function createUI(root,callbacks={}){
       const gap=fmtDelta(row,'gapToLeaderMeters','gapToLeaderSeconds',row?.overallPosition===1);
       const interval=fmtDelta(row,'intervalMeters','intervalSeconds',row?.overallPosition===1);
       const reliability=sys.failed?`FAIL ${sys.failureReason??'MECHANICAL'}`:`ENG ${Math.round(sys.engineTemp)}°C · STRESS ${Math.round((sys.mechanicalStress||0)*100)}% · DERATE ${Math.round((sys.powerDerate||0)*100)}%`;
+      const energy=fmtEnergy(sys);
       els.tele.innerHTML=`<div class="muted">${car.number} ${car.name} · ${car.spec.label}${car.blueFlag?' · BLUE FLAG':''}</div>
         <div class="big">${Math.round(car.v*3.6)} <span class="muted">km/h</span></div>
         <div class="muted">P${row?.overallPosition??'--'} · CLASS P${row?.classPosition??'--'} · GAP ${gap} · INT ${interval}</div>
         <div class="muted">L${displayLap} · ${row?.status??car.pit.phase} · ${car.racecraft.state} · PITS ${row?.pitStops??0}</div>
         <div class="muted">TYRE ${fmtCompound(sys.tyreCompound)} · WEAR ${Math.round(sys.tyreWear*100)}% · ${Math.round(sys.tyreTemp)}°C · WET ${Math.round((weather?.wetness??0)*100)}%</div>
         <div class="muted">FUEL ${sys.fuel.toFixed(1)}L · ${reliability}</div>
+        ${energy?`<div class="muted">${energy}</div>`:''}
         <div class="muted">CUR ${fmtTime(row?.currentLapTime)} · LAST ${fmtTime(row?.lastLap)} · BEST ${fmtTime(row?.bestLap)}</div>`;
     }
     const lines=snapshot.events.slice(-4);

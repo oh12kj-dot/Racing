@@ -338,6 +338,8 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
         c.id,c.lap,Math.round(c.s*1000),Math.round(c.v*1000),Math.round(c.lane*1000),Math.round(c.yaw*1e5),Math.round(c.yawRate*1e5),Math.round(c.steer*1e5),c.gear,
         Math.round(c.systems.fuel*1000),Math.round(c.systems.tyreWear*1e6),Math.round(c.systems.tyreTemp*1000),Math.round(c.systems.grip*1e6),c.systems.tyreCompound,
         Math.round(c.systems.mechanicalStress*1e6),Math.round(c.systems.powerDerate*1e6),c.systems.failed?1:0,c.systems.failureReason??'NONE',
+        Math.round((c.systems.energyMJ||0)*1e6),Math.round((c.systems.energyDeploy||0)*1e6),Math.round((c.systems.energyHarvest||0)*1e6),
+        Math.round((c.systems.energyReserveTarget||0)*1e6),Math.round((c.systems.energyStrategyHold||0)*1e6),c.systems.energyControllerActive?1:0,c.systems.energyStrategy??'NONE',c.systems.energyMode??'NONE',
         Math.round((c.tyre?.slipRatio??0)*1e6),Math.round((c.tyre?.slipAngle??0)*1e6),Math.round((c.tyre?.loadTransfer??0)*1e6),
         Math.round((c.incident.spinTimer||0)*1000),c.incident.yawTransient?1:0,Math.round((c.incident.redRecoveryTimer||0)*1000),c.strategy?.reason??'NONE',c.pit.phase,c.finished?1:0,c.retired?1:0
       );
@@ -358,7 +360,8 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
       diagnostics:{
         finite:cars.every(c=>[
           c.s,c.v,c.lane,c.laneV,c.yaw,c.yawRate,c.steer,c.gear,c.systems.fuel,c.systems.tyreWear,c.systems.tyreTemp,c.systems.grip,
-          c.systems.mechanicalStress,c.systems.powerDerate,c.incident.spinTimer||0,c.incident.redRecoveryTimer||0,
+          c.systems.mechanicalStress,c.systems.powerDerate,c.systems.energyMJ,c.systems.energyDeploy,c.systems.energyHarvest,c.systems.energyReserveTarget,c.systems.energyStrategyHold,
+          c.incident.spinTimer||0,c.incident.redRecoveryTimer||0,
           c.tyre?.slipRatio??0,c.tyre?.slipAngle??0,c.tyre?.loadTransfer??0,c.tyre?.longitudinalAccel??0,c.tyre?.forceUsage??0
         ].every(Number.isFinite))&&[environment.wetness,environment.rainRate,environment.visibility,environment.ambientTemp,...environment.surfaceLine,...environment.surfaceOffLine].every(Number.isFinite),
         maxSpeedKph:Math.max(...cars.map(c=>c.v*3.6)),
