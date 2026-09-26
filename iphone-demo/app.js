@@ -29,6 +29,15 @@ function environmentFromQuery(){
   const mode=(query.get('weather')||'').toLowerCase();
   if(mode==='wet')return{initialWetness:.72,rainRate:0,dryingRate:0,ambientTemp:18};
   if(mode==='rain')return{initialWetness:.10,rainRate:.68,dryingRate:.25,ambientTemp:17};
+  if(mode==='changeable')return{
+    initialWetness:.16,rainRate:.05,dryingRate:.45,ambientTemp:18,forecastHorizonSeconds:120,
+    rainTimeline:[
+      {time:45,rainRate:.72},
+      {time:180,rainRate:.72},
+      {time:300,rainRate:.08},
+      {time:420,rainRate:0}
+    ]
+  };
   return null;
 }
 function stepSimulation(seconds){
