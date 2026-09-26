@@ -58,7 +58,7 @@ function attackEnergyRequested(car){
 }
 
 function defenseEnergyRequested(car){
-  return !attackEnergyRequested(car)&&!!car.racecraft?.defenseUsed;
+  return !attackEnergyRequested(car)&&!!car.racecraft?.defenseActive;
 }
 
 function remainingRaceLaps(car){
