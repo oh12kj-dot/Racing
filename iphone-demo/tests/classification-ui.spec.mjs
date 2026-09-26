@@ -61,7 +61,7 @@ test('UI classification: leaderboard and tracked telemetry render authoritative 
   await expect(telemetry).toContainText('DERATE ');
 });
 
-test('UI hybrid energy: tracked hybrid cars expose SOC, strategy, mode and reserve target only in presentation',async({page})=>{
+test('UI hybrid energy: tracked hybrid cars separate strategy from deploy activity',async({page})=>{
   await page.goto('/iphone-demo/index.html?runtimeTest=1',{waitUntil:'domcontentloaded'});
   await page.waitForFunction(()=>!!window.__RACING_RACE__&&!!window.__RACING_LIFECYCLE__&&document.querySelectorAll('.lb-row').length===24);
   await page.evaluate(()=>window.__RACING_LIFECYCLE__.pauseForTest());
@@ -71,13 +71,17 @@ test('UI hybrid energy: tracked hybrid cars expose SOC, strategy, mode and reser
     const car=sim.cars.find(candidate=>(candidate.systems?.energyCapacityMJ||0)>0);
     car.systems.energyMJ=car.systems.energyCapacityMJ*.625;
     car.systems.energyStrategy='DEFEND';
-    car.systems.energyMode='HARVEST';
+    car.systems.energyMode='ATTACK';
+    car.systems.energyDeploy=.86;
+    car.systems.energyHarvest=0;
     car.systems.energyReserveTarget=.24;
     return car.id;
   });
 
   await page.locator(`.lb-row[data-id="${hybridId}"]`).click();
-  await expect(page.locator('#telemetry')).toContainText('ERS 63% · DEFEND · HARVEST · RSV 24%');
+  const telemetry=page.locator('#telemetry');
+  await expect(telemetry).toContainText('ERS 63% · DEFEND · DEPLOY 86% · RSV 24%');
+  await expect(telemetry).not.toContainText('DEFEND · ATTACK');
 
   const nonHybridId=await page.evaluate(()=>window.__RACING_RACE__.cars.find(candidate=>(candidate.systems?.energyCapacityMJ||0)<=0).id);
   await page.locator(`.lb-row[data-id="${nonHybridId}"]`).click();
