@@ -193,3 +193,20 @@ test('ERS-13: reserve target releases continuously with fractional race distance
   expect(plan.remainingLaps).toBe(6);
   expect(plan.remainingDistanceLaps).toBeCloseTo(5.75,6);
 });
+
+test('ERS-14: pit lane suppresses deployment while retaining braking regeneration',()=>{
+  const car=makeCar('formula',48);
+  car.strategy={remainingLaps:1,remainingDistanceLaps:.6};
+  car.racecraft.state='COMMIT';car.pit.phase='FAST_LANE';car.throttle=1;car.brake=0;
+  const start=car.systems.energyMJ;
+  stepSystems(car,FIXED_DT);
+  expect(car.systems.energyStrategy).toBe('ENDGAME');
+  expect(car.systems.energyDeploy).toBe(0);
+  expect(car.systems.energyMJ).toBeCloseTo(start,6);
+  expect(energyDriveFactor(car)).toBe(1);
+
+  car.systems.energyMJ=1;car.throttle=0;car.brake=1;
+  for(let i=0;i<120;i++)stepSystems(car,FIXED_DT);
+  expect(car.systems.energyHarvest).toBeGreaterThan(.9);
+  expect(car.systems.energyMJ).toBeGreaterThan(1.10);
+});
