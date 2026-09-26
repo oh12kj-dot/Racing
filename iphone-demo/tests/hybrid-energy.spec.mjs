@@ -128,20 +128,22 @@ test('ERS-08: caution suppresses deployment while braking still regenerates ener
   expect(car.systems.energyStrategy).toBe('CAUTION');
 });
 
-test('ERS-09: defence may deploy energy but hysteresis prevents strategy flapping',()=>{
+test('ERS-09: active defence may deploy energy but stale one-move history does not',()=>{
   const car=makeCar('formula',52);
-  car.strategy={remainingLaps:4};car.racecraft.state='RESET';car.racecraft.defenseUsed=true;
+  car.strategy={remainingLaps:4};car.racecraft.state='RESET';car.racecraft.defenseUsed=true;car.racecraft.defenseActive=true;
   car.throttle=1;car.brake=0;
   stepSystems(car,FIXED_DT);
   expect(car.systems.energyStrategy).toBe('DEFEND');
   expect(car.systems.energyDeploy).toBeGreaterThan(.9);
 
-  car.racecraft.defenseUsed=false;
+  car.racecraft.defenseActive=false;
   stepSystems(car,FIXED_DT);
+  expect(car.racecraft.defenseUsed).toBeTruthy();
   expect(car.systems.energyStrategy).toBe('DEFEND');
   expect(car.systems.energyDeploy).toBe(0);
   for(let i=0;i<70;i++)stepSystems(car,FIXED_DT);
   expect(car.systems.energyStrategy).toBe('BALANCED');
+  expect(car.systems.energyDeploy).toBe(0);
 });
 
 test('ERS-10: low SOC enters save mode before crossing the strategic reserve',()=>{
