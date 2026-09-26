@@ -166,15 +166,15 @@ fn t_core_ai_06_racing_line_generated_once() {
 
 /// 現在コース保持が緑を維持できる弧長の上限 [m]。
 ///
-/// **TASK-2-4 Phase 1（Architect 監査）で `3100 → 1400`（T3 手前）へ縮小**。本物の out-in-out
-/// レーシングライン（Phase 1）では T3 進入速度が上がり、lateral inner loop（K-1）が保持できず
-/// clean 0.6 でも s≈1561 で `coord.t` が `limit_bounds` を 7 cm 超える。`s < 1400` は T1 の
-/// **95% 幅ライン**と T2 を含むので、Phase 2 の回帰網として実際に機能する。T3 以降の全周版は
-/// `#[ignore]` の `t_core_ai_10_full` に温存（`S_VALIDATED_FULL_M`）。
-/// **縮小と ignore の両方をやることで回帰情報は失われない**（Architect Round-4 訂正裁定）。
-const S_VALIDATED_M: f64 = 1400.0;
-/// 全周版（K-1 解消後・Phase 2 の受け入れ）の弧長上限 [m]。
-const S_VALIDATED_FULL_M: f64 = 3100.0;
+/// **TASK-2-4 Phase 2（本ラウンド）で `1400 → 3100` へ復元**。K_HEADING/K_YAW_DAMP の速度
+/// スケジュール（[`sim_driver::controller`] の `k_heading_scaled`/`k_yaw_damp_scaled`）+
+/// `delta_cs` の `beta_dot` 位相進みで T3（s≈1561）は clean 0.6 で worst excursion 0.000 m
+/// まで解消した。`s < 3100` は T3 を含む Phase 1 検証区間全体をカバーする。
+/// **s ≥ 3100 は新規に発見したヘアピン進入（s≈3305）の未解決の逸脱を含むため、
+/// 全周版は引き続き `#[ignore]` の `t_core_ai_10_full`（`S_VALIDATED_FULL_M`）に温存する。**
+const S_VALIDATED_M: f64 = 3100.0;
+/// 全周版（K-1 解消後・Phase 2 の受け入れ）の弧長上限 [m]。全周長そのもの。
+const S_VALIDATED_FULL_M: f64 = 4139.0;
 /// コリドー封じ込めの許容 [m]。Architect 契約どおり 0 m。
 const CONTAIN_TOL_M: f64 = 0.0;
 
@@ -237,6 +237,102 @@ fn run_solo_from_until(seed: u64, spawn_t: Option<f64>, until_s: f64, mut f: imp
          (final s = {:.1}, t = {:+.2}). regression?",
         world.vehicles()[0].coord.s,
         world.vehicles()[0].coord.t,
+    );
+}
+
+/// solo・任意の `DriverModel`（ライン上 spawn）で `laps` 周完走するまで走らせ、
+/// 各 tick でコリドー封じ込めを検証する（TASK-2-4 Phase 2・T-CORE-AI-11）。
+/// 逸脱があれば最初の 1 件を `Err` で返す（panic せず sweep 全体を続けられるように）。
+fn run_solo_model_laps(seed: u64, model: DriverModel, laps: u32) -> Result<(), String> {
+    let line_corridor = world_with_line();
+    let corridor = line_corridor.racing_line().unwrap().corridor();
+    let mut world = world_with_line();
+    let rng = sim_core::rng::driver_rng(&Rng::from_seed(seed), VehicleId(0));
+    let gt = line_t(&world, GRID_S);
+    world
+        .spawn_with_driver(params(), GRID_S, gt, model, rng)
+        .unwrap();
+
+    let max_ticks = 20_000u64;
+    for _ in 0..max_ticks {
+        world.step_sim_tick();
+        let e = &world.vehicles()[0];
+        if world.sim_tick() > WARMUP_TICKS {
+            let (t_right, t_left) = corridor.limit_bounds(e.coord.s);
+            let outside = (t_right - e.coord.t).max(e.coord.t - t_left).max(0.0);
+            if outside > CONTAIN_TOL_M {
+                return Err(format!(
+                    "corridor breach at s={:.1} lap={}: t={:+.3} not in [{:+.3}, {:+.3}] \
+                     (outside by {:.3} m)",
+                    e.coord.s, e.laps_completed, e.coord.t, t_right, t_left, outside
+                ));
+            }
+        }
+        if e.laps_completed >= laps {
+            return Ok(());
+        }
+    }
+    let e = &world.vehicles()[0];
+    Err(format!(
+        "did not complete {laps} laps within {max_ticks} sim ticks \
+         (laps_completed={}, s={:.1}, t={:+.2})",
+        e.laps_completed, e.coord.s, e.coord.t,
+    ))
+}
+
+/// T-CORE-AI-11 — 堅牢性スイープ（TASK-2-4 Phase 2・K-1 の実質的合否判定）。
+/// `level ∈ {0.3,0.5,0.7,0.9}` × `consistency ∈ {0.5,1.0}` × `error_rate ∈ {0.0,0.5}` ×
+/// seed 3 本の全組み合わせ + `DriverModel::balanced()`（3 seed）で、全周 3 周・コリドー逸脱 0 m。
+#[test]
+#[ignore = "TASK-2-4 Phase 2（本ラウンド・未解決）: T3（s≈1561）はゲインスケジュール + \
+            delta_cs 位相進みで全組み合わせ解消したが、**51 組み合わせ中ほぼ全てが \
+            s≈3300〜3314 の新規ヘアピン進入で決定論的に逸脱する**（`t_core_ai_10_full` の \
+            ignore 理由を参照。乱数非依存・level 0.3〜0.9 のほぼ全域で再現）。level 0.5 / \
+            consistency 0.5 の一部と balanced() は T3 手前（s≈1546〜1594）でも逸脱が残り、\
+            T3 の安定余裕がまだゼロに近いモデルが存在することも示す。**3 周完走・0 逸脱は \
+            未達**。Allowed Files（controller.rs/planner.rs）の範囲で 3 ラウンド \
+            （ゲインスケジュール / delta_cs 位相進み / lookahead 下限）を試したが解消せず、\
+            contract の『3 ラウンドで解けない場合は止めて報告』に従い停止する。次の診断対象は \
+            s=3250〜3305 の進入区間（応答不足型・sim-line との相互作用を疑う）。"]
+fn t_core_ai_11_model_sweep_robustness() {
+    let levels = [0.3, 0.5, 0.7, 0.9];
+    let consistencies = [0.5, 1.0];
+    let error_rates = [0.0, 0.5];
+    let seeds = [1u64, 2u64, 3u64];
+
+    let mut failures = Vec::new();
+    let mut runs = 0u32;
+
+    for &level in &levels {
+        for &consistency in &consistencies {
+            for &error_rate in &error_rates {
+                for &seed in &seeds {
+                    let mut model = driver_model(level);
+                    model.consistency = consistency;
+                    model.error_rate = error_rate;
+                    runs += 1;
+                    if let Err(e) = run_solo_model_laps(seed, model, 3) {
+                        failures.push(format!(
+                            "level={level} consistency={consistency} error_rate={error_rate} \
+                             seed={seed}: {e}"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    for &seed in &seeds {
+        runs += 1;
+        if let Err(e) = run_solo_model_laps(seed, DriverModel::balanced(), 3) {
+            failures.push(format!("balanced() seed={seed}: {e}"));
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "T-CORE-AI-11: {}/{runs} combinations breached the corridor:\n{}",
+        failures.len(),
+        failures.join("\n")
     );
 }
 
@@ -439,43 +535,43 @@ fn corridor_containment_check(spawn_t: Option<f64>, until_s: f64) {
     );
 }
 
-/// T-CORE-AI-10 — コリドー封じ込め（ライン上 spawn・`s < S_VALIDATED_M` = 1400・T3 手前）。
-/// T1 の 95% 幅ラインと T2 を含む Phase 2 の回帰網。T3 以降は K-1 のため
-/// `t_core_ai_10_full`（`#[ignore]`）、`t = 0` spawn は `t_core_ai_10_offline_spawn`（`#[ignore]`）へ。
+/// T-CORE-AI-10 — コリドー封じ込め（ライン上 spawn・`s < S_VALIDATED_M` = 3100・T3 を含む）。
+/// TASK-2-4 Phase 2 で T3（K-1）を解消したため `S_VALIDATED_M` を 1400 → 3100 へ復元した。
+/// s ≥ 3100（新規発見のヘアピン進入問題）は `t_core_ai_10_full`（`#[ignore]`）へ。
 #[test]
 fn t_core_ai_10_corridor_containment_validated_section() {
     corridor_containment_check(None, S_VALIDATED_M);
 }
 
-/// T-CORE-AI-10-FULL — 全周版（ライン上 spawn・`s < 3100`）。
+/// T-CORE-AI-10-FULL — 全周版（ライン上 spawn・`s < S_VALIDATED_FULL_M` = 4139 = 全周）。
 /// **TASK-2-4 Phase 2 の受け入れ = この ignore を外す。**
 #[test]
-#[ignore = "K-1（TASK-2-4 Phase 1）: 本物の out-in-out レーシングライン（Phase 1 で幅使用を回復）\
-            では T3 進入速度が上がり、lateral inner loop（K_HEADING / K_YAW_DAMP / delta_cs の位相）\
-            が保持できず s≈1561 で coord.t が limit_bounds を 7 cm 超え、その後 |t|≈19.5 m まで \
-            excursion する。過剰正則化された λ 版では緑だったが、それはラインがぬるく T3 進入が \
-            遅かったため（緑だが実は壊れている状態）。**S_VALIDATED_M の縮小は t_core_ai_10_full \
-            とセットでのみ許される。単独での縮小は禁止**（回帰情報が消える）。TASK-2-4 Phase 2 \
-            （lateral inner loop の実タイヤ再設計）で解消し、この ignore を外して全周へ。"]
+#[ignore = "TASK-2-4 Phase 2（本ラウンド）: T3（s≈1561、K-1 の起票根拠）は K_HEADING/K_YAW_DAMP \
+            の速度スケジュール + delta_cs の beta_dot 位相進みで解消し、clean 0.6 は s=3100 まで \
+            worst excursion 0.000 m。**しかし s≈3300〜3310 のヘアピン進入で新規の逸脱を発見**: \
+            kappa_traj が s=3300 の 0.0085 から s=3305 で 0.037（R≈27 m）まで短い距離で急増する \
+            区間で steer_raw が s=3302.5〜3307 の間ほぼ全区間 -1.0（フルロック）に張り付き、\
+            heading_error はロック中も -0.28→-0.39 rad と拡大し続ける（=フルロックでも要求ヨー \
+            レートに追いつけない）。clean 0.6 で s=3310.5 に t=-7.585（limit -7.500 を 8.6 cm 超え）。\
+            T3 のような発散振動ではなく、進入区間全体（s=3250〜3300）で yaw_rate がカーブ曲率の \
+            増加に対し一貫して遅れる**応答不足**型で、T3 の対策（ゲインスケジュール/位相進み）を \
+            この区間にも適用したが解消しなかった。T-CORE-AI-11 でモデルスイープすると ほぼ全ての \
+            level/consistency/error_rate 組み合わせが同じ s≈3300〜3314 で同じ向きに逸脱する \
+            （決定論的・乱数非依存）。sim-line（速度プロファイル or 基準ライン）とこの区間の \
+            相互作用を疑うが、Allowed Files（controller.rs/planner.rs）の範囲では未解決。\
+            次ラウンドの診断対象として TODO.md に申し送る。"]
 fn t_core_ai_10_full() {
     corridor_containment_check(None, S_VALIDATED_FULL_M);
 }
 
 /// T-CORE-AI-10-OFFLINE — 実グリッド位置（`t = 0` = センターライン）から spawn したときの
-/// コリドー封じ込め。**TASK-2-4 Phase 2 の受け入れ = この ignore を外す。**
+/// コリドー封じ込め。
 ///
-/// `line_t` のコメント参照: TASK-2-4 Phase 1 で `t_at(GRID_S) ≈ +4.6 m` になり、現行の
-/// lateral inner loop は S/F ストレート上でこの 4.6 m レーンチェンジを立ち上がりから
-/// 実行できず s≈71 でコリドーを割る（HEAD ではクリーンだった）。Driver を回すテストの
-/// spawn をライン上へ固定してこの失敗を T3 の失敗から切り離しているが、その回帰情報を
-/// ここで保持する。3 本目の T3 由来 ignore とは別の、4 本目の正直な ignore。
+/// TASK-2-4 Phase 2（本ラウンド）で解消: Pure Pursuit の `LOOKAHEAD_MIN_M` を 5.0 → 9.0 へ
+/// 引き上げ、発進直後の低速・大横オフセット（S/F ストレートで `t_at(GRID_S) ≈ +4.6 m`）による
+/// `delta_pp` 飽和 → スピンを防いだ。`S_VALIDATED_M`（= 3100・T3 を含む）まで worst excursion
+/// 0.000 m を確認。
 #[test]
-#[ignore = "K-1（TASK-2-4 Phase 1）: 現行 lateral inner loop は S/F ストレート上で基準線までの \
-            4.6 m レーンチェンジを立ち上がりから実行できず、t=0 spawn だと s≈71 でコリドーを割り \
-            s≈126 でコースアウトする（HEAD ではクリーンだった）。単独走行テストの spawn を \
-            ライン上へ固定してこの失敗を T3 の失敗から切り離しているため、その回帰を本テストで \
-            記録する。TASK-2-4 Phase 2（lateral inner loop の実タイヤ再設計・運動学プラント廃止・\
-            人間承認 B）で解消し、この ignore を外す。"]
 fn t_core_ai_10_offline_spawn() {
     corridor_containment_check(Some(0.0), S_VALIDATED_M);
 }

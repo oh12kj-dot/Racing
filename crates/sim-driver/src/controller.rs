@@ -23,6 +23,11 @@ use sim_vehicle::{ControlInput, VehicleParams, AIR_DENSITY, GRAVITY};
 const BETA_LIMIT_RAD: f64 = 0.12;
 /// 逆操舵ゲイン（road wheel angle [rad] / スリップ角 [rad]）。
 const K_COUNTERSTEER: f64 = 0.9;
+/// 逆操舵の位相進み時定数 [s]（TASK-2-4 Phase 2）。`beta` のみに比例する逆操舵は
+/// ヨー運動に対し 90° 遅れる（Architect 起票）。`beta_dot` を加えた予測項
+/// `beta + K_CS_LEAD_S * beta_dot` で位相を進める。`beta_dot` は `stabilise` 経路の
+/// 前 tick 差分（[`SIM_DT`] 固定ステップなので単純差分で決定的）。
+const K_CS_LEAD_S: f64 = 0.25;
 /// ヘディング誤差フィードバックのゲイン（road wheel angle [rad] / [rad]）。
 ///
 /// `ARCHITECTURE.md` §6 Perception 表の「安定化（Controller の逆操舵・**ヨー減衰**）」。
@@ -32,9 +37,35 @@ const K_COUNTERSTEER: f64 = 0.9;
 /// TASK-2-3 Part F: 運動学プラント向けの `0.55` は実物理（実タイヤの緩和 + 荷重移動で
 /// 実効遅れが増える）では高速直進で `-K_HEADING·he` が共振周波数で正帰還になり、
 /// ヨーレートが 1 Hz で発散した（s≈500 以降・50 m/s で観測）。`0.30` へ下げて安定化。
+///
+/// TASK-2-4 Phase 2: 実タイヤのヨー定常ゲイン `v/(L + K_us·v²)` は非単調なので、
+/// 固定ゲインはどこかで marginal になる（Architect 起票）。低速側は据え置き
+/// （`V_REF_HEADING` 以下で `K_HEADING_0` そのまま）、高速側で減衰させる
+/// [`k_heading_scaled`] を通すこと。**この定数自体は `K_HEADING_0`（速度スケジュール前の
+/// 基準値）として使う。**
 const K_HEADING: f64 = 0.30;
 /// 余剰ヨーレート減衰のゲイン（road wheel angle [rad] / [rad/s]）。
+/// [`K_HEADING`] と同じ速度スケジュールを [`k_yaw_damp_scaled`] で通す。
 const K_YAW_DAMP: f64 = 0.16;
+/// 速度スケジュールの基準速度 [m/s]。`v <= V_REF_HEADING` では [`K_HEADING`] /
+/// [`K_YAW_DAMP`] をそのまま使う（既存値の再現点）。TASK-2-3 Part F の resonance が
+/// 実測された `50 m/s` の直線速度をそのまま基準に置く。
+const V_REF_HEADING: f64 = 50.0;
+/// 速度スケジュールの下限速度 [m/s]（ゼロ割回避。発進直後はこれでクランプ）。
+const V_MIN_HEADING: f64 = 8.0;
+/// 速度スケジュールのゲイン下限比率（`V_REF_HEADING / v` の下限）。
+const K_SCALE_MIN: f64 = 0.35;
+
+/// `K_HEADING` の速度スケジュール版。`v <= V_REF_HEADING` は `K_HEADING` のまま、
+/// それを超えると `V_REF_HEADING / v` に比例して下がる（下限 `K_SCALE_MIN`）。
+fn k_heading_scaled(v: f64) -> f64 {
+    K_HEADING * clamp(V_REF_HEADING / v.max(V_MIN_HEADING), K_SCALE_MIN, 1.0)
+}
+
+/// `K_YAW_DAMP` の速度スケジュール版（[`k_heading_scaled`] と同じ形）。
+fn k_yaw_damp_scaled(v: f64) -> f64 {
+    K_YAW_DAMP * clamp(V_REF_HEADING / v.max(V_MIN_HEADING), K_SCALE_MIN, 1.0)
+}
 /// アンダーステア勾配 [rad / (m/s²)]。要求横加速度に比例して舵角を足す（PDC-5）。
 ///
 /// 実車のアンダーステア勾配は 0.001〜0.003 rad/(m/s²) 程度。ダウンフォース込みの
@@ -133,6 +164,7 @@ pub struct Controller {
     prev_steer: f64,
     steer_filt: f64,
     steer_noise: f64,
+    prev_beta: f64,
     prev_throttle: f64,
     prev_brake: f64,
     long_mode: LongMode,
@@ -168,6 +200,7 @@ impl Controller {
             prev_steer: 0.0,
             steer_filt: 0.0,
             steer_noise: 0.0,
+            prev_beta: 0.0,
             prev_throttle: 0.0,
             prev_brake: 0.0,
             long_mode: LongMode::Coast,
@@ -224,10 +257,16 @@ impl Controller {
         );
 
         // 3) 逆操舵（TASK-1B-1 C-1 対策・必須）。安定化経路の beta を使う。
+        // TASK-2-4 Phase 2: `beta` のみだとヨー運動に 90° 遅れるため、`beta_dot`
+        // （前 tick との単純差分。SIM_DT 固定なので決定的）を加えた予測項で位相を進める。
+        // `t_drv_02` は sideslip 一定（`beta_dot ≈ 0` へ収束）の定常テストなので符号は不変。
         let beta = stabilise.sideslip;
+        let beta_dot = (beta - self.prev_beta) / SIM_DT;
+        self.prev_beta = beta;
+        let beta_lead = beta + K_CS_LEAD_S * beta_dot;
         let beta_lim = BETA_LIMIT_RAD * lerp(0.8, 1.2, self.cornering_skill);
-        let excess = (beta.abs() - beta_lim).max(0.0);
-        let delta_cs = -K_COUNTERSTEER * beta.signum() * excess;
+        let excess = (beta_lead.abs() - beta_lim).max(0.0);
+        let delta_cs = -K_COUNTERSTEER * beta_lead.signum() * excess;
         // スライド中はスロットル上限を絞る（無いと限界付近で素直にスピンする）。
         // 滑らかに絞る（PDC-3 随伴。深さは SLIDE_CUT_DEPTH、過渡は後段の move_towards）。
         let throttle_slide_cap = 1.0 - SLIDE_CUT_DEPTH * saturate(excess / beta_lim);
@@ -236,8 +275,8 @@ impl Controller {
         //     heading_error + = 車体が目標より左 → 右へ戻す（road angle 負）。
         //     必要ヨーレート ≈ speed·κ_traj。それを超える分だけ減衰する。
         let desired_yaw_rate = stabilise.speed * kappa_traj;
-        let delta_hd = -K_HEADING * stabilise.heading_error
-            - K_YAW_DAMP * (stabilise.yaw_rate - desired_yaw_rate);
+        let delta_hd = -k_heading_scaled(stabilise.speed) * stabilise.heading_error
+            - k_yaw_damp_scaled(stabilise.speed) * (stabilise.yaw_rate - desired_yaw_rate);
 
         // 4) 合成 → 正規化。road-wheel angle は + が左、steer 出力は + が右。
         let delta_target = delta_pp + delta_ff + delta_cs + delta_hd + state.mistake_steer_bias;

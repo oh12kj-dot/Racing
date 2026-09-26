@@ -1223,6 +1223,87 @@ or `sim-vehicle` 側の疑いが出るため、凍結解除の判断が要る）
 
 ---
 
+## TASK-2-4 Phase 2 — 進捗メモ（Sonnet 5・2026-09-26・**未完了・3 ラウンドで停止し報告**）
+
+> 人間承認 B が下りたため着手。git commit はしていない（作業ツリーに残す）。
+
+**Scope Confirmation**: `git diff --stat` は `crates/sim-driver/src/controller.rs` /
+`crates/sim-driver/src/planner.rs` / `crates/sim-core/tests/world_ai.rs` の 3 ファイルのみ。
+Allowed Files 以外（`sim-line/**` / `sim-vehicle/**` / `sim-math/**` / `sim-track/**` /
+`sim-wasm/**` / `view-engineering/**` / `assets/**` / `tools/**`）は無変更。
+`crates/sim-driver/src/{lib.rs, driver.rs, model.rs, perception.rs, decision.rs}` も無変更。
+
+**人間承認**: B（本ラウンドの前提。A は TASK-2-4 Phase 1 で承認済み）。
+
+**診断（Required Changes 1）**: `controller.rs::update` に一時的な env-var ゲート付き
+`eprintln!`（`SIM_DEBUG_STEER=1`）を入れ、`t_core_ai_10_full` で `he`/`beta`/`yaw_rate`/
+`delta_pp`/`delta_ff`/`delta_cs`/`delta_hd` を時系列採取した（完了後に削除・commit には残さない）。
+T3（s≈1454〜1561）: `delta_cs` が 0 のまま（`|beta|` が `beta_lim` 未満）で
+`yaw_rate` が 15 m 区間で 0 → 0.94 rad/s へ急増する発散振動を確認。`delta_hd` は正しい向きに
+減衰しているが振幅を止め切れていなかった（Architect 起票どおり、固定ゲインが marginal）。
+
+**Phase 2 実施**: 実施した（Phase 1 だけでは T3 は解消しない。修正前の HEAD で
+`t_core_ai_10_full` は s=1561.6 で 6.9 cm 逸脱することを確認済み — Phase 1 land 報告のとおり）。
+
+**Phase 2 変更（定数の変更前 → 変更後）**:
+
+| 定数/関数 | 変更前 | 変更後 |
+|---|---|---|
+| `K_HEADING` | `0.30`（固定） | `0.30` を `k_heading_scaled(v)` の基準値として維持（`V_REF_HEADING=50`, `V_MIN_HEADING=8`, `K_SCALE_MIN=0.35` で `v ≤ 50` はそのまま、`v > 50` で比例減衰） |
+| `K_YAW_DAMP` | `0.16`（固定） | 同じ速度スケジュールで `k_yaw_damp_scaled(v)` |
+| `delta_cs`（逆操舵） | `beta` のみに比例 | `beta_lead = beta + K_CS_LEAD_S · beta_dot`（`K_CS_LEAD_S = 0.25`）に比例。`beta_dot` は `stabilise.sideslip` の前 tick との単純差分（`SIM_DT` 固定なので決定的）。`t_drv_02` は sideslip 一定の定常テストなので `beta_dot → 0` に収束し符号は不変（再実行で確認済み） |
+| `planner.rs::LOOKAHEAD_MIN_M` | `5.0` | `9.0`（`t=0` spawn 直後、低速+大横オフセットで `delta_pp` が飽和しスピンしていたのを解消） |
+
+**3 周完走**: **未達**。`S_VALIDATED_M`（T3 を含む区間・1400→3100 に復元）までは
+clean 0.6 で worst excursion **0.000 m**。`t_core_ai_10_offline_spawn`（`t=0` spawn）も
+`S_VALIDATED_M` まで **0.000 m**。しかし **s≈3300〜3310 のヘアピン進入で新規の逸脱を発見**
+（S_VALIDATED_FULL_M を 3100→4139=全周へ広げて初めて到達する区間。従来 3100 でカットされていて
+未検証だった）。`kappa_traj` が s=3300 の 0.0085 から s=3305 の 0.037（R≈27 m）まで急増する
+短い区間で `steer_raw` が s=3302.5〜3307 の間ほぼ全区間 `-1.0`（フルロック）に張り付き、
+`heading_error` はロック中も `-0.28 → -0.39 rad` と拡大し続ける。T3 型の発散振動ではなく、
+進入区間全体（s≈3250〜3300）で `yaw_rate` がカーブ曲率の増加に一貫して遅れる**応答不足**型。
+`t_core_ai_11`（新規・モデルスイープ）で確認すると、51 組み合わせ中ほぼ全てが同じ
+s≈3300〜3314 で同じ向きに決定論的に逸脱する（乱数非依存）。加えて `level=0.5・consistency=0.5`
+の一部と `balanced()`（3 seed 全部）は T3 手前（s≈1546〜1594）でも逸脱が残り、弱いドライバー
+モデルでは T3 の安定余裕がまだゼロに近い。
+
+**3 ラウンドで K-1 は解けなかった**: (1) ゲインスケジュール単体（`V_REF` を 30/40/50 で試行）、
+(2) `delta_cs` 位相進み追加、(3) `LOOKAHEAD_MIN_M` 引き上げ、をこの順で実施し都度全テスト再実行
+したが、T3 は解消できてもヘアピン進入（s≈3300）は解消しなかった（Allowed Files の範囲内で
+試せる手は尽くした）。Known Risks に明記された停止条件（3 ラウンドで解けない）に該当するため、
+ここで停止し報告する。
+
+**Test / clippy / fmt / build**: `cargo test --release --workspace` = 0 failed（新規 ignore は
+`t_core_ai_11` のみ追加。既存 4 本のうち `t_core_ai_10_full` は理由を更新して維持、
+`t_core_ai_10_offline_spawn` は ignore を解除。`sim-driver` 側の `t_ai_01`/`t_drv_04` は
+運動学プラント起因で無変更・K-1 未解消のため Phase 3 未着手）。`cargo clippy --workspace
+--all-targets -- -D warnings` 0。`cargo fmt --all -- --check` clean。
+`cargo build -p sim-line --no-default-features` OK。`cargo build -p sim-wasm --target
+wasm32-unknown-unknown --release` OK（本セッションで `rustup target add` が必要だった＝
+環境差分・コード起因ではない）。`wasm-pack` は本セッションのコンテナに未導入のため未実行
+（Windows 開発機では `HANDOFF.md` §6 のとおり導入済み。環境の制約であり本ラウンドの変更とは無関係）。
+`t_core_ai_09`（`step_sim_tick` 性能）= 1.182 ms/tick（予算 3.5 ms）で余裕あり。
+
+**Engineering View 再検証**: 未実施（`sim-wasm`/`view-engineering` は無変更。本ラウンドは
+`controller.rs`/`planner.rs`/テストのみで、レーシングライン表示・v_target 着色に影響する
+経路を触っていない）。
+
+**Deviations from Spec**: `S_VALIDATED_M` を 1400 → 3100 へ復元（契約が明示的に指示した変更）。
+`S_VALIDATED_FULL_M` は元の 3100 のままだと誤って「合格」を主張しかねないため、
+探索用に一時的に 4139（全周）へ広げて新しいヘアピン逸脱を発見し、そのままコードに残した
+（`t_core_ai_10_full` は引き続き `#[ignore]`。受け入れ数値の緩和ではなく、逆に検証範囲を
+広げて新しい不具合を可視化した変更）。それ以外の受け入れ数値の緩和はしていない。
+
+**Design Concerns Found**: s≈3250〜3300 のヘアピン進入は sim-line（速度プロファイルまたは
+基準ライン形状）とこの区間の相互作用を疑うが、`sim-line/**` は Do Not Change のため未検証。
+次ラウンドで診断するか、C 承認（`PerformanceEnvelope` 荷重感度対応）や A 相当の再調査が
+必要か、Architect 判断を仰ぎたい。
+
+**Phase 3 への申し送り**: 未着手（`t_core_ai_11` が緑にならない限り着手しない、が正しい順序）。
+`sim-driver/tests/common/mod.rs` の運動学プラント廃止は次ラウンド（K-1 完全解消後）に持ち越し。
+
+---
+
 ## TASK-2-4 Phase 1 — land 完了報告（2026-09-10）
 
 **Opus 5（Architect / Quality Gate）Round-2 再監査 = APPROVED。commit 済み。**
