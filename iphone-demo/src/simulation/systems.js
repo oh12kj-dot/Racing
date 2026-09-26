@@ -54,7 +54,7 @@ export function createSystems(type){
 
 function attackEnergyRequested(car){
   const state=car.racecraft?.state;
-  return state==='COMMIT'||state==='ALONGSIDE';
+  return state==='COMMIT'||state==='ALONGSIDE'||state==='SWITCHBACK';
 }
 
 function defenseEnergyRequested(car){
@@ -62,6 +62,8 @@ function defenseEnergyRequested(car){
 }
 
 function remainingRaceLaps(car){
+  const precise=car.strategy?.remainingDistanceLaps;
+  if(Number.isFinite(precise))return Math.max(0,precise);
   const remaining=car.strategy?.remainingLaps;
   return Number.isFinite(remaining)?Math.max(0,remaining):Infinity;
 }
@@ -77,7 +79,8 @@ function strategicReserveFraction(car,s){
 
   // Keep more discretionary energy protected early, then release it as the
   // finish approaches. Unknown race distance preserves the legacy reserves so
-  // isolated physics/tests remain backward compatible.
+  // isolated physics/tests remain backward compatible. Fractional remaining
+  // distance lets the reserve release continuously through each lap.
   if(!Number.isFinite(remaining)){
     if(attacking)return attackBase;
     if(defending)return Math.max(attackBase,base-.04);
