@@ -17,43 +17,9 @@ fmt clean / no-default-features / wasm32 OK。`sim-driver` は無変更。詳細
 **次: 同節 NEXT SONNET TASK = Part 1 T-AI-01R/05R/07R（テストのみ）→ Part 2 運動学 `t_ai_07` 退役（PDC-11）→ Part 3 11b（H3 split-μ・
 limits 外の速度計画・必要なら PDC-12 のロック解放）→ Phase 3。**
 
-Last updated (previous, Sonnet 5): 2026-09-26（T-CORE-AI-11b 診断 3 ラウンド → BLOCKED BY ARCHITECTURE）/ **T-CORE-AI-11b
-（コース外からの復帰）は 3 ラウンド試行（aim 点の近点化+速度上限／先読み固定+ヨーレート・摩擦上限の
-ライン依存ゼロ化／ヘディング誤差ベースの早期発火）のいずれも 27/27 に届かず、③ でも主要指標
-（失敗数）がベースライン 10/27 を下回れなかった（12/27）ため `BLOCKED BY ARCHITECTURE` として
-停止・報告**。診断で判明: ヘアピン脱出・湾曲区間・T3 縁石ロックの各系統は、track limits を割る
-（または heading_error が顕在化する）時点で既にタイヤがピークスリップ角を超えて滑走状態に入っており
-（`sim-vehicle` 凍結タイヤモデルの性質）、Controller/Planner（steer/throttle/brake のみ）では
-数秒のオーダーで応答が変わらないことを実測（steer 飽和は解消できたが `heading_error` が 1 秒以上
-不変）。**コードは着手前の `10cf1a0` と完全一致に復元済み**（`git diff --stat` 空・診断用
-`eprintln!` は全削除・`grep -rni diagtmp crates/` = 0 件）。`t_core_ai_11b` の `#[ignore]`・
-受け入れ数値（`REJOIN_MAX_S` 等）は無変更。ゲートは変更なしで再確認: `cargo test --workspace
---release` = **187 passed / 0 failed / 3 ignored** / clippy 0 / fmt clean / no-default-features /
-wasm32 OK。詳細は `TODO.md`「## TASK-2-4 Phase 2 — コース外からの復帰（T-CORE-AI-11b）診断・
-3 ラウンド試行 → BLOCKED BY ARCHITECTURE（Sonnet 5・2026-09-26）」。**次: Architect が
-BLOCKED BY ARCHITECTURE の (a)（`perception.rs` にスリップ角早期伝達）/(b)（`tyre.rs` の
-ピーク超過後回復特性）/(c)（11b 受け入れ基準の再検討）のいずれかを裁定するまで T-CORE-AI-11b は
-着手不可。並行して T-AI-01R/05R/07R は独立タスクとして着手可能。**
+過去の "Last updated (previous, ...)" 履歴行（2026-09-10〜09-26 の全ラウンド）は `docs/archive-TODO.md` および
+`TODO.md` の各日付付きセクションに残っている。本体は最新 1 本のみを保持する（2026-09-26・軽量化）。
 
-Last updated (previous, Opus 5): 2026-09-26（Opus 裁定 PDC-9 + 分類ラウンド監査後）/ **Sonnet 分類ラウンド `7bcd2ae` は Opus 監査 APPROVED**（`LOW_PRECISION_STEER_RATE_FLOOR` はアブレーションで本物と確認。ただし `precision` 軸を 74 % の定義域で平坦化 = MEDIUM・Phase 3 で再導出）。**PROPOSED DESIGN CHANGE（ミス起因の逸脱）は案 A/B/C いずれも不採用 → PDC-9 を裁定・実装**: 旧スイープは最初の逸脱 tick で打ち切っていたため「0.2〜8 cm」は 1 tick の値にすぎず（HIGH-1）、打ち切らずに走らせるとミス発生 27 走行中 **10 本は 48〜161 m コース外へ出て戻れない**。`t_core_ai_11` を **11a（`error_rate=0` の 27 走行・逸脱 0 m・ignore 解除でゲート入り・27/27 緑）** と **11b（`error_rate=0.5` の同じ 27 組・逸脱量は問わず「3 周完走 + 各 limits 外エピソード ≤ 10 s で復帰」・ignore 中 10/27 赤）**に分割（原則 3: ミスは原因なので帰結は許す／帰属は対の 11a が 0 m であることで反実仮想的に証明）。あわせて **`t_core_ai_03`（静止発進 3 周・level 0.2/0.5/0.9 = 97.5/95.9/94.2 s/周・0 m）を追加・緑**。`cargo test --workspace --release` = **187 passed（doctest 込み）/ 0 failed / 3 ignored**（`t_core_ai_11b` + 凍結 `t_ai_01`/`t_drv_04`） / clippy 0 / fmt clean / no-default-features / wasm32 OK。詳細は `TODO.md`「## TASK-2-4 Phase 2 — Opus 5 裁定（PDC-9）+ Sonnet 分類ラウンド監査（2026-09-26）」。**次: 同節 NEXT SONNET TASK = コース外からの復帰（11b を緑に）→ T-AI-01R/05R/07R → Phase 3。**
-
-Last updated (previous, Sonnet 5): 2026-09-26（Sonnet 分類ラウンド後）/ **TASK-2-4 Phase 2 残り 19/51 を分類 → ノイズのみの 3 組（ヘアピン脱出
-s≈3377・低 precision ドライバーがステアリングレート不足でラインを追い切れず決定論的に逸脱）は `controller.rs` に
-`LOW_PRECISION_STEER_RATE_FLOOR`（`max_steer_rate` の下限クランプ・`t_ai_07` の分岐点を避ける値）を追加して解消 →
-**`t_core_ai_11` は 19/51 → 16/51**。残る 16/51 は全て「逸脱直前 3 s 以内に `mistake_steer_bias`/`mistake_brake_bias` が
-有意」＝ミス発生中の逸脱と確認済み（ミス無しでは逸脱しない `error_rate=0` の 3 組が今回の修正で全て解消したことでも裏付け）。
-**受け入れ数値は緩和せず** `PROPOSED DESIGN CHANGE`（ミス発生中の逸脱を『逸脱 0』の対象に含めるか）を TODO.md に提出、
-未裁定・未実装。`cargo test --workspace --release` = **0 failed**（sim-core: `t_core_ai_11` の 1 ignored／sim-driver: 凍結
-`t_ai_01`/`t_drv_04` の 2 ignored）/ clippy 0 / fmt clean / no-default-features / wasm32 OK。スコープは
-`crates/sim-driver/src/controller.rs` + `crates/sim-core/tests/world_ai.rs`（ignore 文言更新）の 2 ファイルのみ、診断用
-一時テストは全て削除済み。詳細は `TODO.md`「## TASK-2-4 Phase 2 — 残り 19/51 の分類・ヘアピン脱出の根治（Sonnet 5・
-2026-09-26）」。**次: §2b の PROPOSED DESIGN CHANGE 裁定 → T-CORE-AI-03 / T-AI-01R/05R/07R → Phase 3。**
-
-Last updated (previous, Opus 監査): 2026-09-26（Opus 監査後）/ **TASK-2-4 Phase 2（部分）は Opus 監査 APPROVED**。Sonnet の `72ad7c9`（`beta_dot` 位相進みで T3・`LOOKAHEAD_MIN_M` 5→9 で t=0 spawn スピンを解消。アブレーションで両方とも修正前コードでは確実に落ちる本物の回帰と確認。K_HEADING/K_YAW_DAMP の速度スケジュールは計測上無効＝功績の帰属を訂正）は land 可。**ヘアピン（s≈3230〜3315）の根因は Sonnet の推定（応答不足 / `sim-line` / `plan_brake_decel`）ではなく、ABS の無い車で `brake = 1.0` を踏み続けた前輪ロック（`slip_ratio = -1.0` が約 80 m 継続・T3 進入でも発生）**。Opus が `controller.rs` に **PDC-8 スレッショルドブレーキング上限**（荷重感度 + 前後・左右荷重移動込みのロック限界 × 0.95）を追加し、**`t_core_ai_10_full` を緑化・ignore 解除**（全周 0.000 m）、`t_core_ai_10_offline_spawn` も全周へ拡張して 0.000 m。あわせて全周テストの終了条件バグ（`4139.0` < 周長 4139.087 m で到達不能＝偽陰性）を修正。`t_core_ai_11`（51 組スイープ）は 51/51 → **19/51** 逸脱（残りは全て consistency=0.5 または error_rate=0.5。consistency=1・error_rate=0 の 12 組は全て 3 周 0 m）。`cargo test --workspace --release` = **184 passed（+doctest 1）/ 0 failed / 3 ignored**（`t_core_ai_11` + 凍結 `t_ai_01`/`t_drv_04`）/ clippy 0 / fmt clean / no-default-features / wasm32 OK（`wasm-pack` は本コンテナ未導入）。詳細は `TODO.md`「## TASK-2-4 Phase 2 — Opus 5 Quality Gate 裁定 + Architect 修正ラウンド（2026-09-26）」。**次: TASK-2-4 Phase 2 残り = `t_core_ai_11` 残り 19 組を「ミス注入中か否か」で分類する診断（同節 NEXT SONNET TASK）→ T-CORE-AI-03 / T-AI-01R/05R/07R → Phase 3。**
-
-Last updated (previous, Sonnet 5): 2026-09-26 / **TASK-2-4 Phase 2 は人間承認 B 取得 → 着手 → 未完了・作業ツリーに残置（commit なし）**。詳細は `TODO.md`「## TASK-2-4 Phase 2 — 進捗メモ（Sonnet 5・2026-09-26）」。K_HEADING/K_YAW_DAMP の速度スケジュール（`v ≤ 50 m/s` は据え置き・`v > 50` で比例減衰）+ `delta_cs`（逆操舵）の `beta_dot` 位相進み + `planner.rs::LOOKAHEAD_MIN_M`（5.0→9.0）で **T3（s≈1561・K-1 の起票根拠）と t=0 spawn のスピンは解消**（clean 0.6 で `S_VALIDATED_M`=1400→3100 まで worst excursion 0.000 m）。**しかし新規に s≈3300〜3310 のヘアピン進入で応答不足型の逸脱を発見**（従来 `S_VALIDATED_FULL_M`=3100 でカットされ未検証だった区間。全周へ広げて判明）。堅牢性スイープ `t_core_ai_11`（新規・51 組み合わせ）はほぼ全域でこの新逸脱により red（決定論的・乱数非依存）。Allowed Files（`controller.rs`/`planner.rs`）の範囲で 3 ラウンド試行したが解消せず、contract の停止条件により停止・報告。`cargo test --release --workspace` = 0 failed（ignore 4 本のまま。中身は入れ替わり: `t_core_ai_10_offline_spawn` 解消・`t_core_ai_11` 新規追加、`t_core_ai_10_full` と `t_ai_01`/`t_drv_04` は維持）。clippy 0 / fmt clean / no-default-features / wasm32 OK（`wasm-pack` は本コンテナ未導入のため未実行）。**次: ① Architect 監査 ② ヘアピン進入（s≈3250〜3305）の追加診断（`sim-line` との相互作用を疑うが Do Not Change のため未検証・C 承認や再調査の要否を判断） ③ Phase 3（テスト基盤移行）は K-1 完全解消まで未着手が正しい順序。**
-
-Last updated (previous): 2026-09-10 / **TASK-2-4 Phase 1 は Opus 監査 APPROVED → commit 済み**（`54e050a`。`.gitignore` の UE5 分は別 commit `493cbcc`）。Phase 2 の TASK-2-1 / 2-2 / 2-3 は `4710d63` / `ac80e03` / `1fd08ca`、Phase 1B は `b7a7084` / `4968e61` / `908fea3`。`sim-line::Trajectory::reference` を直接帯行列解法（KKT 残差 4e-15 = 厳密最小解）+ 求解の箱制約を `white_bounds ± REF_MARGIN_M`(0.30 m) 内側へ、純 ∫κ²（λ 正則化は Architect が却下）。本物の out-in-out ライン（T1/T2 で幅使用 95〜96%・`Σκ²` はセンターラインの 0.725 倍）。`cargo test --release` = **182 passed（+doctest 1）/ 0 failed / 4 ignored** / clippy 0 / fmt clean / no-default-features / wasm32 / wasm-pack OK。K-2 解消。本物のラインで **clean 0.6 が T3（s≈1561）でスピン**、かつ **`t=0` spawn だと S/F ストレートで 4.6 m のレーンチェンジができず s≈71 でコリドー逸脱** → **K-1 が確定ハードブロッカー・Phase 2（lateral inner loop 実タイヤ再設計・凍結解除 B）は確定**。ignore 4 本 = `t_core_ai_10_full` + `t_core_ai_10_offline_spawn` + 凍結 `t_ai_01` / `t_drv_04`（§10 K-1）。**次: ① 人間へ報告（Architect が凍結 `sim-driver/tests/driver.rs` に `#[ignore]` 2 行を追加した / 人間承認 B が Phase 2 の確定前提）② 承認 B が下りるまで Phase 2 着手不可 → 並行で TASK-05-1（UE5）を進める。**
 **このファイル 1 本で作業を再開できるように書いてある。**
 他の文書は「必要になったときだけ」開けばよい（どこに何があるかは §2 に記載）。
 
