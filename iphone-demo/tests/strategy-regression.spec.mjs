@@ -19,6 +19,22 @@ test('STRATEGY: residual repaired damage does not immediately request another st
   expect(decision.reason).toBe(PIT_REASON.DAMAGE);
 });
 
+test('STRATEGY: existing stop opportunistically repairs meaningful minor damage',()=>{
+  const car=createVehicleState(buildEntrants()[0],100,2),track=createTrack();
+  car.pit.plannedLap=2;
+  car.incident.damage=.12;
+  let decision=evaluatePitStrategy(car,track,8);
+  expect(decision.request).toBeTruthy();
+  expect(decision.reason).toBe(PIT_REASON.PLANNED);
+  expect(decision.service.repair).toBeTruthy();
+
+  car.incident.damage=.08;
+  decision=evaluatePitStrategy(car,track,8);
+  expect(decision.request).toBeTruthy();
+  expect(decision.reason).toBe(PIT_REASON.PLANNED);
+  expect(decision.service.repair).toBeFalsy();
+});
+
 test('STRATEGY: remaining laps follows the authoritative current-lap index',()=>{
   const car=createVehicleState(buildEntrants()[0],100,-1),track=createTrack();
   expect(evaluatePitStrategy(car,track,8).remainingLaps).toBe(8);

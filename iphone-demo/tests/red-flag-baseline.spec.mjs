@@ -33,7 +33,14 @@ test('RED-10: normal dry race and pit cycles do not falsely escalate to red',()=
               yawRate:+car.yawRate.toFixed(3),
               slipAngle:+(car.tyre?.slipAngle||0).toFixed(3),
               bodySlip:+Math.abs(wrapAngle(velocityHeading-car.yaw)).toFixed(3),
-              source:car.controlSource
+              source:car.controlSource,
+              serviceCount:car.systems.serviceCount,
+              lastServicePlan:car.pit.lastServicePlan??null,
+              fuel:+car.systems.fuel.toFixed(3),
+              tyreWear:+car.systems.tyreWear.toFixed(3),
+              engineTemp:+car.systems.engineTemp.toFixed(3),
+              mechanicalStress:+car.systems.mechanicalStress.toFixed(3),
+              powerDerate:+car.systems.powerDerate.toFixed(3)
             };
           }),
           recentEvents:sim.events.filter(event=>event.time>snap.time-18).map(event=>({

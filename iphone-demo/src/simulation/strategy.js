@@ -52,6 +52,11 @@ export function evaluatePitStrategy(car,track,raceLaps,environment=null){
 
   const request=reason!==PIT_REASON.NONE&&car.lap>=1;
   const tyreService=weatherStop||reason===PIT_REASON.TYRES||reason===PIT_REASON.PLANNED;
+  // Minor damage alone should not create an extra stop, but once the car is
+  // already committed to the box it is worth repairing damage large enough to
+  // measurably affect aero/drive/steering. This keeps service intent explicit
+  // instead of relying on serviceSystems to perform an unrequested free repair.
+  const repairService=reason===PIT_REASON.DAMAGE||(request&&damage>.10);
   return{
     request,
     reason,
@@ -63,7 +68,7 @@ export function evaluatePitStrategy(car,track,raceLaps,environment=null){
       tyres:tyreService,
       tyreCompound:tyreService?desiredCompound:currentCompound,
       fuel:reason===PIT_REASON.FUEL||reason===PIT_REASON.PLANNED,
-      repair:reason===PIT_REASON.DAMAGE,
+      repair:repairService,
       cooling:reason===PIT_REASON.ENGINE
     }
   };

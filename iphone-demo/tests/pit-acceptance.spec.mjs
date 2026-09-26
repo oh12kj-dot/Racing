@@ -4,6 +4,7 @@ import {createTrack} from '../src/simulation/track.js';
 import {createVehicleState} from '../src/simulation/vehicle.js';
 import {createRaceSimulation} from '../src/simulation/race.js';
 import {maybeRequestPit,planPit} from '../src/simulation/pit.js';
+import {serviceSystems} from '../src/simulation/systems.js';
 
 const boxFor=(car,track)=>track.pit.boxStart+car.teamId*track.pit.boxSpacing;
 
@@ -125,6 +126,56 @@ test('PIT-16: pit-exit traffic follows a slower car instead of stacking into it'
   expect(plan.targetLane).toBe(track.pit.fastLane);
   expect(plan.targetSpeed).toBeLessThan(track.pit.speedLimit-2);
   expect(plan.targetSpeed).toBeGreaterThanOrEqual(leader.v);
+});
+
+test('PIT-17: service plan applies only the requested pit work',()=>{
+  const entries=buildEntrants();
+
+  const tyreOnly=createVehicleState(entries[0],100,2);
+  Object.assign(tyreOnly.systems,{fuel:20,tyreWear:.64,tyreTemp:108,engineTemp:121,brakeTemp:520,mechanicalStress:.62,powerDerate:.24});
+  tyreOnly.incident.damage=.70;tyreOnly.tyre.slipRatio=.22;tyreOnly.tyre.slipAngle=.18;
+  serviceSystems(tyreOnly,{tyres:true,tyreCompound:'WET',fuel:false,repair:false,cooling:false});
+  expect(tyreOnly.systems.tyreCompound).toBe('WET');
+  expect(tyreOnly.systems.tyreWear).toBe(0);
+  expect(tyreOnly.systems.tyreTemp).toBe(70);
+  expect(tyreOnly.tyre.slipRatio).toBe(0);expect(tyreOnly.tyre.slipAngle).toBe(0);
+  expect(tyreOnly.systems.fuel).toBe(20);
+  expect(tyreOnly.systems.engineTemp).toBe(121);expect(tyreOnly.systems.brakeTemp).toBe(520);
+  expect(tyreOnly.systems.mechanicalStress).toBe(.62);expect(tyreOnly.systems.powerDerate).toBe(.24);
+  expect(tyreOnly.incident.damage).toBe(.70);
+
+  const fuelOnly=createVehicleState(entries[2],100,2);
+  Object.assign(fuelOnly.systems,{fuel:20,tyreWear:.51,tyreTemp:101,engineTemp:118,brakeTemp:490,mechanicalStress:.50,powerDerate:.18});
+  fuelOnly.incident.damage=.55;
+  serviceSystems(fuelOnly,{tyres:false,tyreCompound:'WET',fuel:true,repair:false,cooling:false});
+  expect(fuelOnly.systems.fuel).toBeCloseTo(fuelOnly.systems.fuelCapacity*.82,9);
+  expect(fuelOnly.systems.tyreCompound).toBe('SLICK');
+  expect(fuelOnly.systems.tyreWear).toBe(.51);expect(fuelOnly.systems.tyreTemp).toBe(101);
+  expect(fuelOnly.systems.engineTemp).toBe(118);expect(fuelOnly.systems.brakeTemp).toBe(490);
+  expect(fuelOnly.systems.mechanicalStress).toBe(.50);expect(fuelOnly.systems.powerDerate).toBe(.18);
+  expect(fuelOnly.incident.damage).toBe(.55);
+
+  const maintenance=createVehicleState(entries[4],100,2);
+  Object.assign(maintenance.systems,{fuel:20,tyreWear:.52,tyreTemp:104,engineTemp:124,brakeTemp:530,mechanicalStress:.68,powerDerate:.30});
+  maintenance.incident.damage=.75;
+  serviceSystems(maintenance,{tyres:false,fuel:false,repair:true,cooling:true});
+  expect(maintenance.systems.fuel).toBe(20);
+  expect(maintenance.systems.tyreWear).toBe(.52);expect(maintenance.systems.tyreTemp).toBe(104);
+  expect(maintenance.systems.engineTemp).toBe(94);expect(maintenance.systems.brakeTemp).toBe(260);
+  expect(maintenance.systems.mechanicalStress).toBeCloseTo(.33,9);expect(maintenance.systems.powerDerate).toBe(0);
+  expect(maintenance.incident.damage).toBeCloseTo(.43,9);
+
+  const legacy=createVehicleState(entries[6],100,2);
+  Object.assign(legacy.systems,{fuel:20,tyreWear:.50,tyreTemp:103,engineTemp:120,brakeTemp:500,mechanicalStress:.60,powerDerate:.22});
+  legacy.incident.damage=.60;
+  serviceSystems(legacy,null);
+  expect(legacy.systems.fuel).toBeCloseTo(legacy.systems.fuelCapacity*.82,9);
+  expect(legacy.systems.tyreWear).toBe(0);
+  expect(legacy.systems.engineTemp).toBe(94);expect(legacy.systems.brakeTemp).toBe(260);
+  expect(legacy.systems.mechanicalStress).toBeCloseTo(.25,9);expect(legacy.systems.powerDerate).toBe(0);
+  expect(legacy.incident.damage).toBeCloseTo(.28,9);
+
+  expect([tyreOnly,fuelOnly,maintenance,legacy].map(c=>c.systems.serviceCount)).toEqual([1,1,1,1]);
 });
 
 test('PIT-03/04/05/11/12: full pit transit is continuous, corridor-bound and limiter-controlled',()=>{
