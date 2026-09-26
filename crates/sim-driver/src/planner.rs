@@ -76,7 +76,12 @@ const LOOKAHEAD_BASE_M: f64 = 3.0;
 /// Pure Pursuit 先読み距離の速度係数 [s]。
 const LOOKAHEAD_TIME_S: f64 = 0.45;
 /// Pure Pursuit 先読み距離の下限 [m]。
-const LOOKAHEAD_MIN_M: f64 = 5.0;
+///
+/// TASK-2-4 Phase 2: `t=0` spawn からの立ち上がりレーンチェンジ（`t_core_ai_10_offline_spawn`）
+/// で、低速時に `LOOKAHEAD_BASE_M` 付近まで縮む先読みと大きな横オフセットが組み合わさり
+/// `delta_pp` が飽和し発進直後にスピンした（Architect 起票の Known Risk）。下限を上げて
+/// 低速での alpha を抑える。
+const LOOKAHEAD_MIN_M: f64 = 9.0;
 /// Pure Pursuit 先読み距離の上限 [m]。
 const LOOKAHEAD_MAX_M: f64 = 45.0;
 

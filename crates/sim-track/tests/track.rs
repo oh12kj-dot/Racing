@@ -816,6 +816,41 @@ fn track_world_to_track_hint_consistency() {
     }
 }
 
+/// PDC-10（Opus 2026-09-26）: 急コーナーの**外側**で `|t|` が曲率半径を超えても
+/// `world_to_track` が収束し、`track_to_world` の逆写像になっていること。
+///
+/// 旧実装の Newton 反復は `g'(s) ≈ 1` を仮定しており、外側（`κ·t < 0`）では誤差倍率が
+/// `|κ·t|` になって `|t| > R` で発散・振動した（Aoyama のヘアピン R≈13〜19 m の外 25〜60 m で
+/// 再埋め込み誤差 0.6〜12 m。`TrackGround` の接地平面が車輪ごとに食い違い、コースアウトした
+/// 車のタイヤが接地を失っていた — TODO.md「T-CORE-AI-11b Architect 裁定」）。
+#[test]
+fn track_world_to_track_converges_outside_tight_corner() {
+    let r = 15.0;
+    let track = build_circle_track(r, 64);
+    let l = track.length();
+    for i in 0..50 {
+        let s = l * i as f64 / 50.0;
+        let kappa = track.frame_at(s).curvature;
+        assert!(kappa.abs() > 0.5 / r, "circle curvature at s={s}: {kappa}");
+        // 外側 = 曲率中心と反対側。
+        let outside = -kappa.signum();
+        for &k in &[0.5, 1.2, 2.0, 3.0, 4.0] {
+            let t = outside * k * r;
+            let p = track.track_to_world(TrackCoord::new(s, t));
+            let c = track.world_to_track(p, Some(s));
+            let back = track.track_to_world(c);
+            let err = (back - p).length();
+            assert!(
+                err < 1e-6,
+                "s={s:.2} t={t:+.1}: re-embedding error {err:.4} m (got s={:.3} t={:+.3})",
+                c.s,
+                c.t
+            );
+            assert!((c.t - t).abs() < 1e-6, "s={s:.2}: t {t:+.3} -> {:+.3}", c.t);
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 不正な TrackDefinition の拒否
 // ---------------------------------------------------------------------------

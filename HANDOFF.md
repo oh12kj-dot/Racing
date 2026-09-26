@@ -1,6 +1,17 @@
 # HANDOFF.md — 引き継ぎ資料
 
-Last updated: 2026-09-10 / **TASK-2-4 Phase 1 は Opus 監査 APPROVED → commit 済み**（`54e050a`。`.gitignore` の UE5 分は別 commit `493cbcc`）。Phase 2 の TASK-2-1 / 2-2 / 2-3 は `4710d63` / `ac80e03` / `1fd08ca`、Phase 1B は `b7a7084` / `4968e61` / `908fea3`。`sim-line::Trajectory::reference` を直接帯行列解法（KKT 残差 4e-15 = 厳密最小解）+ 求解の箱制約を `white_bounds ± REF_MARGIN_M`(0.30 m) 内側へ、純 ∫κ²（λ 正則化は Architect が却下）。本物の out-in-out ライン（T1/T2 で幅使用 95〜96%・`Σκ²` はセンターラインの 0.725 倍）。`cargo test --release` = **182 passed（+doctest 1）/ 0 failed / 4 ignored** / clippy 0 / fmt clean / no-default-features / wasm32 / wasm-pack OK。K-2 解消。本物のラインで **clean 0.6 が T3（s≈1561）でスピン**、かつ **`t=0` spawn だと S/F ストレートで 4.6 m のレーンチェンジができず s≈71 でコリドー逸脱** → **K-1 が確定ハードブロッカー・Phase 2（lateral inner loop 実タイヤ再設計・凍結解除 B）は確定**。ignore 4 本 = `t_core_ai_10_full` + `t_core_ai_10_offline_spawn` + 凍結 `t_ai_01` / `t_drv_04`（§10 K-1）。**次: ① 人間へ報告（Architect が凍結 `sim-driver/tests/driver.rs` に `#[ignore]` 2 行を追加した / 人間承認 B が Phase 2 の確定前提）② 承認 B が下りるまで Phase 2 着手不可 → 並行で TASK-05-1（UE5）を進める。**
+Last updated: 2026-09-26（Opus 5・TASK-2-4 Phase 4 直接診断）/ **PDC-14 land・`t_core_ai_11b` 7 → 0/27、`#[ignore]` 解除。**
+Opus が自ら計装して因果を追跡: 残り 7 本の主因はミスそのものではなく、ヘアピン出口の切り返しで**実ヨー負荷 `v·r`（16〜25 m/s²）を見ず
+計画曲率（≈6 m/s²）でリア摩擦円の残りを見積もる `traction_throttle_cap`** が 1 速で 0.45〜0.58 を許し、横で飽和した後輪が空転（sr 0.1 → 9）
+→ スピン → 滑り絞りは 0.5 までしか切らず空転が続く、という連鎖（ミスバイアスはこの時点で < 0.003 rad）。修正は `controller.rs` のみ:
+A = トラクション上限の横負荷を `max(|κ_traj|, |r/v|)`、B = ダウンフォースを圧力中心から軸配分（`sim-vehicle::aero` と一致）、
+D = H3 トラクション側（駆動輪の路面 grip・LSD 考慮）。held-out 90 走行でも 13 → 2/90（ミス無し 2 → 0/90）。残り 2 本は別機序
+（ミス制動の前輪ロック自己保持 = F-7）。詳細・アブレーション表は `TODO.md` 最新節。
+**次: F-7（PDC-12 ロック解放を新しい余裕で再計測）→ F-8（`t_core_ai_12`）。並行で TASK-05-1（UE5）M3/M4。**
+
+過去の "Last updated (previous, ...)" 履歴行（2026-09-10〜09-26 の全ラウンド）は `docs/archive-TODO.md` および
+`TODO.md` の各日付付きセクションに残っている。本体は最新 1 本のみを保持する（2026-09-26・軽量化）。
+
 **このファイル 1 本で作業を再開できるように書いてある。**
 他の文書は「必要になったときだけ」開けばよい（どこに何があるかは §2 に記載）。
 
@@ -11,16 +22,16 @@ Last updated: 2026-09-10 / **TASK-2-4 Phase 1 は Opus 監査 APPROVED → commi
 | | |
 |---|---|
 | **何を作っているか** | Realistic Race Spectator Simulator。プレイヤーは運転せず**観戦**する。「実際のモータースポーツ中継に見え、よく見ると各 AI が本当にレースをしている」ことが目標 |
-| **今どこか** | **TASK-2-4 Phase 1 は Opus 監査 APPROVED → commit 済み**（`54e050a` / `.gitignore` は `493cbcc`）。Phase 2 の TASK-2-1 / 2-2 / 2-3 は `4710d63` / `ac80e03` / `1fd08ca`。`sim-line::Trajectory::reference` = 直接帯行列解法 + 箱制約 `white_bounds ± 0.30 m`・純 ∫κ²。本物の out-in-out ライン。K-2 解消（§10）。**本物のラインで clean 0.6 が T3（s≈1561）で完全スピン、かつ `t=0` spawn だと S/F ストレートで 4.6 m レーンチェンジ不能で s≈71 逸脱 → K-1 が確定ハードブロッカー・Phase 2（lateral inner loop 実タイヤ再設計・凍結解除 B）は確定。** ignore 4 本（`t_core_ai_10_full` + `t_core_ai_10_offline_spawn` + 凍結 `t_ai_01`/`t_drv_04`。§10 K-1。Phase 2 で全復活）|
-| **次に何をするか** | **① 人間へ報告: (a) Architect 権限で凍結 `sim-driver/tests/driver.rs` に `#[ignore]` 属性 2 行を追加した（他は 1 文字も変更なし・`git show 54e050a` で確認可）、(b) 人間承認 B（`sim-driver/tests/**` 凍結解除 + `tests/common/mod.rs` の運動学プラント廃止）が TASK-2-4 Phase 2 の確定前提。② 承認 B が下りるまで Phase 2 着手不可。③ 並行で着手可能な TASK-05-1（UE5）M3/M4 を進める — `profile_gpu.py` 実装済み・初回 run で `-game` possess 問題。次の診断は `docs/phase-0.5-results.md` §profile_gpu.py の 1〜4（GameMode/spectator pawn → 再 run）。** |
+| **今どこか** | **TASK-2-4 Phase 4（Opus 直接）完了**: PDC-14（`controller.rs` のトラクション上限を実ヨー負荷・圧力中心ダウンフォース配分・駆動輪路面で見積もる）で **`t_core_ai_11a` 27/27・0 m、`t_core_ai_11b` 27/27（ignore 解除）**。残課題 F-6（ヘアピン頂点のライン遅れ）/ F-7（ミス制動の前輪ロック自己保持・held-out 2/90）/ F-8（高ミス率の逸走） |
+| **次に何をするか** | **F-7（PDC-12 ロック解放の再計測）→ F-8（`t_core_ai_12` 追加）。並行で TASK-05-1（UE5）M3/M4。** |
 | **役割** | Opus 5 = Architect / Reviewer / Quality Gate。Sonnet 5 = Implementation Engineer。重大な技術変更は人間承認が必要 |
-| **健全性確認** | `cargo test --release` → **182 passed（+doctest 1）/ 0 failed / 4 ignored**（ignore は K-1 の 4 本のみ）。clippy 0 / fmt clean / no-default-features / wasm32 / wasm-pack OK |
+| **健全性確認** | `cargo test --workspace --release` → **194 passed / 0 failed / 0 ignored**。clippy 0 / fmt clean / no-default-features / wasm32 OK |
 
 ### 最初にやること
 
 ```bash
 cd /c/AI/App_Dev/Racing
-cargo test --release      # 182 passed(+doctest 1) / 4 ignored が期待値。下回ったら先に原因を特定する
+cargo test --workspace --release      # 0 failed が期待値。下回ったら先に原因を特定する
 ```
 
 これが通れば、リポジトリは既知の健全な状態にある。
@@ -732,7 +743,7 @@ Severity は `CRITICAL / HIGH / MEDIUM / LOW`。
 ```bash
 cd /c/AI/App_Dev/Racing
 
-# Rust（期待値: 182 passed(+doctest 1) / 0 failed / 4 ignored[K-1] / clippy 0 / warnings 0 / fmt clean）
+# Rust（期待値: 184 passed(+doctest 1) / 0 failed / 3 ignored[K-1 残り] / clippy 0 / warnings 0 / fmt clean）
 cargo test --release
 cargo clippy --all-targets -- -D warnings
 cargo build --release
@@ -833,7 +844,7 @@ Game Engine 変更 / 言語変更 / 主要フレームワーク置換 / 物理�
 
 | # | Severity | 内容 |
 |---|----------|------|
-| **K-1** | **HIGH（確定ハードブロッカー）** | **横方向インナーループの安定余裕は実質ゼロ。Phase 2 が必須。** TASK-2-4 Phase 1 で基準線を本物の out-in-out（T1/T2 で幅使用 95〜96%）へ直した結果、lateral inner loop（`K_HEADING` / `K_YAW_DAMP` / `delta_cs` の位相。運動学プラント前提で本物のラインの曲率レートを追えない）が **(a) 車をラインぴったりに spawn したときだけ・かつ s≈1561（T3）まで** しか保持できない。<br>・**T3**: clean `level 0.6 / consistency 1.0` の 1 点ですら s≈1561 で `coord.t` が `limit_bounds` を超え、その後 `|t|≈19.5 m` まで excursion。過剰正則化の λ 版で緑だったのはラインがぬるく T3 進入が遅かったため（緑だが実は壊れていた）。安全側パラメータ（`braking_skill`↓ / `pace`↓）で **早く** breach する非単調挙動。<br>・**straight lane-change**: `t = 0`（実グリッド位置）spawn だと S/F ストレートで基準線までの 4.6 m レーンチェンジを立ち上がりから実行できず **s≈71 でコリドー逸脱・s≈126 でコースアウト**（HEAD ではクリーンだった）。T3 と同じ K-1 subsystem。<br>**根治は TASK-2-4 Phase 2**（lateral inner loop の実タイヤ再設計 + 運動学プラント廃止・実物理閉ループ化。人間承認 B が前提。受け入れは下記 `#[ignore]` 4 本を全て外す + T-CORE-AI-11 モデルスイープ）。**Phase 1 時点で意図的に `#[ignore]` にしたテスト 4 本**（Phase 2 で全復活）: <br>① `sim-core` `t_core_ai_10_full`（ライン上 spawn・全周 s<3100 のコリドー封じ込め。走らせる版 `t_core_ai_10` は s<1400=T3 手前に縮め緑を維持）<br>② `sim-core` `t_core_ai_10_offline_spawn`（`t=0` spawn・s<1400。s≈71 で breach する straight-lane-change 回帰を記録。走らせるテストは spawn をライン上へ固定してこの失敗を T3 から切り離している）<br>③ `sim-driver` `t_ai_01_stays_on_course_for_20_laps`（凍結ファイル。Architect 権限で `#[ignore]` 属性 1 行のみ追加）<br>④ `sim-driver` `t_drv_04_rng_only_affects_causes`（同上）<br>③④ はハーネス（運動学プラント）の限界であり Driver の欠陥ではない — 実物理の同一ドライバーは T1 を通過する。 |
+| **K-1** | **HIGH（部分解消・2026-09-26 Opus 監査）** | **【現状】** ①② は解消・ignore 解除（①は全周へ拡張、②も全周 0.000 m）。T3 は `beta_dot` 位相進み、発進スピンは `LOOKAHEAD_MIN_M`、ヘアピン（s≈3300）と T3 のスイープ残差は**前輪ロック**が真因で PDC-8（スレッショルドブレーキング上限）で解消。ヘアピン脱出（低 precision の操舵レート不足）も `LOW_PRECISION_STEER_RATE_FLOOR` で解消し、**ミス無しスイープ `t_core_ai_11a` は 27/27・0 m でゲート入り（K-1 の安定余裕の否定は達成）**。残りは PDC-9 で分割した `t_core_ai_11b`（ミス発生時のコース外からの復帰・10/27 赤）と ③④（運動学プラント・Phase 3 で廃止）。詳細は `TODO.md`「TASK-2-4 Phase 2 — Opus 5 裁定（PDC-9）」。以下は Phase 1 時点の記録。<br>**横方向インナーループの安定余裕は実質ゼロ。Phase 2 が必須。** TASK-2-4 Phase 1 で基準線を本物の out-in-out（T1/T2 で幅使用 95〜96%）へ直した結果、lateral inner loop（`K_HEADING` / `K_YAW_DAMP` / `delta_cs` の位相。運動学プラント前提で本物のラインの曲率レートを追えない）が **(a) 車をラインぴったりに spawn したときだけ・かつ s≈1561（T3）まで** しか保持できない。<br>・**T3**: clean `level 0.6 / consistency 1.0` の 1 点ですら s≈1561 で `coord.t` が `limit_bounds` を超え、その後 `|t|≈19.5 m` まで excursion。過剰正則化の λ 版で緑だったのはラインがぬるく T3 進入が遅かったため（緑だが実は壊れていた）。安全側パラメータ（`braking_skill`↓ / `pace`↓）で **早く** breach する非単調挙動。<br>・**straight lane-change**: `t = 0`（実グリッド位置）spawn だと S/F ストレートで基準線までの 4.6 m レーンチェンジを立ち上がりから実行できず **s≈71 でコリドー逸脱・s≈126 でコースアウト**（HEAD ではクリーンだった）。T3 と同じ K-1 subsystem。<br>**根治は TASK-2-4 Phase 2**（lateral inner loop の実タイヤ再設計 + 運動学プラント廃止・実物理閉ループ化。人間承認 B が前提。受け入れは下記 `#[ignore]` 4 本を全て外す + T-CORE-AI-11 モデルスイープ）。**Phase 1 時点で意図的に `#[ignore]` にしたテスト 4 本**（Phase 2 で全復活）: <br>① `sim-core` `t_core_ai_10_full`（ライン上 spawn・全周 s<3100 のコリドー封じ込め。走らせる版 `t_core_ai_10` は s<1400=T3 手前に縮め緑を維持）<br>② `sim-core` `t_core_ai_10_offline_spawn`（`t=0` spawn・s<1400。s≈71 で breach する straight-lane-change 回帰を記録。走らせるテストは spawn をライン上へ固定してこの失敗を T3 から切り離している）<br>③ `sim-driver` `t_ai_01_stays_on_course_for_20_laps`（凍結ファイル。Architect 権限で `#[ignore]` 属性 1 行のみ追加）<br>④ `sim-driver` `t_drv_04_rng_only_affects_causes`（同上）<br>③④ はハーネス（運動学プラント）の限界であり Driver の欠陥ではない — 実物理の同一ドライバーは T1 を通過する。 |
 | K-2 | ✅ 解消（TASK-2-4 Phase 1） | 旧: `sim-line::Trajectory::reference` の SOR 収束判定が per-sweep 更新量ベースで長波長モードが未収束のまま返っていた。直接帯行列解法（KKT 残差 4e-15 = 厳密最小解）へ差し替えて根絶。収束許容という論点自体が消えた。 |
 | K-3 | MEDIUM | 周回数は Forward-only カウンタ（`Backward` で減算しない）。ライン上で振動する車が 1 往復ごとに +1 されうる。確定は Phase 3 のレース状態機械でセクター通過順と併せて（D-3）|
 | K-4 | LOW | Engineering View の Driver HUD パネルが左の凡例と少し重なる（`overlay.js`）。機能は読める。CSS 微調整は任意 |
