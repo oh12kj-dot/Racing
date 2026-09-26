@@ -53,6 +53,8 @@ function ensureState(state){
   state.attackKind??=null;
   state.lane??=0;
   state.defenseUsed??=false;
+  state.defenseActive??=false;
+  state.defenseActiveUntil??=0;
   state.alongsideAt??=0;
   return state;
 }
@@ -90,6 +92,8 @@ export function planRacecraft(car,cars,track,time){
   const ahead=nearby.filter(x=>x.d>0&&x.d<130).sort((a,b)=>a.d-b.d);
   const behind=nearby.filter(x=>x.d<0&&x.d>-45).sort((a,b)=>b.d-a.d);
   const cautionNoPass=!!car.cautionNoPass;
+  state.defenseActive=time<(state.defenseActiveUntil||0);
+  if(cautionNoPass||car.blueFlag){state.defenseActive=false;state.defenseActiveUntil=0;}
 
   let targetLane=ideal,targetSpeed=Infinity,reason='RACING_LINE';
 
@@ -220,10 +224,22 @@ export function planRacecraft(car,cars,track,time){
     const straight=Math.abs(track.curvature(car.s+20))<.006;
     if(similarClass&&closing>.8&&-attacker.d<24&&straight&&car.aggression>.62&&!state.defenseUsed){
       const k=track.curvature(car.s+55),inside=k>=0?1:-1,candidate=clamp(inside*2.2,-4.5,4.5);
-      if(laneAvailable(car,candidate,cars,track,.7)){targetLane=candidate;reason='DEFEND_ONE_MOVE';state.defenseUsed=true;state.defenseResetAt=time+7;}
+      if(laneAvailable(car,candidate,cars,track,.7)){
+        targetLane=candidate;reason='DEFEND_ONE_MOVE';state.defenseUsed=true;state.defenseResetAt=time+7;
+        state.defenseActive=true;state.defenseActiveUntil=time+2.2;
+      }
     }
   }
-  if(state.defenseUsed&&time>(state.defenseResetAt||0)&&behind.length===0)state.defenseUsed=false;
+  if(state.defenseUsed&&behind.length&&!cautionNoPass&&!car.blueFlag){
+    const attacker=behind[0];
+    const similarClass=Math.abs(car.spec.pace-attacker.o.spec.pace)<.08;
+    const closing=attacker.o.v-car.v;
+    if(similarClass&&-attacker.d<26&&closing>.2)state.defenseActiveUntil=Math.max(state.defenseActiveUntil||0,time+.4);
+  }
+  state.defenseActive=!cautionNoPass&&!car.blueFlag&&time<(state.defenseActiveUntil||0);
+  if(state.defenseUsed&&time>(state.defenseResetAt||0)&&behind.length===0){
+    state.defenseUsed=false;state.defenseActive=false;state.defenseActiveUntil=0;
+  }
 
   activeTarget=activeTargetFor(state,cars);
   for(const x of ahead.slice(0,4)){
