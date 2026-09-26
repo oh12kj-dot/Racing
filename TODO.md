@@ -2261,3 +2261,149 @@ PDC-1〜9 は既定値のまま着手し、勝手に revert しない。
 TASK-2-4 Phase 1 の land 完了報告・TASK-2-3・TASK-2-2・TASK-2-1・TASK-1B-3・TASK-1B-2 の完了記録・監査記録は
 `docs/archive-TODO.md` へ移動した（本体のトークン消費を抑えるため。2026-09-26）。
 実装済み API・座標系規約などの **正はソース** であり、これらのアーカイブは経緯の記録専用。
+
+---
+
+## TASK-2-4 Phase 2 — Part 1/2 land、Part 3 は 11b 未達で停止・報告（Sonnet 5・2026-09-26）
+
+**Part 1（T-AI-01R/05R/07R）と Part 2（運動学 `t_ai_07` 退役）は commit 済み。Part 3（`t_core_ai_11b` 27/27）は
+Required Change 1・2 とも単独では受け入れ基準を割ったため land せず、`git diff --stat` が空の状態まで戻して停止する。**
+`t_core_ai_11b` は前ラウンドと同じ **10/27**（`#[ignore]` 文言も無変更）。
+
+### Part 1 — 実測（全て緑・`crates/**/src/**` 無変更）
+
+| テスト | 実測 |
+|---|---|
+| T-AI-01R | 3 周・全 tick コリドー逸脱 0.000 m・`recovered_steps` 増加なし |
+| T-AI-05R | level 0.2/0.5/0.9 の周回2 タイム 97.500 / 95.900 / 94.250 s（単調・差 3.25 s ≥ 0.5 s） |
+| T-AI-07R | PDC-11 (1)〜(4) 全て満たす: ControlInput bits ハッシュ不一致 / 60 s 距離差 32.868 m ≥ 1 m / lap[3] 差 0.950 s ≥ 0.1 s / `reaction_time=0.0` で `recovered_steps=0`・コリドー逸脱 0.000 m |
+
+Commit `00a3fe5`。
+
+### Part 2 — PDC-11 の全条件を満たしたため運動学 `t_ai_07` を削除
+
+`crates/sim-driver/tests/driver.rs::t_ai_07_perception_delay_changes_behaviour` を削除し、1 行コメントへ置換。
+凍結 ignore は `t_ai_01` / `t_drv_04` の 2 本のみ残存（K-1・Phase 3 待ち）。Commit `5408b49`。
+
+### Part 3 — Required Change 1（H3 split-μ・per-wheel）と 2（limits 外速度計画）を個別に検証・いずれも単独では land 不可
+
+**Required Change 1（H3・per-wheel 版）**: `brake_lock_cap` / `traction_throttle_cap` に、軸ごとの実際の左右輪位置
+（`t ± track/2`）を `track.surface_at` でサンプルし、旋回方向（`kappa_traj` の符号）で内輪・外輪へマップしてから
+`sim-vehicle::tyre.rs::effective_mu` と同じ掛け方（`mu = mu0 * grip * sensitivity`）で軸の弱い側にグリップを適用する形で実装。
+以前の 2 案（車体中心 1 点 = 7/27・11a 27/27、車幅内最小 = 3/27・11a 1/27 割れ）より原理的に正確なはずだったが、
+
+- `t_core_ai_11a` が **1/27 割れる**（`level=0.9 consistency=0.5 error_rate=0 seed=2`・`s=3510.7 lap=1`・`t=+7.091`
+  = limit 境界 `+7.000` を **9.1 cm** 超過）。
+
+**根因（confound の除外込みで特定。物理の天井ではない）**: `crates/sim-line/src/corridor.rs`（凍結）の `limit_bounds`
+は **`is_within_limits` の境界そのもの（点）** であり、`white_bounds` と違って**車半幅ぶん内側へクランプしていない**
+（corridor.rs 冒頭の doc の通り）。実測（`track.surface_at` を `s∈{3484,3489,3500,3510,3520}` / `t∈{6.0,6.3,6.6,6.9,7.0,7.2}`
+で全数サンプル）:
+
+| t [m] | 3484〜3520 全 s で共通 |
+|---|---|
+| 6.0 | Asphalt (grip 1.00) |
+| 6.3〜7.0 | Kerb (grip 0.90) |
+| 7.2 | Grass (grip 0.45) |
+
+基準ラインはこの区間で車体中心 `t` が 6.0→6.9→6.6 と揺れる（`s=3489.1` 付近で `t≈6.19`、`s=3509` 付近で
+ピーク `t≈6.89`）。前輪トレッド半幅 `0.84 m`・リア `0.82 m` を足すと、外輪のサンプル点は `t+0.84 ≈ 7.7 m` 前後まで
+達し、`limit_bounds`（点基準の境界 `±7.0`）を大きく超えて **Grass（grip 0.45）** に入る。これは近似の誤差ではなく、
+**凍結 `Corridor::limit_bounds` が車幅を差し引かない設計**（`white_bounds` は差し引く）と、H3 が「車体中心 ± 車軸半幅」
+で実際の外輪位置を推定する設計が、track limits ぎりぎり（だがまだ `limit_bounds` 内 = 合法）のライン取りで構造的に
+ぶつかる結果である。実測: `brake_lock_cap` は `s≈3484` の `0.545` から `s≈3489` で **`0.237`**（外輪が Grass に入った
+瞬間）まで落ち、その区間（`s≈3489〜3529`）は低いまま推移する。制動要求（`brake_raw_pre`）自体はこの区間で
+ほぼ常時 0（プレーンな巡航）だが、時折入る小さな制動要求（`0.07〜0.81`）が過剰に絞られ、結果としてこの先の
+コーナー進入速度がわずかに上振れし、約 20 m 先（`s=3510.7`）でコリドーを 9 cm 超える。診断は
+`brake_lock_cap` 呼び出し直前へ一時 `eprintln!`（環境変数ゲート）+ `corridor.white_bounds`/`limit_bounds` と
+`track.surface_at` を全数サンプルする一時テストで行い、両方とも診断後に削除済み（`grep -rni diagtmp crates/` = 0）。
+
+**結論**: `sim-driver`（Allowed Files）側の実装ミスではなく、凍結 `sim-line::Corridor::limit_bounds` が点基準
+（車幅非考慮）である設計と H3 の要求仕様（軸ごとの実車幅位置でサンプル）が正面から衝突するケース。
+Allowed Files 内では、`limit_bounds` ぎりぎりの合法な位置取りで外輪だけ Grass に入るのを「誤検出」として
+除外する手段がない（`corridor.rs` は凍結）。
+
+**Required Change 2（limits 外速度計画）を独立に検証**: `v_target ≤ sqrt(mu_surface · g · R_rejoin)`
+（`R_rejoin = 20 m`・固定・保守的な見積もり）を `!perceived.within_limits` のときだけ追加で `min` する形で
+`planner.rs` に実装（H3 は land していないので Change 1 なしの単独検証）。limits 内は if で完全にガードしており
+`t_core_ai_11a`・`t_core_ai_10_full`・`t_core_ai_10_offline_spawn`・`t_core_ai_03` は **ビット単位で無変更**（4 テストとも
+worst excursion 0.000 m・ラップタイム不変を確認）。しかし `t_core_ai_11b` は **10/27 → 14/27 に悪化**
+（新規に失敗: `level=0.5/seed=2`, `level=0.5/seed=3`, `level=0.7/seed=3`, `level=0.9/seed=2`, `balanced/seed=2`。
+新規に回復: `level=0.9/seed=3`。差し引き `-1+5=+4` 件悪化）。
+
+**根因**: `level=0.5 consistency=0.5 error_rate=0.5 seed=2` を tick 単位で追跡（`slip_ratio`/`grounded`/`speed`/
+`brake`/`throttle` を 15 tick おきに記録）。`s≈1241` でミス由来の制動要求により 4 輪 `slip_ratio` が
+`-0.91〜-1.00`（ほぼ完全ロック、H3 なしなので路面 µ を見ない制動計画がそのまま）まで落ち、その後 `t` が
+`-8.8 → +32.8 m` まで暴れながら複数回の速度反転（`+54 → -27 → +21 → -14 → …`）を伴うスピンへ発展する
+（これは Change 2 の有無に関係なく発生 — 同一 seed・同一ミスなので limits 内の挙動は baseline と bit-exact）。
+**Change 2 の効果はこのスピンが limits 外へ出た後に現れる**: baseline はこの後 10 s 以内に rejoin して回復するが、
+Change 2 適用時は `t≈+32.8 m`（Gravel/Grass 帯・track limits から遥かに離れた runoff 領域）で **速度が完全に
+ゼロへ収束して停止**（`speed=0.00`・`throttle=0.554`・`brake=0.000` のまま 1500+ tick 変化なし。後輪
+`slip_ratio` は `10〜12`（激しい空転）で `grounded` は 4 輪とも `true`）。`v_offlimits_cap` によって低く抑えられた
+`v_target` と、その領域の低グリップ（Gravel 0.35）・高 `rolling_resistance`（0.250）の組み合わせが、
+スロットル制御の P ゲイン・デッドバンドと相まって **速度ゼロの安定平衡点に落ち込む**（自然に這い出せない）
+新しい失敗モードを作っている。`REJOIN_MAX_S=10 s` の判定はこの間ずっと "outside" のまま経過し確実に timeout する。
+
+**結論**: Required Change 2 は limits 内に対して構造的に安全（if ガードで bit-exact 確認済み）だが、**H3（Change 1）
+抜きで単独投入すると、路面 µ を考慮しない制動計画がロックアップ→暴走スピン→低 µ 領域での速度ゼロ平衡という
+新しい失敗モードを増やす**。Change 1 と Change 2 は独立ではなく結合している可能性が高く、Change 1 が
+`t_core_ai_11a` を割る限り、この結合を安全に検証する経路がない。
+
+### 3 ラウンド規定に対する状況
+
+Required Change 1（1 ラウンド・11a 割れで停止）・Required Change 2（1 ラウンド・11b 悪化で停止、単独検証）を実施。
+PDC-12（Required Change 3）は仕様上「1・2 で届かない場合にのみ」かつ「1〜2 の後」に使う設計であり、
+1 が `t_core_ai_11a` の受け入れを割った状態のまま 3 のロック解放信号だけを単独で検証しても、
+Change 1 が意図する「路面 µ を見た制動計画」という前提なしでは同じ結合問題を再現するだけと判断し、
+着手しなかった。**Part 3 は 2 ラウンドの診断を行った時点で、これ以上 Allowed Files 内の変更だけでは
+前進できないと判断し停止する。**
+
+### 診断で使った一時変更（全て削除済み）
+
+- `controller.rs`: `brake_lock_cap` 呼び出し直前の環境変数ゲート `eprintln!`（削除済み）。
+- `world_ai.rs`: `diagtmp_corridor_geometry` / `diagtmp_11a_case` / `diagtmp_change2_lockup_check`
+  （いずれも一時テスト。削除済み・`grep -rni diagtmp crates/` = 0）。
+
+### BLOCKED BY ARCHITECTURE（Part 3・人間 / Architect 判断が要る点）
+
+```
+Task: T-CORE-AI-11b 27/27（Required Change 1: H3 split-μ・per-wheel）
+Blocking Issue: 凍結 crates/sim-line/src/corridor.rs::Corridor::limit_bounds が
+  car_half_width を差し引かない点基準の境界（white_bounds とは非対称な設計）。
+  合法な（limit_bounds 内の）基準ライン取りで、車体中心からの軸半幅オフセットが
+  この境界を超えて外輪が Grass 上に来る区間が実在する（s≈3489〜3529、t≈6.2〜6.9）。
+Why Current Design Prevents Implementation:
+  H3 は「軸ごとの実際の左右輪位置」でグリップをサンプルする設計を指示されており、
+  これは物理的に正しい（sim-vehicle の実タイヤも同じ位置で低グリップを経験するはず）。
+  しかし Controller（Allowed Files）側だけでは、limit_bounds が車幅を考慮しないことに
+  起因する「合法ラインなのに外輪だけ規格外」の誤検出（もしくは正しい検出だが下流の
+  ブレーキング計画に対して重すぎる影響）を、corridor.rs を触らずに区別する手段がない。
+Required Change: (a) sim-line::Corridor に car-half-width を考慮した limits 変種を
+  追加する（凍結・要 Architect 承認）、または (b) H3 のサンプル点を car_half_width
+  ではなく実際のタイヤ幅（もっと狭い）にする、または (c) 受け入れる形で 11a の
+  0 m 基準を limit_bounds ±（車輪サンプル起因の）微小マージンへ緩和する（要人間承認・
+  「閾値の無根拠緩和で PASS にしない」原則に抵触するため本来は不可）。
+Affected Scope: crates/sim-line/src/corridor.rs（凍結）、または TASK-2-4 の 11a 受け入れ基準。
+Recommended Next Step: Architect が (a)〜(c) のいずれかを裁定してから Part 3 を再開する。
+  Required Change 2（limits 外速度計画）は上記の通り Change 1 と結合しているため、
+  Change 1 の裁定が先。
+```
+
+### 完了時の報告フォーマット（本ラウンド）
+
+```
+Part 1: T-AI-01R/05R/07R 実装・緑（commit 00a3fe5）
+Part 2: PDC-11 全条件成立 → 運動学 t_ai_07 削除（commit 5408b49）
+Part 3: 未達・停止。H3 は 11a を 1/27 (9.1cm) 割る、根因は凍結 Corridor::limit_bounds の
+  非対称設計（上記）。limits 外速度計画は単独検証で 11b を 10/27→14/27へ悪化
+  （H3 抜きの制動計画がロックアップ→低µ域での速度ゼロ平衡という新failureを誘発）。
+  Part 3 の src 変更は全て revert 済み（git diff --stat 空）。t_core_ai_11b は
+  10/27・#[ignore] 文言も前ラウンドのまま無変更。
+Test / clippy / fmt / build: cargo test --workspace --release = 190 passed / 0 failed /
+  3 ignored（t_core_ai_11b + 凍結 t_ai_01/t_drv_04）。clippy 0。fmt clean。
+  sim-line --no-default-features OK。wasm32 OK。grep -rni diagtmp crates/ = 0。
+Deviations from Spec: なし（受け入れ数値は一切変更していない）。
+Design Concerns Found: 上記 BLOCKED BY ARCHITECTURE。
+Phase 3 への申し送り: Part 3 は Architect 裁定待ちで再開。T-AI-01R/05R/07R は緑なので
+  Phase 3（運動学プラント全体の廃止）は Part 3 と並行して着手可能。
+```

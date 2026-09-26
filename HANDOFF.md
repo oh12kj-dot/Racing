@@ -1,21 +1,23 @@
 # HANDOFF.md — 引き継ぎ資料
 
-Last updated: 2026-09-26（Opus 5・第 3 ラウンド裁定後）/ **Sonnet の T-CORE-AI-11b `BLOCKED BY ARCHITECTURE`（`6a59cd1`）は
-棄却。** Opus が独立に再現・計測すると「物理の天井（ピークスリップ超過後は戻らない）」ではなく、(1) **`sim-track::Track::world_to_track`
-の Newton 反復が `g'≈1` 仮定でコーナー外側 `|t| > R` に発散**（ヘアピン外 25〜60 m で再埋め込み誤差 0.6〜12 m → `TrackGround` の
-接地平面が車輪ごとに食い違い、コースアウトした車が 4 輪中 0〜1 輪しか接地しない。Sonnet ② の「何を入れても向きが変わらない」の正体）、
-(2) **ヘアピン手前の直線制動で前輪がロックし 2.5 s 解放されない**（MF の縦滑り摩擦はピークの 0.63 でロックが自己保持・Controller に
-ロック解放が無い）、(3) **H3（制動/トラクション上限が路面 μ を見ない。Sonnet は単離していなかった — 単独で 10→9/27）**の重なり。
-横力はピーク後もほぼ落ちない（α=0.5/0.65 rad で 0.97/0.95）。**PDC-10（`world_to_track` の歩幅を真のヤコビアン `1−κt` で割る・
-凍結 sim-track・Architect 承認）を land** + 回帰テスト `track_world_to_track_converges_outside_tight_corner`（アブレーションで旧式を検出）。
-実験（未 land）: PDC-10 + H3（車体中心）で 11b 7/27・ヘアピン外 18〜20 m から 7.9/8.3 s で復帰、車幅内最小 grip で 3/27（11a 1/27 割れ）。
-H3 は凍結・運動学プラントの `t_ai_07` を 0.083 s < 0.1 s で割るので land せず、**PDC-11**（実物理 T-AI-07R が緑になったら運動学
-`t_ai_07` を退役）で順序を解く。(b) タイヤ調整・(c) `REJOIN_MAX_S` 緩和は不採用（10 s は実測で達成可能）、(a) は**車輪ロック
-（縦スリップ）を安定化経路で知覚**に限定して条件付き承認（**PDC-12**）。`t_core_ai_11b` は **10/27 のまま ignore・TASK-2-4 Phase 2 の
-受け入れ条件として維持**（文言のみ更新）。`cargo test --workspace --release` = **188 passed / 0 failed / 3 ignored** / clippy 0 /
-fmt clean / no-default-features / wasm32 OK。`sim-driver` は無変更。詳細は `TODO.md`「## TASK-2-4 Phase 2 — Opus 5 裁定（第 3 ラウンド）」。
-**次: 同節 NEXT SONNET TASK = Part 1 T-AI-01R/05R/07R（テストのみ）→ Part 2 運動学 `t_ai_07` 退役（PDC-11）→ Part 3 11b（H3 split-μ・
-limits 外の速度計画・必要なら PDC-12 のロック解放）→ Phase 3。**
+Last updated: 2026-09-26（Sonnet 5・Part 1/2 land・Part 3 は BLOCKED BY ARCHITECTURE で停止）/
+**Part 1（T-AI-01R/05R/07R・実物理）と Part 2（PDC-11 成立 → 運動学 `t_ai_07` 退役）は commit 済み**
+（`00a3fe5` / `5408b49`）。**Part 3（`t_core_ai_11b` 27/27）は 2 ラウンド診断のみで停止・未 land**:
+Required Change 1（H3 split-μ・軸ごとの実際の左右輪位置 `t ± track/2` で `track.surface_at` をサンプルする
+per-wheel 版）は `t_core_ai_11a` を **1/27 割る**（9.1 cm・`s=3510.7`）。根因は凍結 `sim-line::Corridor::limit_bounds`
+が `white_bounds` と違い **car half-width を差し引かない点基準の境界**であること — 合法な（limit_bounds 内の）
+基準ライン取りでも軸半幅オフセットで外輪が Grass に入る区間が実在し（`s≈3489〜3529`・実測で `surface_at` 全数
+サンプル済み）、H3 の「実際の車幅位置でサンプル」という仕様と正面から衝突する。Required Change 2（limits 外の
+速度計画。`v_target ≤ sqrt(mu_surface·g·R_rejoin)`）は limits 内 bit-exact を確認した上で単独検証すると、
+H3 抜きの（路面 µ を見ない）制動計画のロックアップ→暴走スピン→低 µ 域での**速度ゼロ平衡に落ち込んで這い出せない**
+新しい失敗モードを誘発し `t_core_ai_11b` を **10/27 → 14/27 へ悪化**させる。Change 1・2 は結合しており、
+Change 1 が `sim-line`（凍結）側の判断を要するため、これ以上 Allowed Files 内だけでは前進できない。
+Part 3 の src 変更は全て revert 済み（`git diff --stat` 空・`grep -rni diagtmp crates/` = 0）。`t_core_ai_11b` は
+**10/27 のまま ignore・文言も前ラウンドと無変更**。`cargo test --workspace --release` = **190 passed / 0 failed /
+3 ignored** / clippy 0 / fmt clean / no-default-features / wasm32 OK。詳細と BLOCKED BY ARCHITECTURE 全文は
+`TODO.md`「## TASK-2-4 Phase 2 — Part 1/2 land、Part 3 は 11b 未達で停止・報告」。
+**次: Architect が BLOCKED BY ARCHITECTURE の (a)〜(c) を裁定してから Part 3 を再開。T-AI-01R/05R/07R が緑なので
+Phase 3（運動学プラント廃止）は並行で着手可能。**
 
 過去の "Last updated (previous, ...)" 履歴行（2026-09-10〜09-26 の全ラウンド）は `docs/archive-TODO.md` および
 `TODO.md` の各日付付きセクションに残っている。本体は最新 1 本のみを保持する（2026-09-26・軽量化）。
@@ -30,10 +32,10 @@ limits 外の速度計画・必要なら PDC-12 のロック解放）→ Phase 3
 | | |
 |---|---|
 | **何を作っているか** | Realistic Race Spectator Simulator。プレイヤーは運転せず**観戦**する。「実際のモータースポーツ中継に見え、よく見ると各 AI が本当にレースをしている」ことが目標 |
-| **今どこか** | **TASK-2-4 Phase 2 残り（Opus 裁定 PDC-9 後）**。Phase 1 は `54e050a`。T3・t=0 spawn スピン・ヘアピン前輪ロック（PDC-8）・ヘアピン脱出（操舵レート下限）は解消済み。**ミス無しスイープ `t_core_ai_11a` 27/27・0 m（ゲート入り）**、**静止発進 `t_core_ai_03` 緑**。残る赤は **`t_core_ai_11b`（ミス発生時のコース外からの復帰）10/27** と運動学プラント 2 本（`t_ai_01`/`t_drv_04`・Phase 3 で廃止予定） |
-| **次に何をするか** | **`t_core_ai_11b` は BLOCKED BY ARCHITECTURE（`TODO.md` 最新節参照・Architect 裁定待ち）。① T-AI-01R/05R/07R（独立タスクなので着手可）② Phase 3（運動学プラント廃止）。並行で TASK-05-1（UE5）M3/M4。** |
+| **今どこか** | **TASK-2-4 Phase 2 残り**。Phase 1 は `54e050a`。T3・t=0 spawn スピン・ヘアピン前輪ロック（PDC-8）・ヘアピン脱出（操舵レート下限）は解消済み。**ミス無しスイープ `t_core_ai_11a` 27/27・0 m（ゲート入り）**、**静止発進 `t_core_ai_03` 緑**、**T-AI-01R/05R/07R 緑（Part 1 land）**、**運動学 `t_ai_07` 退役済み（Part 2・PDC-11）**。残る赤は **`t_core_ai_11b`（ミス発生時のコース外からの復帰）10/27（Part 3 未達）** と運動学プラント 2 本（`t_ai_01`/`t_drv_04`・Phase 3 で廃止予定） |
+| **次に何をするか** | **`t_core_ai_11b`（Part 3）は BLOCKED BY ARCHITECTURE（`TODO.md` 最新節参照・Architect 裁定待ち）。並行で Phase 3（運動学プラント廃止）・TASK-05-1（UE5）M3/M4。** |
 | **役割** | Opus 5 = Architect / Reviewer / Quality Gate。Sonnet 5 = Implementation Engineer。重大な技術変更は人間承認が必要 |
-| **健全性確認** | `cargo test --workspace --release` → **187 passed / 0 failed / 3 ignored**（sim-core: `t_core_ai_11b` の 1 ignored／sim-driver: 凍結 `t_ai_01`/`t_drv_04` の 2 ignored）。clippy 0 / fmt clean / no-default-features / wasm32 OK |
+| **健全性確認** | `cargo test --workspace --release` → **190 passed / 0 failed / 3 ignored**（sim-core: `t_core_ai_11b` の 1 ignored／sim-driver: 凍結 `t_ai_01`/`t_drv_04` の 2 ignored）。clippy 0 / fmt clean / no-default-features / wasm32 OK |
 
 ### 最初にやること
 
