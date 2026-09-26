@@ -2948,3 +2948,49 @@ cargo test --workspace --release                       → 195 passed / 0 failed
 cargo test --release -p sim-core --test world_ai t_core_ai_12... -- --ignored → 3/32 failed（上記）
 git diff --stat crates/*/src                           → 空（テストファイルのみ変更）
 ```
+
+---
+
+## TASK-2-4 Phase 4a — F-8 残り 3/32 のトレース診断: F-6/F-7 と同じ機序（Sonnet 5・2026-09-26）
+
+**要約**: 上記 (c) を実施。`seed=0x3106・consistency=0.3` の失敗エピソード（`s≈3311.2・lap=1`）を
+一時計装（`world_ai.rs` に `#[ignore]` テストを追加 → 1 s 間隔でトレース → 報告後に削除。
+`grep -rni diagtmp crates/` = 0・`git diff --stat` = 空で commit）で 1 s 間隔トレースした。
+**結論: F-8 の残り 3/32 は新しい機序ではなく、F-6（ヘアピン頂点のライン遅れ）/ F-7 と同じ
+「ヘアピン出口で速度を失いながら大きな `heading_error` を抱えたままフルロック操舵で低速スピン
+復帰する」既知の系統誤差の裾である。** F-8 発見時の仮説（射影が遠方で張り付く）は不成立。
+
+### トレース実測（`s=3311.2〜3455.6`・`t=174〜188 s`。抜粋）
+
+```
+t=174s s=3321.1 t=-17.11 he=-0.591 steer=-1.00 throttle=0.00 speed=19.08  ← 破断直後、既に t=-17 m
+t=176s s=3330.8 t=-33.54 he=-0.479 steer=-1.00 throttle=0.00 speed=11.18  ← 最深部
+t=180s s=3340.7 t=-26.81 he=+1.109 steer=+0.05 throttle=0.22 speed= 7.47  ← heading_error が反転（+63°）
+t=184s s=3362.1 t=-4.49  he=+0.512 steer=+0.19 throttle=0.47 speed=13.37  ← コリドー復帰
+t=188s s=3455.6 t=+2.53  he=+0.002 steer=-0.05 throttle=0.57 speed=30.91  ← 通常走行へ復帰
+```
+
+`heading_error` が `-0.59 rad → +1.11 rad` と大きく振れる（スピンに近い挙動）・`steer` が `-1.0`
+（フルロック）に張り付く・その間 `throttle ≈ 0`（駆動していない）という組み合わせは、PDC-14 の
+診断（`TODO.md` Phase 4「因果連鎖」節）が報告したヘアピン出口のヨー反転パターンと同じ形であり、
+F-8 発見当時の「最近傍射影が遠方の s に張り付く」仮説を裏付ける挙動（`aim_s`/`s` が飛ぶ・止まる）は
+見られなかった（`aim_s` は毎 tick 前進し続けている）。低速域（7〜13 m/s）でヨーが収まるまで
+物理的に時間がかかるだけで、**F-6（進入時点で既に基準線から遅れている）が生む大きな初期逸脱を、
+F-7 と同じ低速スピン復帰の遅さで 10 s の閾値ぎりぎりまで長引かせている**、という合成。
+
+### 判断: (b) を採用 — 新規 PDC は起票せず、F-6/F-7 の裁定を待つ
+
+F-8 の残り 3/32 に固有の修正は不要と判断する。F-6（ライン遅れ）または F-7（ロック解放／低速
+復帰の速さ）のどちらかが解消されれば、この 3 件も副次的に解消される可能性が高い（新しい仮説・
+新しい定数は不要）。`t_core_ai_12` は `#[ignore = "F-8"]` のまま残し、Phase 4b で F-6/F-7 の
+修正が land した際に再測定する。
+
+### ゲート（変更なし・確認のみ。一時計装は削除済み）
+
+```
+grep -rni diagtmp crates/                              → 0 件
+git diff --stat                                        → 空（診断のみ・commit なし）
+cargo fmt --all -- --check                             → clean
+cargo clippy --workspace --all-targets -- -D warnings  → 0
+cargo test --workspace --release                       → 195 passed / 0 failed / 1 ignored（不変）
+```

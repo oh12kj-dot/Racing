@@ -12,11 +12,17 @@ PDC-14 コード上に実装して単独計測したが、`level=0.9`（低ス�
 承認条件「11a 27/27・0 m」を満たさず revert 済み（`git diff --stat` = 空・194 passed / 0 failed で baseline 復帰）。
 続けて F-8 再現テスト（Phase 4a 未着手だった項目）を追加・実測したところ、PDC-14 が F-8 も間接的に
 軽減していることが分かった（3 件の残存失敗は全て consistency=0.3・worst outside 29〜35 m・10 周完走）。
-詳細は `TODO.md` 最新 2 節「TASK-2-4 Phase 4 — F-7 再評価」「TASK-2-4 Phase 4a — F-8 再現テスト」。
-**次（Architect 判断待ち）: F-7 は (a) PDC-12 の適用条件をさらに絞る／(b) F-6 を先に解消してから
-PDC-12 再挑戦／(c) 現状（自力復帰 12.6 s、11b の受け入れ条件外）で受容。F-8 は (a) `t_core_ai_12` の
-`#[ignore]` を解除して 32/32 要求／(b) 現状 3/32 を記録に留め次の優先度へ／(c) 残り 3 件のうち代表 1 本を
-1 s トレース診断してから決める。並行で TASK-05-1（UE5）M3/M4。**
+続けて F-8 残り 3/32 のうち代表 1 本（`seed=0x3106`）を一時計装で 1 s トレース診断し、
+新しい機序ではなく F-6/F-7 と同じ「ヘアピン出口の大きな `heading_error` + フルロック操舵の
+低速スピン復帰」の裾であると結論した（射影が遠方に張り付く仮説は不成立）。F-8 固有の修正は
+起票せず、F-6/F-7 の裁定を待って副次的解消を Phase 4b で再測定する方針とした（診断は
+一時計装のみで `git diff` は空。トレース詳細は `TODO.md` 最新節）。
+詳細は `TODO.md` 最新 3 節「TASK-2-4 Phase 4 — F-7 再評価」「Phase 4a — F-8 再現テスト」
+「Phase 4a — F-8 残り 3/32 のトレース診断」。
+**次（Architect 判断待ち・F-6/F-7/F-8 は 1 本化）: (a) PDC-12 の適用条件をさらに絞る／
+(b) F-6（ヘアピン頂点 7 m 遅れ）を先に解消してから PDC-12 を再挑戦・F-8 の 3/32 も再測定／
+(c) 現状（F-7 は自力復帰 12.6 s・F-8 は 3/32 とも 11b の受け入れ条件外）で受容し次の Phase へ。
+並行で TASK-05-1（UE5）M3/M4。**
 
 過去の "Last updated (previous, ...)" 履歴行（2026-09-10〜09-26 の全ラウンド）は `docs/archive-TODO.md` および
 `TODO.md` の各日付付きセクションに残っている。本体は最新 1 本のみを保持する（2026-09-26・軽量化）。
@@ -31,8 +37,8 @@ PDC-12 再挑戦／(c) 現状（自力復帰 12.6 s、11b の受け入れ条件�
 | | |
 |---|---|
 | **何を作っているか** | Realistic Race Spectator Simulator。プレイヤーは運転せず**観戦**する。「実際のモータースポーツ中継に見え、よく見ると各 AI が本当にレースをしている」ことが目標 |
-| **今どこか** | **TASK-2-4 Phase 4（Opus 直接）完了**: PDC-14（`controller.rs` のトラクション上限を実ヨー負荷・圧力中心ダウンフォース配分・駆動輪路面で見積もる）で **`t_core_ai_11a` 27/27・0 m、`t_core_ai_11b` 27/27（ignore 解除）**。F-7 再評価（PDC-12）は 11a を壊し revert・BLOCKED BY ARCHITECTURE。F-8 再現テスト `t_core_ai_12` を land（`#[ignore = "F-8"]`・実測 3/32 失敗・全て有限時間で復帰）。残課題 F-6（ヘアピン頂点のライン遅れ）/ F-7（ミス制動の前輪ロック自己保持・held-out 2/90）/ F-8（3/32・軽減済み） |
-| **次に何をするか** | **Architect が F-7/F-8 の次の一手を裁定（各々 TODO.md 最新 2 節の (a)/(b)/(c) から選ぶ）。並行で TASK-05-1（UE5）M3/M4。** |
+| **今どこか** | **TASK-2-4 Phase 4（Opus 直接）完了**: PDC-14（`controller.rs` のトラクション上限を実ヨー負荷・圧力中心ダウンフォース配分・駆動輪路面で見積もる）で **`t_core_ai_11a` 27/27・0 m、`t_core_ai_11b` 27/27（ignore 解除）**。F-7 再評価（PDC-12）は 11a を壊し revert・BLOCKED BY ARCHITECTURE。F-8 再現テスト `t_core_ai_12` を land（`#[ignore = "F-8"]`・実測 3/32 失敗・全て有限時間で復帰）。残り 3/32 をトレース診断し **F-6/F-7 と同じ機序（新規修正不要）と結論**。残課題は F-6（ヘアピン頂点のライン遅れ）/ F-7（ロック自己保持・低速復帰の遅さ）の 1 本に収束（F-8 はその副産物） |
+| **次に何をするか** | **Architect が F-6/F-7 の次の一手を裁定（TODO.md 最新節の (a)/(b)/(c) から選ぶ）。並行で TASK-05-1（UE5）M3/M4。** |
 | **役割** | Opus 5 = Architect / Reviewer / Quality Gate。Sonnet 5 = Implementation Engineer。重大な技術変更は人間承認が必要 |
 | **健全性確認** | `cargo test --workspace --release` → **195 passed / 0 failed / 1 ignored**（+1 = `t_core_ai_12`・F-8）。clippy 0 / fmt clean / no-default-features / wasm32 OK |
 
