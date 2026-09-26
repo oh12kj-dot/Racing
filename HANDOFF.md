@@ -1,6 +1,24 @@
 # HANDOFF.md — 引き継ぎ資料
 
-Last updated: 2026-09-26（Opus 裁定 PDC-9 + 分類ラウンド監査後）/ **Sonnet 分類ラウンド `7bcd2ae` は Opus 監査 APPROVED**（`LOW_PRECISION_STEER_RATE_FLOOR` はアブレーションで本物と確認。ただし `precision` 軸を 74 % の定義域で平坦化 = MEDIUM・Phase 3 で再導出）。**PROPOSED DESIGN CHANGE（ミス起因の逸脱）は案 A/B/C いずれも不採用 → PDC-9 を裁定・実装**: 旧スイープは最初の逸脱 tick で打ち切っていたため「0.2〜8 cm」は 1 tick の値にすぎず（HIGH-1）、打ち切らずに走らせるとミス発生 27 走行中 **10 本は 48〜161 m コース外へ出て戻れない**。`t_core_ai_11` を **11a（`error_rate=0` の 27 走行・逸脱 0 m・ignore 解除でゲート入り・27/27 緑）** と **11b（`error_rate=0.5` の同じ 27 組・逸脱量は問わず「3 周完走 + 各 limits 外エピソード ≤ 10 s で復帰」・ignore 中 10/27 赤）**に分割（原則 3: ミスは原因なので帰結は許す／帰属は対の 11a が 0 m であることで反実仮想的に証明）。あわせて **`t_core_ai_03`（静止発進 3 周・level 0.2/0.5/0.9 = 97.5/95.9/94.2 s/周・0 m）を追加・緑**。`cargo test --workspace --release` = **187 passed（doctest 込み）/ 0 failed / 3 ignored**（`t_core_ai_11b` + 凍結 `t_ai_01`/`t_drv_04`） / clippy 0 / fmt clean / no-default-features / wasm32 OK。詳細は `TODO.md`「## TASK-2-4 Phase 2 — Opus 5 裁定（PDC-9）+ Sonnet 分類ラウンド監査（2026-09-26）」。**次: 同節 NEXT SONNET TASK = コース外からの復帰（11b を緑に）→ T-AI-01R/05R/07R → Phase 3。**
+Last updated: 2026-09-26（T-CORE-AI-11b 診断 3 ラウンド → BLOCKED BY ARCHITECTURE）/ **T-CORE-AI-11b
+（コース外からの復帰）は 3 ラウンド試行（aim 点の近点化+速度上限／先読み固定+ヨーレート・摩擦上限の
+ライン依存ゼロ化／ヘディング誤差ベースの早期発火）のいずれも 27/27 に届かず、③ でも主要指標
+（失敗数）がベースライン 10/27 を下回れなかった（12/27）ため `BLOCKED BY ARCHITECTURE` として
+停止・報告**。診断で判明: ヘアピン脱出・湾曲区間・T3 縁石ロックの各系統は、track limits を割る
+（または heading_error が顕在化する）時点で既にタイヤがピークスリップ角を超えて滑走状態に入っており
+（`sim-vehicle` 凍結タイヤモデルの性質）、Controller/Planner（steer/throttle/brake のみ）では
+数秒のオーダーで応答が変わらないことを実測（steer 飽和は解消できたが `heading_error` が 1 秒以上
+不変）。**コードは着手前の `10cf1a0` と完全一致に復元済み**（`git diff --stat` 空・診断用
+`eprintln!` は全削除・`grep -rni diagtmp crates/` = 0 件）。`t_core_ai_11b` の `#[ignore]`・
+受け入れ数値（`REJOIN_MAX_S` 等）は無変更。ゲートは変更なしで再確認: `cargo test --workspace
+--release` = **187 passed / 0 failed / 3 ignored** / clippy 0 / fmt clean / no-default-features /
+wasm32 OK。詳細は `TODO.md`「## TASK-2-4 Phase 2 — コース外からの復帰（T-CORE-AI-11b）診断・
+3 ラウンド試行 → BLOCKED BY ARCHITECTURE（Sonnet 5・2026-09-26）」。**次: Architect が
+BLOCKED BY ARCHITECTURE の (a)（`perception.rs` にスリップ角早期伝達）/(b)（`tyre.rs` の
+ピーク超過後回復特性）/(c)（11b 受け入れ基準の再検討）のいずれかを裁定するまで T-CORE-AI-11b は
+着手不可。並行して T-AI-01R/05R/07R は独立タスクとして着手可能。**
+
+Last updated (previous, Opus 5): 2026-09-26（Opus 裁定 PDC-9 + 分類ラウンド監査後）/ **Sonnet 分類ラウンド `7bcd2ae` は Opus 監査 APPROVED**（`LOW_PRECISION_STEER_RATE_FLOOR` はアブレーションで本物と確認。ただし `precision` 軸を 74 % の定義域で平坦化 = MEDIUM・Phase 3 で再導出）。**PROPOSED DESIGN CHANGE（ミス起因の逸脱）は案 A/B/C いずれも不採用 → PDC-9 を裁定・実装**: 旧スイープは最初の逸脱 tick で打ち切っていたため「0.2〜8 cm」は 1 tick の値にすぎず（HIGH-1）、打ち切らずに走らせるとミス発生 27 走行中 **10 本は 48〜161 m コース外へ出て戻れない**。`t_core_ai_11` を **11a（`error_rate=0` の 27 走行・逸脱 0 m・ignore 解除でゲート入り・27/27 緑）** と **11b（`error_rate=0.5` の同じ 27 組・逸脱量は問わず「3 周完走 + 各 limits 外エピソード ≤ 10 s で復帰」・ignore 中 10/27 赤）**に分割（原則 3: ミスは原因なので帰結は許す／帰属は対の 11a が 0 m であることで反実仮想的に証明）。あわせて **`t_core_ai_03`（静止発進 3 周・level 0.2/0.5/0.9 = 97.5/95.9/94.2 s/周・0 m）を追加・緑**。`cargo test --workspace --release` = **187 passed（doctest 込み）/ 0 failed / 3 ignored**（`t_core_ai_11b` + 凍結 `t_ai_01`/`t_drv_04`） / clippy 0 / fmt clean / no-default-features / wasm32 OK。詳細は `TODO.md`「## TASK-2-4 Phase 2 — Opus 5 裁定（PDC-9）+ Sonnet 分類ラウンド監査（2026-09-26）」。**次: 同節 NEXT SONNET TASK = コース外からの復帰（11b を緑に）→ T-AI-01R/05R/07R → Phase 3。**
 
 Last updated (previous, Sonnet 5): 2026-09-26（Sonnet 分類ラウンド後）/ **TASK-2-4 Phase 2 残り 19/51 を分類 → ノイズのみの 3 組（ヘアピン脱出
 s≈3377・低 precision ドライバーがステアリングレート不足でラインを追い切れず決定論的に逸脱）は `controller.rs` に
@@ -30,7 +48,7 @@ Last updated (previous): 2026-09-10 / **TASK-2-4 Phase 1 は Opus 監査 APPROVE
 |---|---|
 | **何を作っているか** | Realistic Race Spectator Simulator。プレイヤーは運転せず**観戦**する。「実際のモータースポーツ中継に見え、よく見ると各 AI が本当にレースをしている」ことが目標 |
 | **今どこか** | **TASK-2-4 Phase 2 残り（Opus 裁定 PDC-9 後）**。Phase 1 は `54e050a`。T3・t=0 spawn スピン・ヘアピン前輪ロック（PDC-8）・ヘアピン脱出（操舵レート下限）は解消済み。**ミス無しスイープ `t_core_ai_11a` 27/27・0 m（ゲート入り）**、**静止発進 `t_core_ai_03` 緑**。残る赤は **`t_core_ai_11b`（ミス発生時のコース外からの復帰）10/27** と運動学プラント 2 本（`t_ai_01`/`t_drv_04`・Phase 3 で廃止予定） |
-| **次に何をするか** | **① `TODO.md`「TASK-2-4 Phase 2 — Opus 5 裁定（PDC-9）」の NEXT SONNET TASK（コース外からの復帰 = `t_core_ai_11b` を緑に）② T-AI-01R/05R/07R ③ Phase 3（運動学プラント廃止）。並行で TASK-05-1（UE5）M3/M4。** |
+| **次に何をするか** | **`t_core_ai_11b` は BLOCKED BY ARCHITECTURE（`TODO.md` 最新節参照・Architect 裁定待ち）。① T-AI-01R/05R/07R（独立タスクなので着手可）② Phase 3（運動学プラント廃止）。並行で TASK-05-1（UE5）M3/M4。** |
 | **役割** | Opus 5 = Architect / Reviewer / Quality Gate。Sonnet 5 = Implementation Engineer。重大な技術変更は人間承認が必要 |
 | **健全性確認** | `cargo test --workspace --release` → **187 passed / 0 failed / 3 ignored**（sim-core: `t_core_ai_11b` の 1 ignored／sim-driver: 凍結 `t_ai_01`/`t_drv_04` の 2 ignored）。clippy 0 / fmt clean / no-default-features / wasm32 OK |
 

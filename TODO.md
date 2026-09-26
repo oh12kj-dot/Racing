@@ -1672,6 +1672,130 @@ T-CORE-AI-09                                              → 1.217 ms/tick（�
 
 ---
 
+## TASK-2-4 Phase 2 — コース外からの復帰（T-CORE-AI-11b）診断・3 ラウンド試行 → BLOCKED BY ARCHITECTURE（Sonnet 5・2026-09-26）
+
+**結論: `t_core_ai_11b` を緑化できず、`BLOCKED BY ARCHITECTURE` として停止・報告する（contract の 3 ラウンド規定どおり）。**
+コードは着手前の `10cf1a0`（本ラウンドが読んだ HEAD）と一致する状態に戻してある（`git diff --stat` が空。
+`grep -rni diagtmp crates/` = 0 件）。`t_core_ai_11b` の `#[ignore]` はそのまま・受け入れ数値
+（`REJOIN_MAX_S`・11a/11b の合否ロジック・`sweep_cases`）も無変更。
+
+### 診断（3 例。Architect 指定の「ヘアピン型 1・s≈3667/3461 型 1・グラベル→縁石制動型 1」に対応）
+
+一時 `eprintln!`（`controller.rs` に `delta_pp`/`delta_ff`/`delta_cs`/`delta_hd`/Pure Pursuit の
+aim 点、`world_ai.rs` に 4 輪 `slip_ratio`/`slip_angle`・`surface_at`・向きと接線の角度を出力する
+一時テスト）で採取し、診断後に全て削除・`git checkout` で復元した（最終差分に残っていないことを
+`grep -rni diagtmp crates/` で確認済み）。
+
+| # | ケース | 逸脱開始 | 実測 | 判定 |
+|---|---|---|---|---|
+| A（ヘアピン型） | `level=0.3 consistency=0.5 seed=1` | `s=3310.7`（lap 0） | `v=19.01 m/s`・`heading_error≈-0.31 rad` が 1 s で `-0.56 rad` まで悪化。Pure Pursuit の aim 点（`trajectory.t_at(aim_s)`、先読み `lookahead_m≈10〜12 m`）と自車横位置の差 `lat` が `+1.1→+10 m` まで開き、車両ローカル角 `alpha` が `+1.0〜1.2 rad`（60〜70°）まで開いて `delta_pp` が飽和 → `steer_raw=-1.000`（フルロック）が 5 s 以上継続。路面 `Grass`（`grip_multiplier=0.45`）で前輪 `slip_angle` が `0.47→0.65 rad`（27〜37°、典型的なピーク後の領域）まで増大 = **タイヤが既にグリップのピークを超えて滑走状態**。`t` は `-7.6 m → -90 m` 超まで発散し、最終的に速度が負に転じて（スピン）復帰しなかった | **H2（Pure Pursuit の aim 点の幾何的破綻）を実測で確認** — ただし後述のとおり「近い点を狙う」だけでは解決しなかった |
+| B（`s≈3667/3461` 型） | `level=0.3 consistency=0.5 seed=2` | `s=3667.5`（lap 0。手前に `s=3384.2`/`3417.5`/`3641.8` で 3 回の小逸脱があり自力回復していた） | 逸脱開始時点で `heading_error=+0.85 rad`（!）。区間全体で `throttle_raw=1.000`・`brake_final=0.000` が**途切れなく継続**（`Planner` の `v_target` は `speed_profile`/`SpeedProfile` ベースで、limits 外かどうかを一切見ないため、逸脱中も「そこの物理限界速度」を目標に加速し続ける） | **新規に確認した機序**: H2 に加えて「limits 外でも `v_target` が下がらず加速し続ける」。同系統の `level=0.7 consistency=0.5 seed=2`（`s=3461.0`）はテレメトリまでは採らなかったが、`eprintln!` サマリで同じ「`with_excursion` 側にもならず即失敗」パターンを確認 |
+| C（グラベル→縁石制動ロック型） | `level=0.7 consistency=0.5 seed=1` | `s=1517.1`（lap 1。手前に `s=1187.4` グラベル・`s=1378.3` 縁石接触が自力回復済み） | **真因は `s≈1440〜1450`（Kerb 上・まだ track limits 内）でのブレーキング**: `brake_final≈0.53`（`brake_lock_cap` が推定した「ロックしない」はずの値）なのに、実測 `slip_ratio` が 2 輪で `-1.000`/`-0.945`（完全ロック）。原因は `brake_lock_cap` が `mu0`（舗装前提）のみを使い、実際の縁石グリップ（`SurfaceKind::Kerb.properties().grip_multiplier=0.90`）を一切見ていないこと。ロック後 `yaw_vs_tan` が `-0.02→+0.11→+0.60 rad` と急変（スピン開始）、`s=1517.1` で track limits を割った時点で既に `beta≈-0.57 rad` まで進行していた | **H3（縁石/芝/グラベルで舗装 μ を前提にしロック/スピンする）を実測で確認・特定**: `sim-vehicle::tyre.rs::effective_mu = mu0 * grip * sensitivity`（`grip` は `TyreInput::grip`＝`SurfaceKind::properties().grip_multiplier`）と完全に同じ形で `Controller::brake_lock_cap`/`traction_throttle_cap` にも `surface_grip` を掛けるのが物理的に正しい修正と判断した（実際に本ラウンドで実装・検証: 後述） |
+
+### 3 ラウンドの試行と結果（Allowed Files 内: `controller.rs` / `planner.rs`）
+
+いずれも `t_core_ai_11a`・`t_core_ai_10_full`・`t_core_ai_10_offline_spawn`・`t_core_ai_03` は
+**全ラウンドで無回帰（0.000 m・同一ラップタイムをビット単位で確認）** — 通常走行への影響はゼロ
+（`recovering`/`outside` 系の判定が `t_core_ai_11a` では常に false になることを前提にした設計・
+確認済み）。`t_core_ai_11b`（27 走行）の合否・最悪逸脱・最長エピソードで比較:
+
+| ラウンド | 変更内容 | 11b 結果 |
+|---|---|---|
+| **ベースライン**（`10cf1a0`、変更前） | — | **17/27 完走（10/27 失敗）**。失敗 10 本の最悪逸脱 48.9〜160.7 m（詳細は下表） |
+| **① aim 点の近点化 + 速度上限** | `Plan::aim_t` を新設（通常時は `trajectory.t_at(aim_s)` と bit-exact）。`perceived.t` が `Corridor::limit_bounds` を外れたら「近い境界 + 1 m」を aim に、先読みを `lateral/tan(20°)` で動的に決め、`v_target` を 12 m/s に制限。`brake_lock_cap`/`traction_throttle_cap` に `surface_grip`（H3 の修正）を追加 | **13/27 失敗（悪化）**。原因: 先読みを「横オフセットに比例」させたため、逸脱直後（横オフセットはまだ小さいが heading_error は既に大きい）に先読みが短いまま `alpha` が `he` 由来で 0.9 rad 前後まで開く設計ミスに気づいた（②で修正） |
+| **② 先読み固定 + 目標ヨーレート/摩擦上限のライン依存をゼロ化** | 復帰中の先読みを `LOOKAHEAD_MAX_M`（45 m）固定にして `alpha→|heading_error|` の漸近を保証。`delta_hd` の目標ヨーレートと `brake_lock_cap`/`traction_throttle_cap` の横力デマンドを、limits 外では 0 にする（もう遠いラインの曲率を追う理由がない） | **14/27 失敗（さらに悪化）**。`delta_pp+delta_ff+delta_hd` の飽和は解消（`steer_raw` がフルロックに張り付かなくなった）が、**`heading_error` が 1 秒以上ほぼ無変化のまま**（ステア入力を弱めても・`v_target` 制限を実質無効化（999 m/s）して確認しても同じ）。飽和ではなく**車体のヨー/横力応答そのものが動かない**ことを確認 — 物理層の限界 |
+| **③ ヘディング誤差ベースで早期発火** | `recovering` の発火条件に「`heading_error.abs() > 0.44 rad`」を OR で追加（位置逸脱を待たず、診断で確認した「逸脱の瞬間に既に 25〜45° 傾いている」問題に対応）。`Plan::recovering` を新設し `Controller` 側も同じフラグを共有 | **12/27 失敗**。②よりは改善（グラベル系の 3 本は最悪逸脱が数十 m → 9〜12 m まで縮小）が、依然**ベースラインの 10/27 より悪い**（ヘアピン系の複数本は 76〜109 m まで発散したまま） |
+
+**3 ラウンドとも受け入れ基準（27/27）に届かず、③ は主要指標（失敗数）でベースラインを下回った
+（部分的に改善したケースはあったが全体では悪化）ため、Allowed Files 内の変更として land せず、
+全て `git checkout` で `10cf1a0` に戻した。**
+
+### 物理層の限界という結論の根拠
+
+② のログでは、`delta_pp`/`delta_ff`/`delta_hd` の合計が ±0.3 rad 程度（飽和なし）の穏当な値でも、
+また `v_target` 制限を実質無効化して急ブレーキ要求を取り除いても、`heading_error` が **1 秒以上
+ほぼ変化しない**（前輪 `slip_angle` が 0.47 rad 超・グリップのピークを過ぎた領域にいる — H2 の
+診断で確認済み）。ステア出力を弱めても強めても同じ挙動だったことから、これは Controller の
+ゲイン/飽和の問題ではなく、**タイヤが一度ピークスリップ角を超えて滑走状態に入ると、その後
+数秒のオーダーでしか（現実の車と同様に）ヨーが戻らない**という `sim-vehicle`（凍結）のタイヤ
+モデルの性質だと判断した。
+
+### BLOCKED BY ARCHITECTURE
+
+```
+Task: T-CORE-AI-11b（コース外からの復帰）を緑化する（TASK-2-4 Phase 2 残り）。
+Blocking Issue: ミス発生シナリオの一部（ヘアピン脱出 s≈3301〜3320、湾曲区間 s≈3641〜3667、
+  T3 進入の縁石ロック s≈1440〜1517 系）では、track limits を割った、あるいは heading_error が
+  顕在化した時点で、実際の車体がタイヤの摩擦円のピークを既に超えて滑走状態に入っており、
+  Controller/Planner の出力（steer/throttle/brake のみ）をどう変えても 10 秒以内に
+  heading_error が縮み始めない（3 ラウンドとも実測で確認。飽和は解消できたが応答が変わらない）。
+Why Current Design Prevents Implementation: Controller/Planner は VehicleState/Transform を
+  直接操作できず（原則 1/8）、唯一の出力は steer/throttle/brake/gear/clutch。`sim-vehicle`
+  （凍結）の Magic Formula タイヤモデルはピークスリップ角を超えると（現実の車と同様に）
+  数秒のオーダーでしか回復しない。`DriverObservation`（`driver.rs`、凍結）は「今」の真値のみを
+  渡し、`Perception`（凍結）の予見遅延は `reaction_time` 分のリングバッファに留まるので、
+  Controller/Planner は「スリップ角がピークへ近づいている」という早期警戒信号を持たず、
+  突入を未然に防ぐことも、突入直後の数 tick で食い止めることもできない。今の設計では、
+  数秒に渡る滑走をそのまま観測して「回復した」と主張することしかできない。
+Required Change（いずれも凍結ファイル・人間承認が必要）:
+  (a) `sim-driver/src/perception.rs` に自車のスリップ角/スリップ比を低遅延で伝える経路を
+      追加し、Controller がピーク近傍で先回りして介入できるようにする、または
+  (b) `sim-vehicle/src/tyre.rs` のピーク超過後の回復特性を確認・調整する（本ラウンドでは
+      読解のみに留め、変更していない — `effective_mu = mu0 * grip * sensitivity` の
+      `grip`（`SurfaceKind::properties().grip_multiplier`）を Controller 側の
+      `brake_lock_cap`/`traction_throttle_cap` にも掛けるのは物理的に正しい対応と確認したが、
+      これだけでは 11b は緑化しなかった）、または
+  (c) T-CORE-AI-11b の受け入れ基準（`REJOIN_MAX_S` や「回復」の定義）自体の再検討
+      （PDC-9 の裁定を覆すため Architect 判断が必要）。
+Affected Scope: `crates/sim-driver/src/perception.rs`（新フィールド）、
+  `crates/sim-driver/src/driver.rs`（`DriverObservation` 経由で渡す場合）、
+  `crates/sim-vehicle/src/tyre.rs`（タイヤモデル調整の場合）。いずれも Allowed Files 外。
+Recommended Next Step: Architect が (a)/(b)/(c) のいずれかの方向性を裁定する。
+  (a) は「知覚できる自車状態を早く伝える」だけなのでミスの検知・打ち消し（禁止事項）には
+  当たらないはずだが、`perception.rs` は Do Not Change 指定なので実装前に承認が要る。
+```
+
+### 参考: `t_core_ai_11b` 失敗 10 本の詳細（ベースライン・変更なし。今回のラウンドで数値は不変）
+
+`level/consistency/seed` → 逸脱開始位置 → 最悪逸脱 [m]（10 s 経過時点）:
+
+| ケース | 逸脱開始 | 最悪逸脱 [m] |
+|---|---|---|
+| 0.3/0.5/1 | `s=3310.7` lap0 | 85.8 |
+| 0.3/0.5/2 | `s=3667.5` lap0 | 49.8 |
+| 0.3/0.5/3 | `s=3303.3` lap2 | 103.1 |
+| 0.5/0.5/1 | `s=3301.9` lap0 | 120.3 |
+| 0.7/0.5/1 | `s=1517.1` lap1 | 160.7 |
+| 0.7/0.5/2 | `s=3461.0` lap0 | 49.0 |
+| 0.9/0.5/1 | `s=3318.6` lap0 | 83.1 |
+| 0.9/0.5/3 | `s=1347.9` lap2 | 118.9 |
+| balanced/1 | `s=3303.2` lap0 | 123.9 |
+| balanced/3 | `s=3308.5` lap2 | 95.0 |
+
+残り 17/27 は完走（6 本は最大 5.8 m・最長 3.1 s の逸脱から自力回復 = 許容される帰結。11 本は
+逸脱なし）。全 10 本ともヘアピン系（左ヘアピン進入/脱出の外側芝）か、そこへ抜ける手前の
+高速区間から加速し続けたまま逸脱する系統で、いずれも本ラウンドの診断（上記 A/B/C）と同じ
+2 つの機序（Pure Pursuit の遠い aim 点への追従＋`v_target` が減速しない／縁石ブレーキロック
+から発展するスピン）に分類できる。
+
+### ゲート（変更なし・確認のみ）
+
+```
+cargo fmt --all -- --check                               → clean
+cargo clippy --workspace --all-targets -- -D warnings    → 0
+cargo test --workspace --release                         → 187 passed（doctest 込み）/ 0 failed / 3 ignored
+cargo build -p sim-wasm --target wasm32-unknown-unknown --release → OK
+cargo build -p sim-line --no-default-features            → OK
+grep -rni diagtmp crates/                                 → 0 件
+git diff --stat（10cf1a0 に対して）                        → 差分なし
+```
+
+**次**: Architect が BLOCKED BY ARCHITECTURE の (a)/(b)/(c) いずれかを裁定するまで
+T-CORE-AI-11b は着手不可。並行して T-AI-01R/05R/07R（「次のシーケンス」の 2.）は本タスクと
+独立なので着手可能（前ラウンドの Architect 判断どおり）。
+
+---
+
 ## TASK-2-4 Phase 2 — Opus 5 裁定（PDC-9）+ Sonnet 分類ラウンド監査（2026-09-26）
 
 **VERDICT（Sonnet 分類ラウンド `7bcd2ae`）: APPROVED。** コード変更（`LOW_PRECISION_STEER_RATE_FLOOR`）は実在する修正で、
