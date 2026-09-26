@@ -1282,12 +1282,12 @@ fn t_ai_04r_target_speed_never_exceeds_physical_limit() {
 /// 実物理版。同一比較: `consistency` を下げるほどラップタイムの標準偏差が広がる。
 #[test]
 fn t_ai_06r_low_consistency_widens_lap_time_spread() {
-    // 単一 seed（旧テストの `0xA106` 1 本）は運動学プラントでは十分だったが、実物理では
-    // ミス復帰の所要時間そのものが確率的（コース外への滑走距離・復帰までの操舵）で
-    // ラップタイム分散に強く効くため、1 seed だと trend が seed 依存のノイズに埋もれる
-    // （実測: `0xA106` 単独では 1.41→1.48→1.51 と**逆転**、`0xB106` 単独では
-    // 1.73→1.66→1.62 と正しい向き）。3 seed をプールして分散を推定することで
-    // seed 依存ノイズを均し、`consistency` 自体の因果効果を見る。
+    // 3 seed プールは標本数を増やすため（n = 18。旧テストは 1 seed・n = 10）。
+    // Opus 監査（2026-09-26）で訂正: Phase 3 報告の「`0xA106` 単独だと 1.41→1.48→1.51 と逆転」は
+    // グリッド発進の部分周（lap 0 ≈ 100.5 s、他は ≈ 96.3 s）を標本に含めた値で、逆転はその外れ値の
+    // 産物だった（consistency が高いほど通常周が速く、lap 0 との差が開く）。lap 0 を落とせば
+    // `0xA106` 単独でも 0.415→0.335→0.282、旧テストと同じ 10 周窓でも 0.355→0.265→0.216 と単調減少。
+    // 16 seed まで先頭から順にプールしても全て単調減少（seed 選びではない）。
     const SEEDS: [u64; 3] = [0xA106, 0xB106, 0xC106];
     let mut sds = Vec::new();
     let mut report = Vec::new();
@@ -1567,6 +1567,20 @@ fn t_drv_04r_rng_only_affects_causes() {
                 let outside = (t_right - e.coord.t).max(e.coord.t - t_left).max(0.0);
                 worst_outside = worst_outside.max(outside);
             }
+            // 旧 t_drv_04 の per-tick `v_target <= v_cap`（ミス有りモデル）を復元（Opus 監査）。
+            // T-AI-04R はミス無しモデルのみなので、ミス（brake bias 等）下でも速度計画が
+            // 上限を破らないことはここでしか見ていない。
+            let d = world.driver(VehicleId(0)).unwrap();
+            let v_cap = world
+                .racing_line()
+                .unwrap()
+                .speed_profile()
+                .v_at(d.perceived().s);
+            assert!(
+                d.plan().v_target >= 0.0 && d.plan().v_target <= v_cap + 1e-9,
+                "T-DRV-04R: seed {seed}: v_target {:.3} out of [0, {v_cap:.3}] at tick {tick}",
+                d.plan().v_target
+            );
             if e.laps_completed > laps_seen {
                 laps_seen = e.laps_completed;
                 lap_times.push((tick - lap_start_tick) as f64 * SIM_DT);

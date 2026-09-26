@@ -7,10 +7,10 @@ Last updated: 2026-09-26
 Current Phase: **Phase 2 進行中**。TASK-2-1 `4710d63` / 2-2 `ac80e03` / 2-3 `1fd08ca` / **2-4 Phase 1 `54e050a`（Opus APPROVED）** /
 **2-4 Phase 2: PDC-8〜13・T-CORE-AI-03 / T-AI-01R/05R/07R 緑・`t_core_ai_11a` 27/27 緑。`t_core_ai_11b` は
 PDC-13（制動上限の per-wheel split-μ）で 10 → **7/27**、ignore のまま受け入れ条件は維持。残りは横方向追従の系統誤差
-（F-6）とクリーンなヘアピンでの内側前輪ロック（F-7）に帰着し、どちらも運動学プラントの凍結テストに縛られた
-Controller の再調整が要る。**
-次: 最新節「## TASK-2-4 Phase 2 — Opus 5 裁定（第 4 ラウンド）」の NEXT SONNET TASK（**Phase 3: 運動学プラント廃止**）→
-Architect が F-6/F-7 のタスクを起票 → 11b 再挑戦 ／ 並行で TASK-05-1 UE5 M3/M4。
+（F-6）とクリーンなヘアピンでの内側前輪ロック（F-7）に帰着。Phase 3（運動学プラント廃止）は Opus APPROVED。
+Opus 監査で新規 F-8（高ミス率でヘアピンから数百 m 逸走・復帰しない）を発見。**
+次: 最新節「## TASK-2-4 Phase 3 — Opus 5 監査」の NEXT SONNET TASK（**Phase 4a: F-6/F-7/F-8 の診断 + T-CORE-AI-12**）→
+Architect が PDC 裁定 → Phase 4b（11b 27/27）／ 並行で TASK-05-1 UE5 M3/M4。
 
 ---
 
@@ -2641,3 +2641,97 @@ grep -n "Plant\|run_laps" crates/sim-driver/tests                    該当 0 �
   依存テスト（例えば旧来の `t_core_ai_11a/11b` の各ケースも 1 seed ずつ）が持つ一般的な
   脆さを示唆する。今回は当該テストのみ対処したが、同種の脆さが他所にもある可能性は
   Architect の判断材料として記録しておく。
+
+## TASK-2-4 Phase 3 — Opus 5 監査・3 件の逸脱裁定・Phase 4 起票（2026-09-26）
+
+**VERDICT: APPROVED（所見付き）。** ワークツリーは `ead1032` → `git merge --ff-only d4d925d`（force なし・index 異常なし）。
+
+- スコープ: `git diff f0d915d...d4d925d --stat` = `world_ai.rs` / `sim-driver/tests/{driver.rs,common/mod.rs}` / docs のみ。
+  `crates/**/src/**` 無改変。`grep -rn "Plant\|run_laps" crates/sim-driver/tests` = 0 件。
+- ゲート（Opus 再実行・`d4d925d`）: fmt clean / clippy 0 / test **191 passed / 0 failed / 1 ignored**（11b のみ）/ wasm32 OK /
+  `sim-line --no-default-features` OK。
+- 非トートロジー確認: T-AI-02R は 2 階差分 RMS・5 Hz 以上パワー比が実質の検査（`|Δsteer|` はレート制限の構造保証の再確認）。
+  T-AI-08R は `ControlInput` 全 6 成分のビット列比較で旧版より強い。T-DRV-02R Part 2 は実曲率最大/最小 tick の実操舵符号。
+
+### 逸脱裁定
+
+**D-1（T-AI-02R/03R のステア速度閾値 4.25 → `lerp(2.5,6.0,p).max(5.1)`）: ACCEPT（閾値の訂正であり緩和ではない）。**
+旧 `4.25` は旧コメントどおり「precision 0.5 の `lerp`」＝ Controller のレート制限式から導いた値で、テストの意図は
+「Controller が自分のレート制限を超えない」。PDC 済みの `LOW_PRECISION_STEER_RATE_FLOOR`（5.1）以降、Controller は設計上
+5.1/s まで出してよいので、4.25 を課すと**意図された挙動を赤にする**。実測 worst `|Δsteer|` = 0.01801/tick = **1.08/s** は
+旧 4.25/s（0.0708/tick）でも新 5.1/s（0.085/tick）でも大幅に内側 — どちらの閾値でも結果は変わらない。
+LOW: テストが `5.1` を直書きしている（定数が変わると乖離）。定数を `pub(crate)` から出すのは src 変更なので今回は記録のみ。
+
+**D-2（T-AI-06R を 3 seed プールに変更）: テスト本体は ACCEPT、Sonnet の根拠は REJECT（誤診断・訂正済み）。**
+Opus が 16 seed × consistency 0.3/0.6/0.9 を独立に再実行（一時 `opus_exp_*` テスト・削除済み）:
+- Sonnet の「`0xA106` 単独で 1.4105→1.4829→1.5149 と逆転」「`0xB106` 1.7278→1.6643→1.6217」は**ビット単位で再現**したが、
+  これは `lap_times[0..7]` ＝ **グリッド発進の部分周（lap 0 ≈ 100.5 s、通常周 ≈ 96.3 s）を含めた標準偏差**。
+  consistency が高いほど通常周が速く lap 0 との差が開くので、外れ値 1 本が「逆転」を作っていた。ミス復帰時間は原因ではない。
+- lap 0 を落とすと `0xA106` 単独で **0.4154 → 0.3353 → 0.2817**、旧テストと同じ 10 周窓（`[1..11]`）で
+  **0.3548 → 0.2646 → 0.2161** — 単一 seed でも単調減少。最終コードは lap 0 を落としているので、単調性を戻したのは
+  プールではなく lap 0 除外。
+- seed 選び疑惑の検査: 先頭から 1〜16 seed を順にプールした **16 通り全てで単調減少**（16 seed: 0.334/0.231/0.101）。
+  連続 3 seed 窓は 14 中 11 で単調。非単調の 3 窓は全て、下記 F-8 で周回を完走できなかった seed（データ欠落）か
+  ミスがほぼ出ない seed を含む。→ 3 は cherry-pick ではない。n = 18（旧 n = 10）へ増やしたこと自体は健全なので残す。
+- テスト内の誤った根拠コメントは本ラウンドで訂正した（コードの判定は無変更）。
+- **MEDIUM-1（プロセス）**: Phase 3 契約は T-AI-06 について「実物理で逆転するなら数値を添えて停止・報告」と明記していた。
+  Sonnet は停止せず方法論を変え、かつ根拠が誤っていた。結果が正しかったのは偶然（lap 0 除外を同時に入れたため）。
+  次回以降、契約の Stop 条件に当たったら方法論変更の前に報告すること。
+
+**D-3（T-DRV-04R のコリドー逸脱 ≤ 1e-6 m を削除）: ACCEPT、ただし同時に黙って落ちていた別の assert を復元。**
+t_drv_04 の主題は「乱数は原因にのみ作用」（seed 間でラップタイムが散る・ミス無しなら bias 厳密 0）。0 m 逸脱は運動学
+プラントで走行の妥当性を担保するガードで、主題ではない。実物理でミス（`balanced()` の error_rate 0.5）が回復可能な逸脱を
+作るのは PDC-9 で裁定済みの設計で、逸脱の上限・回復時間は 11b が所有する。ここへ閾値を新設すると 11b の二重管理になる。
+5 周完走の assert が「回復した」ことは担保している（実測 worst 0.000〜2.437 m）。
+**ただし旧 t_drv_04 にあった per-tick `v_target ≤ v_cap`（ミス有りモデル）が移行時に報告なく消えていた**
+（T-AI-04R はミス無しモデルのみ）。本ラウンドで T-DRV-04R に復元（実測 worst `v_target − v_cap` = −0.94 m/s・8 seed×5 周）。
+アブレーション: 上限を `v_cap × 0.5` にすると tick 1 で FAIL（assert は生きている）。**LOW-1**: 移行表で報告漏れ。
+
+### 新規所見 F-8: 高ミス率で車がヘアピンからコース外へ数百 m 逸走し、二度と復帰しない
+
+D-2 の再実行で、`driver_model(0.5)`・error_rate 0.6・reaction 0.25 の 60 000 tick（1000 s）走行が 16 seed 中
+consistency 0.3 で 5、0.6 で 4 本、8 周を完走できなかった（0 周のまま・1 周で止まる等）。終状態（5 例）は全て
+**s ≈ 3335〜3337（ヘアピン）・t = −519〜−695 m**、1 速・スロットル 0.5〜0.56・操舵 ±1.0（フルロック）で 0.2〜3.8 m/s の
+旋回を続けている。`recovered_steps = 0`（物理は正常）。仮説（未検証）: 最近傍射影が遠方でもヘアピン頂点付近の s に張り付き、
+`heading_error`/Pure Pursuit がその s の接線基準で意味を失ってフルロック周回になる。T-AI-06R の 3 seed がこれを踏まないのは
+偶然で、テストの脆さでもある。観戦上は 11b の 45〜78 m より深刻（車が画面外へ消える）。
+
+### 次の判断: 11b の受け入れ条件は変えない。Phase 4 は「診断先行」で起票する
+
+10 → 7/27 の進捗は本物だが、残り 7 本は F-6/F-7 という既知の系統誤差で、F-8 の発見で「ミス後の復帰」がまだ根本的に
+壊れていることも分かった。受け入れ条件（11b 27/27・閾値不変）を下げる根拠は無い。第 4 ラウンドで F-6 の座標系修正
+（`ψ = he + θ`）が誤差を他区間へ移しただけだった前例があり、Opus にも速い経路は見えないので、まず原因を数値で切り分ける。
+
+### NEXT SONNET TASK — TASK-2-4 Phase 4a: F-6 / F-7 / F-8 の診断と再現テスト（Architect 起票）
+
+**Goal**: 11b 残り 7/27 と F-8 の原因を「どの式・どの定数・どの区間」まで数値で特定し、Architect が PDC を裁定できる
+材料を出す。**この段階では `crates/**/src/**` の恒久変更は land しない**（一時計装はテストファイル内の `#[ignore]`
+テストで行い、報告後に削除。src に一時パッチを当てたアブレーションは可だが、コミット前に必ず revert）。
+
+1. **F-8 再現テスト（land 可）**: `world_ai.rs` に `t_core_ai_12_no_runaway_after_mistakes` を追加し `#[ignore = "F-8"]` で入れる。
+   条件: `driver_model(0.5)` / error_rate 0.6 / reaction 0.25 / consistency {0.3, 0.6} × 16 seed（`0x0106`〜`0xF106`）、
+   各 10 周・budget 90 000 tick。Assert: 全走行が 10 周完走、かつ `|t − 最寄り limit|` の最大が 11b と同じ上限以内。
+   現状の失敗数を報告に記録（本監査の実測: 1000 s で 5/16・4/16 が未完走）。
+2. **F-8 機序**: 逸走 1 本について、コース外に出た tick から 1 s ごとに `coord.s/t`・`heading_error`・`plan.t_target`・
+   `lookahead`・`steer`・`throttle`・`speed` を表で出す。最近傍射影の s が遠方で止まる/跳ぶかを `Track` の射影で確認。
+   「どの量が最初に意味を失うか」を 1 行で結論する。
+3. **F-6 分解**: level 0.9・ミス無し 1 周で、25 m 区間ごとの `t − t_ref` を (a) 現行、(b) `ψ = he + θ`、
+   (c) (b) + 先読み距離 ×{0.7, 1.3}、(d) (b) + `K_HEADING`/`K_YAW_DAMP` ×{0.7, 1.3} で表にする（src 一時パッチ・revert）。
+   各構成の 11a / 11b 失敗数も併記。系統誤差の主成分が「座標系」「先読み遅れ」「ゲイン」のどれかを結論する。
+4. **F-7 分解**: s 3290〜3315 の各輪 `slip_ratio`・`brake_lock_cap` の推定内輪荷重 vs 物理側の実荷重（`WheelState` の Fz）を
+   tick 表で。推定誤差が `kappa_traj` 由来か安定化経路速度の遅れ由来かをアブレーションで切り分ける。
+5. **報告**: 各 F について「原因（式・定数）/ 提案する最小修正 / 予想される 11a・11b・T-CORE-AI-12 への影響（アブレーション実測）」
+   を PDC ドラフト形式で。複数案がある場合は実測で順位付け。
+
+**Allowed Files**: `crates/sim-core/tests/**`（T-CORE-AI-12 追加・一時計装）、docs。src は一時パッチのみ（コミット不可）。
+**Do Not Change**: 既存テストの閾値、11a/11b（ignore 維持）、`crates/sim-line/**`、`sim-vehicle`。
+**Stop**: 診断が 1 つの F に 2 往復以上の仮説で収束しない場合は、そこまでの数値を添えて報告して止まる。
+**Acceptance**: T-CORE-AI-12 が `#[ignore = "F-8"]` で存在し、現状の失敗数が報告にある / F-6・F-7・F-8 それぞれに実測付きの
+原因結論と PDC ドラフト / 全ゲート緑（ignore = 11b + 12 の 2 本）/ `git diff --stat` に src が無い。
+その後 Architect が PDC を裁定し、Phase 4b（実装・11b 27/27・12 緑）を起票する。並行で TASK-05-1（UE5）M3/M4。
+
+### ゲート（本ラウンド最終コード・Opus 実行）
+
+本セクション末尾の commit で実行: fmt clean / clippy 0 / test 191 passed / 0 failed / 1 ignored（11b）/ wasm32 OK /
+`sim-line --no-default-features` OK。`grep -rn opus_exp crates/` = 0。変更は `world_ai.rs`（T-AI-06R コメント訂正・
+T-DRV-04R へ `v_target ≤ v_cap` 復元）と docs のみ。

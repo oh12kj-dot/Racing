@@ -1,18 +1,16 @@
 # HANDOFF.md — 引き継ぎ資料
 
-Last updated: 2026-09-26（Sonnet 5・TASK-2-4 Phase 3 land）/ **運動学プラント（`sim-driver/tests/common::Plant`/
-`run_laps`）を完全廃止。** 依存していた全テスト（`t_ai_01〜08`・`t_drv_02/04/05`・`smoke_lap_times_are_plausible`）を
-実物理版（`crates/sim-core/tests/world_ai.rs` の T-AI-*R / T-DRV-*R）へ移行してから削除した——**全項目が移行に成功し、
-凍結のまま残った運動学テストは 0 本**。`grep -n "Plant\|run_laps" crates/sim-driver/tests` は該当 0 件。
-実物理移行で 2 件の方法論調整が必要だった（数値の恣意的緩和ではない。詳細は `TODO.md`「TASK-2-4 Phase 3」）:
-(1) T-AI-02R/03R のステア速度閾値を、Phase 2 で追加された `LOW_PRECISION_STEER_RATE_FLOOR=5.1` を反映した実式へ更新、
-(2) T-AI-06R は単一 seed だと実物理で trend が**逆転**する（ミス復帰時間という確率要素が単一 seed の分散推定を支配する
-ため）ことが判明し、3 seed プールへ変更して単調減少を再現。
-`cargo test --workspace --release` = **191 passed / 0 failed / 1 ignored**（`t_core_ai_11b` のみ）/ clippy 0 / fmt clean /
-no-default-features / wasm32 OK。**残る赤 = `t_core_ai_11b` 7/27**（F-6 横追従誤差・F-7 ヘアピン内輪ロック。Phase 2 から
-持ち越しで Phase 3 のスコープ外）。
-**次: Architect が F-6（横方向インナーループの系統誤差）/ F-7（PDC-8 内輪荷重）を起票 → H3 トラクション側・PDC-12・
-limits 外速度計画の再設計で 11b 27/27。並行で TASK-05-1（UE5）M3/M4。**
+Last updated: 2026-09-26（Opus 5・TASK-2-4 Phase 3 監査 APPROVED + Phase 4a 起票）/ **運動学プラント廃止（`d4d925d`）を承認。**
+Opus がゲートを再実行し 191 passed / 0 failed / 1 ignored（`t_core_ai_11b` のみ）を再現。Sonnet の 3 件の自己申告逸脱の裁定:
+D-1（T-AI-02R/03R のステア速度閾値を `lerp(..).max(5.1)` へ）= ACCEPT（訂正であり緩和ではない。実測 1.08/s は新旧どちらの
+閾値でも内側）。D-2（T-AI-06R 3 seed プール）= テストは ACCEPT・根拠は REJECT: 「単一 seed で逆転」は**グリッド部分周
+（lap 0）を標本に含めた外れ値の産物**で、lap 0 を落とせば単一 seed でも単調減少。16 seed まで全プレフィックスで単調（seed 選び
+ではない）。誤った根拠コメントは訂正済み。D-3（T-DRV-04R の 0 m 逸脱 assert 削除）= ACCEPT（主題は RNG の作用先。逸脱は 11b が
+所有）。ただし移行時に黙って消えていた**ミス有りモデルの per-tick `v_target ≤ v_cap` を T-DRV-04R に復元**。
+**新規 F-8**: error_rate 0.6 の長時間走行で 16 seed 中 4〜5 本が**ヘアピン（s≈3336）から t=−519〜−695 m へ逸走し、フルロックで
+旋回したまま復帰しない**。11b の受け入れ条件は変えない。
+**次: `TODO.md` 最新節の NEXT SONNET TASK = TASK-2-4 Phase 4a（F-6/F-7/F-8 の診断・PDC ドラフト・`t_core_ai_12`（F-8 再現、
+ignore）追加。src の恒久変更は land しない）→ Architect が PDC 裁定 → Phase 4b（11b 27/27）。並行で TASK-05-1（UE5）M3/M4。**
 
 過去の "Last updated (previous, ...)" 履歴行（2026-09-10〜09-26 の全ラウンド）は `docs/archive-TODO.md` および
 `TODO.md` の各日付付きセクションに残っている。本体は最新 1 本のみを保持する（2026-09-26・軽量化）。
@@ -27,8 +25,8 @@ limits 外速度計画の再設計で 11b 27/27。並行で TASK-05-1（UE5）M3
 | | |
 |---|---|
 | **何を作っているか** | Realistic Race Spectator Simulator。プレイヤーは運転せず**観戦**する。「実際のモータースポーツ中継に見え、よく見ると各 AI が本当にレースをしている」ことが目標 |
-| **今どこか** | **TASK-2-4 Phase 3 完了**。運動学プラント（`Plant`/`run_laps`）を全依存テスト移行の上で完全廃止（凍結のまま残ったテスト 0 本）。**ミス無しスイープ `t_core_ai_11a` 27/27・0 m**は Phase 2 のまま維持。残る赤は **`t_core_ai_11b` 7/27**（F-6 横追従誤差・F-7 ヘアピン内輪ロック待ち。Phase 3 のスコープ外） |
-| **次に何をするか** | **F-6/F-7（Architect 起票）→ 11b 再挑戦（TASK-2-4 Phase 4 相当）。並行で TASK-05-1（UE5）M3/M4。** |
+| **今どこか** | **TASK-2-4 Phase 3 完了・Opus APPROVED**。運動学プラント（`Plant`/`run_laps`）を全依存テスト移行の上で完全廃止（凍結のまま残ったテスト 0 本）。Opus 監査で新規 F-8（高ミス率でヘアピンから逸走・非復帰）を発見。**ミス無しスイープ `t_core_ai_11a` 27/27・0 m**は Phase 2 のまま維持。残る赤は **`t_core_ai_11b` 7/27**（F-6 横追従誤差・F-7 ヘアピン内輪ロック待ち。Phase 3 のスコープ外） |
+| **次に何をするか** | **TASK-2-4 Phase 4a（F-6/F-7/F-8 診断・`TODO.md` 最新節）→ PDC 裁定 → Phase 4b（11b 27/27）。並行で TASK-05-1（UE5）M3/M4。** |
 | **役割** | Opus 5 = Architect / Reviewer / Quality Gate。Sonnet 5 = Implementation Engineer。重大な技術変更は人間承認が必要 |
 | **健全性確認** | `cargo test --workspace --release` → **191 passed / 0 failed / 1 ignored**（`t_core_ai_11b` のみ）。clippy 0 / fmt clean / no-default-features / wasm32 OK |
 
