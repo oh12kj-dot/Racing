@@ -283,39 +283,8 @@ fn t_ai_06_low_consistency_widens_lap_time_spread() {
 }
 
 // ================================================================= T-AI-07
-#[test]
-fn t_ai_07_perception_delay_changes_behaviour() {
-    let track = track();
-    let params = params();
-    let line = Line::build(&track, &params);
-    let fast = run_laps(
-        &track,
-        &params,
-        &line,
-        model(0.5, 0.5, 0.5, 1.0, 0.0, 0.0),
-        driver_rng(0xA107, 0),
-        6,
-        MAX_TICKS_20,
-    );
-    let slow = run_laps(
-        &track,
-        &params,
-        &line,
-        model(0.5, 0.5, 0.5, 1.0, 0.30, 0.0),
-        driver_rng(0xA107, 0),
-        6,
-        MAX_TICKS_20,
-    );
-    assert!(fast.lap_times.len() >= 6, "reaction_time = 0 diverged");
-    assert!(slow.lap_times.len() >= 6);
-    assert_ne!(
-        hash_f64(&fast.steer),
-        hash_f64(&slow.steer),
-        "steer series identical despite different reaction_time"
-    );
-    let df = (fast.lap_times[3] - slow.lap_times[3]).abs();
-    assert!(df >= 0.1, "lap-time difference {df:.3} s < 0.1 s");
-}
+// PDC-11 により運動学プラント版は退役。実物理版 T-AI-07R
+// （crates/sim-core/tests/world_ai.rs::t_ai_07r_perception_delay_changes_behaviour）へ移行。
 
 // ================================================================= T-AI-08
 #[test]
