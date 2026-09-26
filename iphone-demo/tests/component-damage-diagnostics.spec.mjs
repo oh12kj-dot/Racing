@@ -32,13 +32,25 @@ function runVariant(name,neutralize){
     neutralize?.(sim.cars);
   }
   const snap=sim.snapshot();
-  console.log('DAMAGE_DIAG_VARIANT',JSON.stringify({name,recoveries:snap.diagnostics.recoveries,contacts:snap.diagnostics.contacts,barrierContacts:snap.diagnostics.barrierContacts}));
+  console.log('DAMAGE_DIAG_VARIANT',JSON.stringify({name,recoveries:snap.diagnostics.recoveries,contacts:snap.diagnostics.contacts,barrierContacts:snap.diagnostics.barrierContacts,retired:snap.cars.filter(c=>c.retired).length,flag:snap.flag}));
 }
+
+const keepOnly=key=>cars=>cars.forEach(car=>{
+  const d=car.incident?.componentDamage;if(!d)return;
+  for(const k of ['aero','powertrain','steering','brakes'])if(k!==key)d[k]=0;
+});
+
+const neutralDetailed=cars=>cars.forEach(car=>{
+  const d=car.incident?.componentDamage;if(!d)return;
+  d.aero=1e-8;d.powertrain=0;d.steering=0;d.brakes=0;
+});
 
 test('DIAG component damage channel isolation for fixed seed 0x1111',()=>{
   runVariant('normal');
-  runVariant('no-steering',cars=>cars.forEach(c=>{if(c.incident?.componentDamage)c.incident.componentDamage.steering=0;}));
-  runVariant('no-brakes',cars=>cars.forEach(c=>{if(c.incident?.componentDamage)c.incident.componentDamage.brakes=0;}));
-  runVariant('no-steering-brakes',cars=>cars.forEach(c=>{if(c.incident?.componentDamage){c.incident.componentDamage.steering=0;c.incident.componentDamage.brakes=0;}}));
+  runVariant('detailed-neutral',neutralDetailed);
+  runVariant('only-aero',keepOnly('aero'));
+  runVariant('only-powertrain',keepOnly('powertrain'));
+  runVariant('only-steering',keepOnly('steering'));
+  runVariant('only-brakes',keepOnly('brakes'));
   runVariant('no-detailed',cars=>cars.forEach(zeroAll));
 });
