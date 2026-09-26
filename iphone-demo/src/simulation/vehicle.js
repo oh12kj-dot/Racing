@@ -1,6 +1,6 @@
 import {createSystems,energyDriveFactor} from './systems.js';
 import {createTiming} from './timing.js';
-import {componentPerformanceFactors,createComponentDamage,ensureComponentDamage} from './component-damage.js';
+import {componentPerformanceFactors,createComponentDamage} from './component-damage.js';
 
 const TAU=Math.PI*2;
 const G=9.81;
@@ -182,12 +182,10 @@ export function stepVehicle(car,track,control,dt){
     car.laneA=-sign*Math.abs(car.laneA)*.25;
     car.v*=Math.max(.72,1-Math.min(.22,penetration*.045));
     const barrierDamage=Math.min(.025,penetration*.003);
+    // Barrier handling here is a penetration correction, not an impact-impulse
+    // solve. Keep its legacy aggregate damage until barrier impulse physics
+    // exists; detailed component damage is reserved for genuine collisions.
     car.incident.damage=clamp(car.incident.damage+barrierDamage,0,1);
-    const componentDamage=ensureComponentDamage(car.incident);
-    componentDamage.aero=clamp(componentDamage.aero+barrierDamage*.45,0,1);
-    componentDamage.powertrain=clamp(componentDamage.powertrain+barrierDamage*.15,0,1);
-    componentDamage.steering=clamp(componentDamage.steering+barrierDamage*.65,0,1);
-    componentDamage.brakes=clamp(componentDamage.brakes+barrierDamage*.30,0,1);
     if(!car.diagnostics.barrierActive)car.diagnostics.barrierContacts++;
     car.diagnostics.barrierActive=true;
     if(penetration>3)car.diagnostics.recoveries++;
