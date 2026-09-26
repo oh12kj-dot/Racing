@@ -454,14 +454,13 @@ fn t_core_ai_11a_model_sweep_mistake_free() {
 /// 0 m であることが「この逸脱はミスに起因する」ことの反実仮想的な証明。代わりに要求するのは
 /// **帰結からの回復**: (a) 3 周完走、(b) 1 回の limits 外エピソードが [`REJOIN_MAX_S`] 以内に終わる。
 #[test]
-#[ignore = "TASK-2-4 Phase 2 残り（PDC-9 / PDC-10・Opus 2026-09-26 第 3 ラウンド）: 10/27 が 10 s 以内に \
-            limits 内へ戻れない。PDC-10（sim-track world_to_track のヤコビアン修正）でヘアピン外側の \
-            接地消失（4 輪中 0〜1 輪接地）は解消し、最悪逸脱は 44〜58 m（旧 85〜124 m は座標の発散で水増し）。\
-            Opus 実験（未 land）: + 制動/トラクション上限の路面 grip 割引（H3・車体中心）で 7/27 \
-            （11a 緑だが凍結・運動学プラントの t_ai_07 が 0.083 s < 0.1 s で割れる）、車幅内の最小 grip \
-            で 3/27（11a も 1/27 が 7 cm 割れ）。 \
-            = 物理の天井ではない。残り: split-μ 制動・ロックした前輪を解放しない（MF の縦滑り摩擦は \
-            ピークの 63 % でロックが自己保持）・limits 外で v_target が路面 μ を見ない。TODO.md 参照。"]
+#[ignore = "TASK-2-4 Phase 2 残り（PDC-9/10/13・Opus 2026-09-26 第 4 ラウンド）: 7/27 が 10 s 以内に \
+            limits 内へ戻れない（PDC-13 = 制動上限の per-wheel split-μ で 10 → 7）。残りの起点は \
+            (F-6) 横方向追従の系統誤差 — 基準ラインから ±2〜6 m 外れて走り、s≈3460〜3500 では \
+            ミス無しでも limits まで 0.1 m しか余裕がない（3/7 がここ）、(F-7) クリーンなヘアピン \
+            トレイルブレーキングで内側前輪が約 0.8 s ロックする（PDC-12 のロック解放を入れると 11a が \
+            13/27 割れる）、T3 手前のミス由来ロック → スピン。トラクション側 H3 は F-6 の余裕ゼロ区間で \
+            11a を 5 cm 割るため保留。limits 外の速度上限（Required Change 2）は計測で不採用。TODO.md 参照。"]
 fn t_core_ai_11b_model_sweep_mistake_recovery() {
     let cases = sweep_cases(0.5);
     let results = run_sweep(&cases);

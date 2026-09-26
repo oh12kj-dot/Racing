@@ -16,7 +16,7 @@ use crate::planner::Plan;
 use crate::SIM_DT;
 use sim_line::Trajectory;
 use sim_math::{approach_exponential, clamp, lerp, move_towards, saturate, Rng};
-use sim_track::Track;
+use sim_track::{Track, TrackCoord};
 use sim_vehicle::{ControlInput, VehicleParams, AIR_DENSITY, GRAVITY};
 
 /// 逆操舵が立ち上がる車体スリップ角の基準 [rad]。`cornering_skill` でスケールする。
@@ -150,6 +150,14 @@ const LOW_PRECISION_STEER_RATE_FLOOR: f64 = 5.1;
 /// `consistency = 0` のときの操舵精度ノイズの標準偏差（正規化操舵 `-1..1` に対して）。
 const STEER_NOISE_MAX: f64 = 0.02;
 
+/// H3（PDC-13）: 4 輪それぞれの位置の路面 grip 倍率（`1.0` = 舗装）。`+t` が左。
+struct WheelGrip {
+    front_left: f64,
+    front_right: f64,
+    rear_left: f64,
+    rear_right: f64,
+}
+
 /// 縦方向のモード（デッドバンドのヒステリシス用）。
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum LongMode {
@@ -197,6 +205,9 @@ pub struct Controller {
     load_sensitivity: f64,
     /// 荷重感度の基準 1 輪荷重 [N]（`None` なら静的 1 輪平均 = `sim-vehicle` と同じ既定）。
     nominal_load: f64,
+    /// 重心 → フロント / リア軸の距離 [m]（H3 の車輪位置推定。静的荷重配分から）。
+    cg_to_front: f64,
+    cg_to_rear: f64,
     // --- ドライバー由来のゲイン ---
     precision: f64,
     cornering_skill: f64,
@@ -258,6 +269,10 @@ impl Controller {
                 .nominal_load
                 .unwrap_or(params.mass.total_kg * GRAVITY * 0.25)
                 .max(1.0),
+            cg_to_front: params.dimensions.wheelbase
+                * (1.0 - params.mass.distribution_front).clamp(0.0, 1.0),
+            cg_to_rear: params.dimensions.wheelbase
+                * params.mass.distribution_front.clamp(0.0, 1.0),
             precision: model.precision().clamp(0.0, 1.0),
             cornering_skill: model.cornering_skill.clamp(0.0, 1.0),
             braking_skill: model.braking_skill.clamp(0.0, 1.0),
@@ -386,7 +401,9 @@ impl Controller {
         brake_raw *= 1.0 - reduction;
         // スレッショルドブレーキング（Opus 監査ラウンド）: 推定ロック限界を超えて踏まない。
         // ミス（`mistake_brake_bias`）はこの上限の後に足す = ロックアップはミスとしてのみ起きる。
-        brake_raw = brake_raw.min(self.brake_lock_cap(stabilise.speed, kappa_traj));
+        // H3（PDC-13）: 上限は 4 輪それぞれの路面 grip（縁石 / 芝 / グラベル）で割り引く。
+        let grip = self.wheel_surface_grip(track, stabilise.s, stabilise.t);
+        brake_raw = brake_raw.min(self.brake_lock_cap(stabilise.speed, kappa_traj, &grip));
         brake_raw = saturate(brake_raw + state.mistake_brake_bias);
 
         // スライド中のスロットル絞り。
@@ -475,7 +492,13 @@ impl Controller {
     /// （1 輪 ≈ 1.8 倍荷重・実効 μ ≈ 1.22）を過大評価してロックする（実測で確認）。
     /// `μ` が `b` に依存するので固定点反復（決定的・3 回）で解く。空力抗力・エンジンブレーキは
     /// 無視し、残差は [`BRAKE_LOCK_MARGIN`] で吸収する。`v_target` は変えない。
-    fn brake_lock_cap(&self, speed: f64, kappa_traj: f64) -> f64 {
+    ///
+    /// H3（PDC-13・TASK-2-4 Phase 2 Part 3）: 各輪の μ にその輪の位置の路面 grip を掛ける
+    /// （`sim-vehicle::tyre.rs::effective_mu` と同じ `mu0 · grip · sensitivity`）。旋回内輪 / 外輪は
+    /// `kappa_traj` の符号で左右へ写す（`+κ` = 左カーブ = 左が内輪）。同じ軸の左右は同じ制動トルク
+    /// なので、片側 2 輪だけ縁石・芝・グラベルに落ちた split-μ 制動ではその側が先にロックして
+    /// ヨーを生む（F-4 の T3 系）— 軸の上限は弱い側で決まる。
+    fn brake_lock_cap(&self, speed: f64, kappa_traj: f64, grip: &WheelGrip) -> f64 {
         let v = speed.max(0.0);
         let q = 0.5 * AIR_DENSITY * v * v;
         let front_frac = 1.0 - self.rear_weight_frac;
@@ -490,21 +513,28 @@ impl Controller {
         let lat_transfer_total = lat_force * self.cg_height;
 
         // 1 輪（荷重 `fz`・横力 `lat`）で縦方向に使えるグリップ [N]（荷重感度 + 摩擦円）。
-        let wheel_long_grip = |fz: f64, lat: f64| {
+        let wheel_long_grip = |fz: f64, lat: f64, surface: f64| {
             let fz = fz.max(0.0);
-            let mu =
-                self.mu0 / (1.0 + self.load_sensitivity * (fz / self.nominal_load - 1.0)).max(0.1);
+            let mu = self.mu0 * surface
+                / (1.0 + self.load_sensitivity * (fz / self.nominal_load - 1.0)).max(0.1);
             let cap = mu * fz;
             (cap * cap - lat * lat).max(0.0).sqrt()
         };
-        // 軸の縦グリップ上限 = 弱い側（旋回内輪）が 1 輪分の制動力 `F_axle/2` を受け止められる限界 ×2。
-        // 同じ軸の左右は同じ制動トルクなので、内輪がロックした時点で軸としてロックが始まる。
-        let axle_long_grip = |axle_n: f64, lat_axle: f64, d_lat: f64| {
+        // 軸の縦グリップ上限 = 弱い側（旋回内輪、または低 grip 路面の輪）が 1 輪分の制動力
+        // `F_axle/2` を受け止められる限界 ×2。同じ軸の左右は同じ制動トルクなので、弱い側が
+        // ロックした時点で軸としてロックが始まる。`(g_left, g_right)` は H3 の路面 grip。
+        let left_inner = kappa_traj > 0.0;
+        let axle_long_grip = |axle_n: f64, lat_axle: f64, d_lat: f64, g_left: f64, g_right: f64| {
             let axle_n = axle_n.max(1e-9);
+            let (s_in, s_out) = if left_inner {
+                (g_left, g_right)
+            } else {
+                (g_right, g_left)
+            };
             let inner = 0.5 * axle_n - d_lat;
             let outer = 0.5 * axle_n + d_lat;
-            let g_in = wheel_long_grip(inner, lat_axle * inner.max(0.0) / axle_n);
-            let g_out = wheel_long_grip(outer, lat_axle * outer.max(0.0) / axle_n);
+            let g_in = wheel_long_grip(inner, lat_axle * inner.max(0.0) / axle_n, s_in);
+            let g_out = wheel_long_grip(outer, lat_axle * outer.max(0.0) / axle_n, s_out);
             2.0 * g_in.min(g_out)
         };
 
@@ -513,17 +543,48 @@ impl Controller {
         let mut b = 1.0_f64;
         for _ in 0..3 {
             let transfer = b * f_total * self.cg_over_wheelbase;
-            let grip_f = axle_long_grip(front_base + transfer, lat_force * front_frac, d_lat_f);
+            let grip_f = axle_long_grip(
+                front_base + transfer,
+                lat_force * front_frac,
+                d_lat_f,
+                grip.front_left,
+                grip.front_right,
+            );
             let grip_r = axle_long_grip(
                 rear_base - transfer,
                 lat_force * self.rear_weight_frac,
                 d_lat_r,
+                grip.rear_left,
+                grip.rear_right,
             );
             let cap_f = grip_f / self.brake_force_front.max(1e-9);
             let cap_r = grip_r / self.brake_force_rear.max(1e-9);
             b = saturate(cap_f.min(cap_r));
         }
         saturate(BRAKE_LOCK_MARGIN * b)
+    }
+
+    /// H3（PDC-13）: 4 輪それぞれの位置の路面 grip 倍率（`SurfaceKind::properties().grip_multiplier`）。
+    ///
+    /// 車輪位置は安定化経路の `(s, t)`（重心）から、軸は `s ± 重心–軸距離`、左右は `t ± トレッド/2`
+    /// で推定する（ヨー角による軸の横ずれは無視）。**track limits（`Corridor::limit_bounds`）とは
+    /// 独立**: limits は「車体中心の合法性」の定義であり、実タイヤがどの路面に載っているかは
+    /// `sim-core::TrackGround::probe` と同じく `Track::surface_at` だけで決まる（PDC-13 裁定）。
+    fn wheel_surface_grip(&self, track: &Track, s: f64, t: f64) -> WheelGrip {
+        let g = |ds: f64, dt: f64| {
+            track
+                .surface_at(TrackCoord::new(track.wrap_s(s + ds), t + dt))
+                .properties()
+                .grip_multiplier
+        };
+        let hf = 0.5 * self.track_front;
+        let hr = 0.5 * self.track_rear;
+        WheelGrip {
+            front_left: g(self.cg_to_front, hf),
+            front_right: g(self.cg_to_front, -hf),
+            rear_left: g(-self.cg_to_rear, hr),
+            rear_right: g(-self.cg_to_rear, -hr),
+        }
     }
 
     /// 現在速度から推定エンジン回転数 [rpm]。`gear` は前進ギア番号（1..=n）。
@@ -555,5 +616,54 @@ impl Controller {
             }
         }
         self.gear_dwell = self.gear_dwell.saturating_add(1);
+    }
+}
+
+#[cfg(all(test, feature = "serde"))]
+mod tests {
+    use super::*;
+
+    const SPEC_JSON: &str = include_str!("../../../assets/vehicles/gt_proto_a.spec.json");
+
+    fn grip(fl: f64, fr: f64, rl: f64, rr: f64) -> WheelGrip {
+        WheelGrip {
+            front_left: fl,
+            front_right: fr,
+            rear_left: rl,
+            rear_right: rr,
+        }
+    }
+
+    /// H3（PDC-13）: 制動上限は路面 grip の弱い側で決まり、内輪 / 外輪の写像は `kappa_traj` の符号に従う。
+    #[test]
+    fn brake_lock_cap_is_split_mu_aware() {
+        let params = VehicleParams::from_json_str(SPEC_JSON).expect("spec loads");
+        let c = Controller::new(&DriverModel::balanced(), &params);
+        let paved = grip(1.0, 1.0, 1.0, 1.0);
+
+        // 直線（κ = 0）・右 2 輪だけ芝（grip 0.45）: 軸の上限は芝側で決まり大きく下がる。
+        let clean = c.brake_lock_cap(30.0, 0.0, &paved);
+        let right_grass = c.brake_lock_cap(30.0, 0.0, &grip(1.0, 0.45, 1.0, 0.45));
+        assert!(clean > 0.3, "paved cap {clean}");
+        assert!(
+            right_grass < 0.6 * clean && right_grass > 0.3 * clean,
+            "split-mu cap {right_grass} vs paved {clean}"
+        );
+        // 直線では左右対称。
+        let left_grass = c.brake_lock_cap(30.0, 0.0, &grip(0.45, 1.0, 0.45, 1.0));
+        assert!((left_grass - right_grass).abs() < 1e-12);
+
+        // 左カーブ（κ > 0 → 左が荷重の抜ける内輪）: 内輪側の縁石の方が外輪側の縁石より上限を下げる。
+        let kappa = 0.01;
+        let inner_kerb = c.brake_lock_cap(25.0, kappa, &grip(0.9, 1.0, 0.9, 1.0));
+        let outer_kerb = c.brake_lock_cap(25.0, kappa, &grip(1.0, 0.9, 1.0, 0.9));
+        let paved_turn = c.brake_lock_cap(25.0, kappa, &paved);
+        assert!(
+            inner_kerb < outer_kerb && outer_kerb <= paved_turn,
+            "inner {inner_kerb} / outer {outer_kerb} / paved {paved_turn}"
+        );
+        // 右カーブでは写像が反転する。
+        let r_inner_kerb = c.brake_lock_cap(25.0, -kappa, &grip(1.0, 0.9, 1.0, 0.9));
+        assert!((r_inner_kerb - inner_kerb).abs() < 1e-12);
     }
 }

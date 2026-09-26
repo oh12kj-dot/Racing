@@ -5,12 +5,12 @@
 
 Last updated: 2026-09-26
 Current Phase: **Phase 2 進行中**。TASK-2-1 `4710d63` / 2-2 `ac80e03` / 2-3 `1fd08ca` / **2-4 Phase 1 `54e050a`（Opus APPROVED）** /
-**2-4 Phase 2: PDC-8/9 + T-CORE-AI-03 緑・`t_core_ai_11a` 27/27 緑。`t_core_ai_11b`（コース外からの復帰）は Sonnet の
-BLOCKED BY ARCHITECTURE（`6a59cd1`）を Opus が棄却 — 「物理の天井」ではなく `world_to_track` の発散（PDC-10 で land）・
-前輪ロックの自己保持・路面 μ を見ない上限の重なり。11b は 10/27 のまま ignore・受け入れ条件は維持。**
-次: 「## TASK-2-4 Phase 2 — Opus 5 裁定（第 3 ラウンド）」の NEXT SONNET TASK（Part 1 T-AI-01R/05R/07R →
-Part 2 運動学 `t_ai_07` 退役（PDC-11）→ Part 3 11b（H3 split-μ・limits 外速度計画・必要なら PDC-12））→ Phase 3 ／
-並行で TASK-05-1 UE5 M3/M4。
+**2-4 Phase 2: PDC-8〜13・T-CORE-AI-03 / T-AI-01R/05R/07R 緑・`t_core_ai_11a` 27/27 緑。`t_core_ai_11b` は
+PDC-13（制動上限の per-wheel split-μ）で 10 → **7/27**、ignore のまま受け入れ条件は維持。残りは横方向追従の系統誤差
+（F-6）とクリーンなヘアピンでの内側前輪ロック（F-7）に帰着し、どちらも運動学プラントの凍結テストに縛られた
+Controller の再調整が要る。**
+次: 最新節「## TASK-2-4 Phase 2 — Opus 5 裁定（第 4 ラウンド）」の NEXT SONNET TASK（**Phase 3: 運動学プラント廃止**）→
+Architect が F-6/F-7 のタスクを起票 → 11b 再挑戦 ／ 並行で TASK-05-1 UE5 M3/M4。
 
 ---
 
@@ -2407,3 +2407,150 @@ Design Concerns Found: 上記 BLOCKED BY ARCHITECTURE。
 Phase 3 への申し送り: Part 3 は Architect 裁定待ちで再開。T-AI-01R/05R/07R は緑なので
   Phase 3（運動学プラント全体の廃止）は Part 3 と並行して着手可能。
 ```
+
+---
+
+## TASK-2-4 Phase 2 — Opus 5 裁定（第 4 ラウンド）: Part 3 の BLOCKED を前提から棄却・PDC-13 land・11b 10 → 7/27（2026-09-26）
+
+**RULING: Sonnet の BLOCKED BY ARCHITECTURE（`6e1877d`）の根因「凍結 `Corridor::limit_bounds` が車幅を差し引かない」は
+棄却する。`sim-line` は変更しない（提案 (a)(b)(c) すべて不採用）。** 人間不在のため Opus が最終判断者。
+
+- ワークツリーは `ead1032` → `git merge --ff-only 6e1877d`（force なし）。Sonnet の数値（11a 1/27・9.1 cm・s=3510.7、
+  11b 10/27）は同じ実装で**ビット単位で再現**した。
+
+### 検証で分かったこと（Opus が一時 `diagtmp` テスト + env ゲートで計測・全て削除済み）
+
+**Sonnet の事実誤認**: 「基準ラインが s≈3489〜3529 で `t` 6.0→6.9」は誤り。実測の基準ラインは **s=3510 で最大 +4.525**
+（white +4.825 の内側。外輪 +5.37 = 舗装）。6.0→6.9 は**車の実位置**で、基準ラインから **+2.2〜2.4 m 外**を走っている
+（H3 無しのベースラインでも同じ。level 0.5/0.9・consistency 0.5/1.0 で同様）。外輪は実際に芝の上にあり、
+`TrackGround::probe` も同じ `surface_at` を引くので **H3 の per-wheel 検出は正しい**。`limit_bounds` が点基準なのは設計どおり
+（corridor.rs の doc・11a も車体中心で測る）で、H3 は Corridor を一切参照しない — 両者は衝突していない。
+**機序も訂正**: 11a を割るのは H3 の**トラクション側**（下表）。破綻走行では s 3470〜3515 で `brake = 0.000`
+（「小さな制動要求の過剰な絞り」ではない）。ベースラインでも同地点の余裕は 10.8 cm（ピーク t=+6.892）しか無く、
+11b では既にミス無関係に同地点を割る走行がある（level 0.7/cons 1/seed 2・1.5 cm）。
+
+**F-6（新規）: 横方向追従の系統誤差。** level 0.9・ミス無し 1 周の `t − t_ref` 最大値（25 m 区間ごと）:
+
+| s [m] | 100〜225 | 1000〜1050 | 1450〜1475 | 2050〜2075 | 3300〜3325 | 3425〜3525 | 3625〜3650 |
+|---|---|---|---|---|---|---|---|
+| 誤差 [m] | −3.3〜−6.2 | +2.1〜+2.3 | −2.9 | +2.3 | −5.5〜−5.7 | +2.0〜+2.3 | +2.0〜+2.1 |
+
+`reaction_time = 0` でも同程度（遅延は原因ではない）。原因の一部は Pure Pursuit の座標系: `controller.rs` は
+トラック座標の `(lon, lat)` を**トラジェクトリ接線基準**の `heading_error` で回しており、ライン傾き `θ = atan(dt/ds)` だけ
+先行項が混入している（s 3425〜3525 の +2.3 m は `θ·ld` とほぼ一致）。`ψ = he + θ` に直すと同区間は 0.5 m へ消えるが、
+他区間で遅れ側の誤差（最大 −7.4 m）へ移るだけ — **横ループ全体の再設計・再調整案件**で、本ラウンドでは入れない。
+コリドーが ±7〜8.5 m と広いので 11a（0 m）はこれを検出しない。
+
+**F-7（新規）: クリーンなヘアピン進入で内側前輪がロックする。** level 0.9・cons 1・ミス無し: s 3293〜3310 で
+`brake ≈ 0.42` のトレイルブレーキ中、左前 `slip_ratio = −1.00` が約 0.6〜0.8 s。PDC-8 の `brake_lock_cap` は
+内輪荷重を過大評価している（`kappa_traj`・安定化経路速度の遅れ）。PDC-8 の注記「ロックはミスとしてのみ起きる」は
+ヘアピンでは成り立たない。クリーンな周回の制動点はこのロック込みで釣り合っているため、**ロック解放（PDC-12）を
+入れると 11a が 13/27 割れる**（下表）。
+
+### Required Change 1〜3 の計測（全て同一コードで 11a / 11b を再実行）
+
+| 構成 | 11b 失敗 | 11a |
+|---|---|---|
+| ベースライン（`6e1877d`） | 10/27 | 27/27 |
+| H3 制動 + トラクション（弱い側・Sonnet と同等） | 3/27 | **1/27 赤**（9.1 cm・s=3510.7） |
+| H3 制動 + トラクション（LSD 考慮 = 左右平均相当） | 3/27 | **1/27 赤**（5.0 cm・s=3510.3） |
+| H3 トラクションのみ | 9/27 | **1/27 赤** |
+| **H3 制動のみ（PDC-13・land）** | **7/27** | **27/27** |
+| H3 制動 + Change 2（`R_rejoin` 20 m） | 11/27 | 27/27 |
+| H3 全部 + Change 2（20 m / 40 m） | 8/27 / 8/27 | 1/27 赤 |
+| H3 全部 + PDC-12（検知 0.30・3 tick・解除 0.12・×0.6・再踏み 1.5/s） | 11/27 | **13/27 赤**（ヘアピン） |
+| H3 制動 + PDC-12 / PDC-12 のみ | 12/27 / 14/27 | 13/27 / 14/27 赤 |
+
+- **Change 2 は仕様の形では不採用**: `within_limits` の二値で発火するため、s≈1180 / 1370 の直線（55 m/s）で 1〜14 cm
+  はみ出しただけで `v_target` が ~13 m/s へ落ち、急制動 → 新規の失敗を作る（H3 全部で 3 → 8/27）。limits 外の速度計画は
+  「どれだけ外・どの向きか」を見る設計が要る（F-6/F-7 の後）。
+- **PDC-12 は F-7 が直るまで使えない**（条件「11a 27/27」を満たせない）。承認は失効させず保留。
+- **H3 トラクション側**は物理的に正しい（LSD の式は下記）が、F-6 の余裕ゼロ区間で 11a を割るため保留。
+  式（次ラウンド用・未 land）: 駆動軸係数 = `min((g_l+g_r)/2, g_min/(1 − 2·lsd_power_ratio))`
+  （`distribute_lsd` の弱い側最小トルク `T·(1/2 − bias)` から。`gt_proto_a` の bias 0.45 では実質左右平均）。
+
+### PDC-13（Opus 起票・Opus 承認・本ラウンドで適用）— 制動上限の per-wheel split-μ（H3 の制動側）
+
+```
+Decision:
+  Controller::brake_lock_cap の各輪 μ に、その輪の位置の路面 grip を掛ける（effective_mu と同じ mu0·grip·sensitivity）。
+  車輪位置 = 安定化経路の (s ± 重心–軸距離, t ± トレッド/2)。内輪/外輪は kappa_traj の符号で左右へ写す。
+  軸の上限は弱い側（同じ軸の左右は同じ制動トルク）。Corridor は参照しない（limits は車体中心の合法性の定義）。
+Not in scope: traction_throttle_cap の H3（F-6 待ち）、Change 2、PDC-12（F-7 待ち）。
+Verification:
+  controller.rs::tests::brake_lock_cap_is_split_mu_aware（新規・unit）— 直線片側芝で上限が舗装の 0.3〜0.6 倍、
+  左右対称、左カーブで内輪側縁石 < 外輪側縁石、右カーブで写像反転。アブレーション: 内外写像を反転すると FAIL。
+  11b 10 → 7/27、11a 27/27、t_core_ai_10_full / offline_spawn 0 m、t_core_ai_03 = 101.617/97.500/97.483・
+  100.000/95.900/95.900・98.450/94.233/94.250 s（±0.1 s 以内）、T-AI-01R/05R/07R の数値は前ラウンドと同一、凍結 sim-driver テスト緑。
+Affected Files: crates/sim-driver/src/controller.rs のみ。
+```
+
+### 11b の残り 7/27（PDC-13 後・起点と帰結）
+
+| 走行 | 起点 | 最悪 | 分類 |
+|---|---|---|---|
+| 0.3/0.5/1 | s=3496.0 lap 2（1.3 cm） | 36 m | F-6 区間 |
+| 0.5/0.5/2 | s=3496.3 lap 2（7.3 cm） | 32 m | F-6 区間 |
+| 0.7/0.5/2 | s=3461.0 lap 0（1.9 cm） | 49 m | F-6 区間 |
+| 0.3/0.5/2 | s=3667.5 lap 0（15 cm） | 50 m | F-6（s 3625〜3650 の +2 m 系） |
+| 0.3/0.5/3 | s=3374.7 lap 2（0.2 cm） | 61 m | ヘアピン脱出 |
+| balanced/3 | s=3310.2 lap 2（7.5 cm） | 45 m | ヘアピン（F-7 系） |
+| 0.9/0.5/3 | s=1347.9 lap 2（0.4 cm） | 78 m | T3 前のミス由来前輪ロック → 左スピン（逆操舵は正しく全開だが後輪空転で止まらない） |
+
+### Sonnet ラウンド（`00a3fe5` / `5408b49` / `6e1877d`）監査 — **APPROVED（所見付き）**
+
+- スコープ: `git diff 0d2d776 6e1877d -- crates/*/src` 空。変更は `world_ai.rs`（テスト追加）・`driver.rs`（t_ai_07 削除 + 1 行
+  コメント）・docs のみ。Part 3 の revert で `controller.rs` / `planner.rs` は `0d2d776` とバイト一致。
+- T-AI-01R/05R/07R は実物理・非トートロジー（01R は全 tick で limits と `recovered_steps` を assert、05R は単調性と
+  0.5 s 差、07R は PDC-11 (1)〜(4) を全て assert）。`t_ai_07` の退役は PDC-11 の条件を満たしており正当。
+- **MEDIUM-1**: Part 3 の根因診断が誤り（上記）。基準ラインと車の実位置を取り違え、凍結 crate の変更を提案した。
+  停止・revert は正しかったが、「基準ライン `t_at(s)`」と `coord.t` を同じ表に並べていれば 1 行で否定できた。
+- **MEDIUM-2**: 機序の記述「小さな制動要求の過剰な絞り」は未検証の推測（制動/トラクションのアブレーションが無い）。
+- **LOW-1**: T-AI-01R は 20 周 → 3 周（決定論的ドライバーなので冗長性は低いが、仕様表との差分として記録）。
+- **LOW-2**: T-AI-05R は中央値でなく単一周（決定論的・`t_core_ai_03` で周間不変を確認済みなので許容）。
+
+### ゲート（最終コード・Opus 実行）
+
+```
+cargo fmt --all -- --check                               → clean
+cargo clippy --workspace --all-targets -- -D warnings    → 0
+cargo test --workspace --release                         → 191 passed（+1 = PDC-13 unit）/ 0 failed / 3 ignored
+  ignore 3 = t_core_ai_11b（7/27）+ 凍結 t_ai_01 / t_drv_04（運動学プラント・Phase 3）
+cargo build -p sim-wasm --target wasm32-unknown-unknown --release → OK
+cargo build -p sim-line --no-default-features / -p sim-driver --no-default-features → OK
+grep -rni diagtmp crates/                                → 0
+```
+
+### 次の判断
+
+**Phase 2 の 11b は本ラウンドでは閉じない。** 残り 7 本は全て F-6（横ループの系統誤差）と F-7（PDC-8 の内輪荷重推定）に
+帰着し、どちらも Controller の横・縦ゲイン/式の再調整になる。運動学プラントの凍結テスト（t_ai_02/03/04/05/06/08・
+t_drv_02/05・smoke）は実タイヤと整合しない基準で Controller を縛っており（t_ai_07 で H3 が止まった前例）、再調整の前に
+外す必要がある。よって順序は **Phase 3（運動学プラント廃止）→ Architect が F-6/F-7 タスクを起票 → H3 トラクション側・
+PDC-12・limits 外速度計画（再設計）で 11b 27/27**。11b は受け入れ条件から外さない（ignore 維持・閾値不変）。
+
+### NEXT SONNET TASK — TASK-2-4 Phase 3: 運動学プラントの廃止（Architect 起票）
+
+**Goal**: `crates/sim-driver/tests/common/mod.rs` の `Plant` / `run_laps` を削除できる状態にする。プラントを使う凍結テストは
+実物理版を `crates/sim-core/tests/`（sim-driver は sim-core に dev-depend できない）に先に緑にしてから削除する
+（PDC-11 と同じ「実物理版が緑 → 旧版削除」）。
+
+| 凍結テスト（プラント使用） | 移行先 | 基準（緩めない） |
+|---|---|---|
+| t_ai_01（ignore） | 既存 T-AI-01R | 削除のみ |
+| t_ai_05 | 既存 T-AI-05R | 削除のみ |
+| t_ai_02 操舵チャタリング | T-AI-02R | 旧版と同じ指標・同じ閾値 |
+| t_ai_03 瞬間スナップ無し | T-AI-03R | 同上 |
+| t_ai_04 v_target ≤ v_cap | T-AI-04R（全 tick で `plan.v_target ≤ speed_profile.v_at(s)`） | 同上 |
+| t_ai_06 consistency で周回ばらつき増 | T-AI-06R | 同上（実物理で逆転するなら数値を添えて停止・報告） |
+| t_ai_08 決定性・derive 順序非依存 | T-AI-08R（既存 T-CORE-AI-08 と重複なら統合して根拠を記録） | 同上 |
+| t_drv_04（ignore）RNG は原因にのみ作用 | T-DRV-04R | 同上 |
+| t_drv_05 性能 | 既存 T-CORE-AI-09 と比較し、欠ける観点だけ追加 | 同上 |
+| smoke_lap_times_are_plausible | 既存 T-CORE-AI-03 の数値で代替可か判断・記録 | — |
+| t_drv_02（`synthetic_state` のみ・プラント不使用なら残す） | 変更なし | — |
+
+**Allowed Files**: `crates/sim-core/tests/**`（新規テストファイル可）、`crates/sim-driver/tests/**`（移行済みテストと
+`Plant`/`run_laps` の削除のみ）。**Do Not Change**: `crates/**/src/**`、既存の実物理テストの閾値、11a/11b。
+**Stop**: 実物理版がどれか赤なら、定数を触らず数値を添えて停止・報告（その場合その凍結テストは残す）。
+**Acceptance**: `grep -n "Plant\|run_laps" crates/sim-driver/tests` = 0（全移行できた場合）、ignore は `t_core_ai_11b` の 1 本のみ、
+全ゲート緑、完了報告に各テストの旧 → 新の数値。
