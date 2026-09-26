@@ -51,11 +51,13 @@ test('iPhone hybrid telemetry stays inside the safe HUD area in portrait and lan
     car.systems.energyMJ=car.systems.energyCapacityMJ*.625;
     car.systems.energyStrategy='DEFEND';
     car.systems.energyMode='HARVEST';
+    car.systems.energyDeploy=0;
+    car.systems.energyHarvest=.73;
     car.systems.energyReserveTarget=.24;
     return car.id;
   });
   await page.locator(`.lb-row[data-id="${hybridId}"]`).tap();
-  await expect(page.locator('#telemetry')).toContainText('ERS 63% · DEFEND · HARVEST · RSV 24%');
+  await expect(page.locator('#telemetry')).toContainText('ERS 63% · DEFEND · HARVEST 73% · RSV 24%');
   await expectTelemetryInViewport(page);
 
   await page.setViewportSize({width:844,height:390});
