@@ -2884,3 +2884,67 @@ cargo fmt --all -- --check                             → clean
 cargo clippy --workspace --all-targets -- -D warnings  → 0
 cargo test --workspace --release                       → 194 passed / 0 failed / 0 ignored（baseline どおり）
 ```
+
+---
+
+## TASK-2-4 Phase 4a — F-8 再現テスト `t_core_ai_12` を追加・PDC-14 後は severity 大幅低下（Sonnet 5・2026-09-26）
+
+**要約**: 未着手だった F-8 再現テスト（`NEXT SONNET TASK — Phase 4a` 項目 1）を `#[ignore = "F-8"]`
+として追加し、PDC-14 land 後のコードで実測した。**F-8 発見当時（1000 s・16 seed・consistency 0.3/0.6
+それぞれで 5/16・4/16 が「二度と戻らない」）と比べ、本ラウンド（1500 s・consistency 0.3/0.6 × 16 seed
+= 32 走行）は 3/32 失敗のみで、しかも 3 件とも「10 周は完走したが 1 回の逸脱区間が `REJOIN_MAX_S`
+（10 s）を超えた」（worst outside 29〜35 m）であり、F-8 が報告した「t = −519〜−695 m で永久旋回」の
+再現は 0 件だった。** PDC-14（トラクション上限の実ヨー負荷化）は F-8 を狙った修正ではないが、
+同じ「ヘアピン出口のスピン連鎖」機序を減らしたことで F-8 の頻度・深刻度も下がったとみられる。
+
+### 実装（land 済み・テストのみ）
+
+- `crates/sim-core/tests/world_ai.rs`:
+  - `run_solo_model_laps` を `run_solo_model_laps_budget(seed, model, laps, max_ticks)` の
+    薄いラッパへ分割（既存呼び出し元は `max_ticks=20_000` で完全に無変更・11a/11b への影響ゼロ）。
+  - `t_core_ai_12_no_runaway_after_mistakes`（`#[ignore = "F-8"]`）を追加。仕様どおり
+    `driver_model(0.5)` / `error_rate=0.6` / `reaction_time=0.25` /
+    `consistency ∈ {0.3, 0.6}` × seed `0x0106, 0x1106, …, 0xF106`（16 本・等間隔）×
+    10 周・budget 90 000 tick（1500 s）。判定は 11b と同じ「全走行完走 + 1 エピソード
+    `REJOIN_MAX_S` 以内」。
+- `crates/**/src/**`: 無変更（`git diff --stat crates/*/src` = 空）。
+
+### 実測（`cargo test --release -p sim-core --test world_ai t_core_ai_12... -- --ignored --nocapture`）
+
+```
+T-CORE-AI-12 (F-8): 3/32 runs failed（全て consistency=0.3。consistency=0.6 は 16/16 緑）
+  seed=0x3106: s=3311〜3352（ヘアピン）lap=1、worst outside 29.293 m、10 周完走
+  seed=0x9106: s=1507〜1607（T3 系。ヘアピンではない）lap=5、worst outside 29.396 m、10 周完走
+  seed=0xE106: s=3327〜3394（ヘアピン）lap=8、worst outside 35.389 m、10 周完走
+実行時間: 32 走行・102 s（release）。
+```
+
+3 件とも「エピソード開始は軽微（0.04〜0.12 m のコリドー超過）→ 数百 tick 後に急拡大（3〜28 m）
+→ 10 s 以内に収まらない」という同じ形で、F-6/F-7 が起点のヘアピン系（2 件）・T3 系（1 件）の
+**既知の系統誤差の裾**に見える。F-8 発見時の「射影が遠方に張り付いてフルロック周回」という
+仮説どおりの永久旋回は、少なくともこの 32 走行では 1 件も再現しなかった。
+
+### 結論・次の判断（Architect 決裁事項）
+
+F-8 は PDC-14 により重大度が「二度と戻らない（数十 seed 中 過半数）」から「まれに 10 s 超の
+長い復帰（32 走行中 3 件・全て consistency=0.3）」まで縮小した。当初の Phase 4a 仕様が想定した
+「1 s ごとのトレース診断」（項目 2）は、当時の永久旋回（t=−519〜−695 m）を前提にしていたが、
+今回の 3 件はいずれも有限時間で自力回復しており、同じ診断の価値がどれだけ残るかは不明。
+次のいずれかを Architect が選ぶ:
+- (a) `t_core_ai_12` の `#[ignore]` を解除して 32/32 を要求する（F-7/F-6 の残り修正が波及効果で
+  この 3 件も解消するか、Phase 4b で確認する）。
+- (b) 現状の 3/32（consistency=0.3 のみ・全て有限時間で復帰）を「11b の受け入れ条件外」として
+  記録に留め、`#[ignore = "F-8"]` のまま次の優先度（F-6/F-7 の PDC 裁定）へ進む。
+- (c) 3 件のうち代表 1 本（`seed=0x3106`）だけ元仕様どおりの 1 s トレース診断を行い、
+  F-6/F-7 と同じ機序かどうかだけ確認してから (a)/(b) を決める。
+
+### ゲート（本ラウンド・Sonnet 実行）
+
+```
+cargo fmt --all -- --check                             → clean
+cargo clippy --workspace --all-targets -- -D warnings  → 0
+cargo test --workspace --release                       → 195 passed / 0 failed / 1 ignored
+  （+1 = t_core_ai_12。既存 194 は無変更・11a/11b とも無傷）
+cargo test --release -p sim-core --test world_ai t_core_ai_12... -- --ignored → 3/32 failed（上記）
+git diff --stat crates/*/src                           → 空（テストファイルのみ変更）
+```
