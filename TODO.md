@@ -2807,3 +2807,80 @@ fmt clean / clippy 0 / `cargo test --workspace --release` **194 passed / 0 faile
 
 - F-7（ミス制動で前輪ロックが自己保持）: PDC-12 のロック解放を「11a 27/27」条件付きで再評価（A+B で 11a の余裕が変わったので第 4 ラウンドの 13/27 赤は再計測が要る）。
 - F-6（ヘアピン頂点で基準線から 7 m 遅れ）は今回の起点の上流。残す。F-8（`t_core_ai_12`）は未着手。
+
+---
+
+## TASK-2-4 Phase 4 — F-7 再評価: PDC-12（PDC-14 コード上）は 11a を悪化させる・BLOCKED BY ARCHITECTURE（Sonnet 5・2026-09-26）
+
+**要約**: 「次」の指示どおり PDC-12（自車ロックの安定化経路での知覚 → `brake_lock_cap` の解放）を
+PDC-14 land 済みの本コミット（`ca5b9de`）に実装し、条件どおり単独計測した。**11a が 27/27 →
+21/27（6 件赤）に悪化したため land せず revert**（PDC-12 の承認条件 3「11a 27/27・0 m」を満たさない）。
+
+### 実装内容（計測後に全て revert 済み。`git diff --stat` = 空）
+
+- `perception.rs`: `PerceivedSelf` に `wheel_lock: f64`（前軸 2 輪の `max(-slip_ratio, 0)` の最大値）を追加。
+  `zeroed()` は `0.0`。予見経路（Planner）には渡さず、安定化経路（`stabilise`）のみが読む形にした
+  （凍結テストは `..PerceivedSelf::zeroed()` 経由のため無改変で通過）。
+- `driver.rs::assemble_truth`: 上記 `wheel_lock` を前輪 2 輪の `slip_ratio` から計算。
+- `controller.rs`: 第 4 ラウンドと同じパラメータ（検知 `0.30`・持続 `3 tick`・解除ヒステリシス
+  `0.12`・乗率 `0.6`・再踏み込みレート `1.5/s`）で `brake_lock_cap` の出力に乗率を掛けた。
+  ロック検知中は乗率を即座に `0.6` へ落とし（「抜く」は速い）、解除後は `move_towards` で
+  `1.5/s` かけて `1.0` へ戻す（「再踏み」は人間の反応速度）。`mistake_brake_bias` はこの上限の
+  **後**に加算（PDC-12 条件どおり、ミスの打ち消しにはしていない）。
+
+### 計測（`cargo test --workspace --release`）
+
+```
+t_core_ai_11a_model_sweep_mistake_free: 6/27 runs failed（全て level=0.9・error_rate=0）
+  level=0.9 consistency=0.5 seed=1/2/3, consistency=1 seed=1/2/3
+  全件 s≈3358.7〜3359.2（ヘアピン出口・F-6 と同じ区間）で t=-10.0 前後 not in [-7.0, +7.0]
+  （outside 2.95〜3.10 m、3 episodes/run）
+```
+
+他 4 件の失敗（`t_ai_05r` 単調性・`t_ai_06r`／`t_drv_04r` の周回未達・`t_core_ai_03` の T7 縁石割れ
+0.035 m）は**PDC-12 revert 後の baseline 再実行（`cargo test --workspace --release`）では全て緑**
+（`world_ai.rs` 26/26 passed・194 passed / 0 failed 全体）に戻ることを確認した。つまりこの 4 件も
+今回の PDC-12 実装が原因だった（`brake_release_factor` の巻き戻し中に `move_towards` の過渡が
+`long_mode`/ギア判定に影響した可能性があるが未追跡・revert 済みのため実害なし）。**11a を含む
+全 5 件が今回の変更に起因し、baseline には残らない**。
+
+### 診断（なぜ悪化したか。追加計装はせず、既存ログと F-6/F-8 の記録から推定）
+
+11a は `error_rate=0`（ミス無し）だが、`level=0.9`（下手なドライバー相当の低スキル）は
+`cornering_skill` / `braking_skill` が低いためヘアピン進入の制動配分・トレイルブレーキングの残し
+（`TRAIL_MIN`）が他レベルより粗く、**ミスが無くても** `brake_lock_cap` ぎりぎりまで踏む。
+F-6（ヘアピン頂点で基準線から 7 m 遅れる系統誤差）によりこの領域では既に横方向の余裕が薄い
+（PDC-14 の計測表 `A+B+D` 行でも held-out err 0.5 が 2/90 残るのと同じ場所）。ここで
+`brake_lock_cap` を 3 tick 持続の実ロックで検知して 0.6 倍に「抜く」と、**その 0.6 秒弱の減速不足で
+出口速度が上がり**、ヘアピン出口のヨー限界に対し F-6 の遅れと重なって外へ出る — F-7 が直そうとした
+「ロック自己保持からの復帰遅れ」と同じ機序を、**ロック無しの通常走行側**で新たに作ってしまう。
+これは第 4 ラウンドの記録（`H3 全部 + PDC-12` で 11/27 → 13/27 赤・同じくヘアピン系）と整合し、
+「A+B+D で 11a の余裕が変わったので再計測が要る」という「次」の予想どおり **依然として PDC-12 単体では
+11a を壊す**ことが確認された。
+
+### BLOCKED BY ARCHITECTURE
+
+PDC-12 の承認条件（`TODO.md` 該当節・条件 3「11a 27/27・0 m」）を満たさないため、本ラウンドでは
+land しない。F-7（前輪ロック自己保持からの復帰遅れ・held-out 2/90）は未解決のまま残る。
+
+次の設計判断は Architect 決裁事項:
+- (a) PDC-12 の適用条件をさらに絞る（例: `level` の低いドライバーでは無効化する・`within_limits`
+  が既に false のときだけ有効にする等）。ただし「区間依存でミスを抑える」「`error_rate` で分岐する」
+  は PDC-12 自身が禁止しているため、`level`（ドライバー個体差）で分岐してよいかは仕様判断が要る。
+- (b) F-6（ヘアピン頂点 7 m 遅れ）を先に解消し、その後で PDC-12 を再評価する
+  （F-7 の起点はロックからの復帰だが、11a を壊す経路は F-6 の残る余裕不足と重なっている）。
+- (c) PDC-12 を諦め、F-7（held-out 2/90・自力復帰 12.6 s）は現状の「10 s 超だが自力で戻る」を
+  許容範囲として受け入れる（`t_core_ai_11b` の受け入れ条件には入っていないため、11b 自体は
+  影響を受けない）。
+
+いずれのラウンドで再挑戦する場合も **11a の 27/27 を毎回フルスイープで確認すること**
+（本ラウンドでは `level=0.9` の 6 本だけが壊れ、他 21 本は無傷だったため、部分実行では見逃しうる）。
+
+### ゲート（変更なし・確認のみ。実装は revert 済み）
+
+```
+git diff --stat crates/                                → 空
+cargo fmt --all -- --check                             → clean
+cargo clippy --workspace --all-targets -- -D warnings  → 0
+cargo test --workspace --release                       → 194 passed / 0 failed / 0 ignored（baseline どおり）
+```
