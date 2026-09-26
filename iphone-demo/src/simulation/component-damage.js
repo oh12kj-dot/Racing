@@ -38,31 +38,17 @@ export function applyImpactComponentDamage(incident,deltaV,contact,response){
 
 export function componentPerformanceFactors(incident={}){
   const legacy=clamp(Number(incident.damage)||0,0,1);
-  const raw=incident.componentDamage;
-  const hasDetailed=!!raw&&COMPONENT_DAMAGE_KEYS.some(key=>(Number(raw[key])||0)>1e-9);
-
-  if(!hasDetailed){
-    return{
-      aero:clamp(1-legacy*.32,.68,1),
-      drive:clamp(1-legacy*.22,.35,1),
-      steering:clamp(1-legacy*.28,.65,1),
-      brake:clamp(1-legacy*.18,.68,1),
-      top:clamp(1-legacy*.10,.78,1),
-      drag:1+legacy*.22
-    };
-  }
-
-  const aero=clamp(Number(raw.aero)||0,0,1);
-  const powertrain=clamp(Number(raw.powertrain)||0,0,1);
-  const steering=clamp(Number(raw.steering)||0,0,1);
-  const brakes=clamp(Number(raw.brakes)||0,0,1);
+  // Detailed component state is authoritative for damage identity and hashing,
+  // but remains performance-neutral in this foundation step. Keep the proven
+  // aggregate envelope unchanged while component channels are introduced and
+  // validated individually in later work.
   return{
-    aero:clamp(1-aero*.38,.62,1),
-    drive:clamp(1-powertrain*.34,.50,1),
-    steering:clamp(1-steering*.42,.58,1),
-    brake:clamp(1-brakes*.35,.60,1),
-    top:clamp(1-aero*.08-powertrain*.08,.78,1),
-    drag:1+aero*.28
+    aero:clamp(1-legacy*.32,.68,1),
+    drive:clamp(1-legacy*.22,.35,1),
+    steering:clamp(1-legacy*.28,.65,1),
+    brake:1,
+    top:clamp(1-legacy*.10,.78,1),
+    drag:1+legacy*.22
   };
 }
 
