@@ -1,6 +1,6 @@
 import {buildEntrants,FIXED_DT,RACE_LAPS} from '../config.js';
 import {createTrack} from './track.js';
-import {createVehicleState,stepVehicle,cornerSpeedLimit,steerForLateralAccel,tyreLateralAccel,tyreLongitudinalAccel,effectiveAeroFactor,effectiveTopSpeed} from './vehicle.js';
+import {createVehicleState,stepVehicle,cornerSpeedLimit,steerForLateralAccel,tyreLateralAccel,tyreLongitudinalAccel,effectiveAeroFactor,effectiveTopSpeed,performanceFactors} from './vehicle.js';
 import {planRacecraft} from './racecraft.js';
 import {maybeRequestPit,planPit} from './pit.js';
 import {createRng} from './random.js';
@@ -11,6 +11,7 @@ import {computeTrafficAero} from './traffic-aero.js';
 import {evaluatePitStrategy} from './strategy.js';
 import {createEnvironment,stepEnvironment,environmentSnapshot,surfaceConditionAt} from './environment.js';
 import {contactManifold,resolveContactImpulse} from './contact.js';
+import {applyImpactComponentDamage,componentDamageHashValues} from './component-damage.js';
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 
@@ -23,10 +24,11 @@ function combinedBrakeLimit(spec,speed,grip,aeroFactor,loadTransfer,curvature=0)
 }
 function physicalBrakeCapability(car,speed,grip,aeroFactor,curvature=0){
   const spec=car.spec;
+  const brakeSpec=spec.brake*(performanceFactors(car).brake??1);
   const unloaded=combinedBrakeLimit(spec,speed,grip,aeroFactor,0,curvature);
-  const requested=Math.min(spec.brake,unloaded);
+  const requested=Math.min(brakeSpec,unloaded);
   const transfer=clamp((requested/9.81)*(spec.cgHeight??.42)/Math.max(1.8,spec.wheelbase),0,.30);
-  return Math.min(spec.brake,combinedBrakeLimit(spec,speed,grip,aeroFactor,transfer,curvature));
+  return Math.min(brakeSpec,combinedBrakeLimit(spec,speed,grip,aeroFactor,transfer,curvature));
 }
 function speedEnvelope(car,track){
   const effectiveTop=effectiveTopSpeed(car);
@@ -138,10 +140,8 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
 
         const deltaA=Math.hypot(response.deltaVA||0,response.deltaLatA||0);
         const deltaB=Math.hypot(response.deltaVB||0,response.deltaLatB||0);
-        const damageA=Math.max(0,deltaA-1.5)*.010;
-        const damageB=Math.max(0,deltaB-1.5)*.010;
-        if(damageA>0)a.incident.damage=clamp(a.incident.damage+damageA,0,1);
-        if(damageB>0)b.incident.damage=clamp(b.incident.damage+damageB,0,1);
+        applyImpactComponentDamage(a.incident,deltaA,contact,response);
+        applyImpactComponentDamage(b.incident,deltaB,contact,response);
 
         const deltaYawA=response.deltaYawRateA||0;
         const deltaYawB=response.deltaYawRateB||0;
@@ -343,6 +343,7 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
         Math.round((c.systems.energyMJ||0)*1e6),Math.round((c.systems.energyDeploy||0)*1e6),Math.round((c.systems.energyHarvest||0)*1e6),
         Math.round((c.systems.energyReserveTarget||0)*1e6),Math.round((c.systems.energyStrategyHold||0)*1e6),c.systems.energyControllerActive?1:0,c.systems.energyStrategy??'NONE',c.systems.energyMode??'NONE',
         Math.round((c.tyre?.slipRatio??0)*1e6),Math.round((c.tyre?.slipAngle??0)*1e6),Math.round((c.tyre?.loadTransfer??0)*1e6),
+        Math.round((c.incident.damage||0)*1e6),...componentDamageHashValues(c.incident),
         Math.round((c.incident.spinTimer||0)*1000),c.incident.yawTransient?1:0,Math.round((c.incident.redRecoveryTimer||0)*1000),c.strategy?.reason??'NONE',c.strategy?.forecastHold?1:0,c.pit.phase,c.finished?1:0,c.retired?1:0
       );
     }
@@ -363,7 +364,7 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
         finite:cars.every(c=>[
           c.s,c.v,c.lane,c.laneV,c.yaw,c.yawRate,c.steer,c.gear,c.systems.fuel,c.systems.tyreWear,c.systems.tyreTemp,c.systems.grip,
           c.systems.mechanicalStress,c.systems.powerDerate,c.systems.energyMJ,c.systems.energyDeploy,c.systems.energyHarvest,c.systems.energyReserveTarget,c.systems.energyStrategyHold,
-          c.incident.spinTimer||0,c.incident.redRecoveryTimer||0,
+          c.incident.damage||0,...componentDamageHashValues(c.incident),c.incident.spinTimer||0,c.incident.redRecoveryTimer||0,
           c.tyre?.slipRatio??0,c.tyre?.slipAngle??0,c.tyre?.loadTransfer??0,c.tyre?.longitudinalAccel??0,c.tyre?.forceUsage??0
         ].every(Number.isFinite))&&[
           environment.wetness,environment.rainRate,environment.visibility,environment.ambientTemp,

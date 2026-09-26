@@ -1,5 +1,6 @@
 import {createSystems,energyDriveFactor} from './systems.js';
 import {createTiming} from './timing.js';
+import {componentPerformanceFactors,createComponentDamage} from './component-damage.js';
 
 const TAU=Math.PI*2;
 const G=9.81;
@@ -20,15 +21,17 @@ function effectiveTyreMu(spec,grip,aero,loadTransfer=0){
   return spec.tyreMu*grip*transferPenalty/(1+.14*aero);
 }
 export function performanceFactors(car){
+  const component=componentPerformanceFactors(car.incident);
   const damage=clamp(car.incident?.damage||0,0,1);
   const failed=!!car.systems?.failed;
   const derate=failed?1:clamp(car.systems?.powerDerate||0,0,.48);
   return{
-    aero:clamp(1-damage*.32,.68,1),
-    drive:failed?0:clamp((1-damage*.22)*(1-derate)*energyDriveFactor(car),.35,1),
-    steering:clamp(1-damage*.28,.65,1),
-    top:clamp(1-damage*.10-derate*.10,.78,1),
-    drag:1+damage*.22,
+    aero:component.aero,
+    drive:failed?0:clamp(component.drive*(1-derate)*energyDriveFactor(car),.35,1),
+    steering:component.steering,
+    brake:component.brake,
+    top:clamp(component.top-derate*.10,.78,1),
+    drag:component.drag,
     damage,
     derate
   };
@@ -84,7 +87,7 @@ export function createVehicleState(entry,s,lap=-1){
     targetSpeed:0,targetLane:0,
     racecraft:{state:'RESET',targetId:null,commitUntil:0,defenseUsed:false},
     pit:{phase:'TRACK',requested:false,served:false,plannedLap:2+(entry.id%3),serviceTimer:0,queue:false,boxS:0,missedCount:0},
-    incident:{spinTimer:0,yawTransient:false,damage:0},
+    incident:{spinTimer:0,yawTransient:false,damage:0,componentDamage:createComponentDamage()},
     systems:createSystems(entry.type),
     timing:createTiming(),
     tyre:{slipRatio:0,slipAngle:0,loadTransfer:0,longitudinalAccel:0,lateralForceUsage:0,forceUsage:0},
@@ -135,7 +138,7 @@ export function stepVehicle(car,track,control,dt){
   const ratio=car.v/Math.max(1,topSpeed);
   const fuelFactor=(car.systems?.fuel??1)>0?.99:.10;
   const baseDrive=car.throttle*accelerationAt(spec,car.v)*fuelFactor*performance.drive;
-  const baseBrake=car.brake*spec.brake;
+  const baseBrake=car.brake*spec.brake*performance.brake;
   const requestedLong=baseDrive-baseBrake;
   const tyreLong=tyreLongitudinalAccel(spec,car.v,grip,aeroFactor,loadTransfer);
   const ellipseFactor=Math.sqrt(Math.max(0,1-latUse*latUse));
@@ -178,7 +181,11 @@ export function stepVehicle(car,track,control,dt){
     car.laneV=-sign*Math.abs(car.laneV)*.28;
     car.laneA=-sign*Math.abs(car.laneA)*.25;
     car.v*=Math.max(.72,1-Math.min(.22,penetration*.045));
-    car.incident.damage=clamp(car.incident.damage+Math.min(.025,penetration*.003),0,1);
+    const barrierDamage=Math.min(.025,penetration*.003);
+    // Barrier handling here is a penetration correction, not an impact-impulse
+    // solve. Keep its legacy aggregate damage until barrier impulse physics
+    // exists; detailed component damage is reserved for genuine collisions.
+    car.incident.damage=clamp(car.incident.damage+barrierDamage,0,1);
     if(!car.diagnostics.barrierActive)car.diagnostics.barrierContacts++;
     car.diagnostics.barrierActive=true;
     if(penetration>3)car.diagnostics.recoveries++;
