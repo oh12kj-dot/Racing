@@ -5,7 +5,6 @@ import {createRaceSimulation} from '../src/simulation/race.js';
 import {
   createComponentDamage,
   applyImpactComponentDamage,
-  componentPerformanceFactors,
   componentDamageHashValues
 } from '../src/simulation/component-damage.js';
 
@@ -60,29 +59,18 @@ test('DMG-05: authoritative race hash includes deterministic component damage st
   expect(a.stateHash()).toBe(b.stateHash());
 });
 
-test('DMG-06: vehicle performance authority maps each component to its matching channel',()=>{
-  const aero=freshCar();aero.incident.componentDamage.aero=.5;
-  const powertrain=freshCar();powertrain.incident.componentDamage.powertrain=.5;
-  const steering=freshCar();steering.incident.componentDamage.steering=.5;
-  const brakes=freshCar();brakes.incident.componentDamage.brakes=.5;
+test('DMG-06: component detail remains performance-neutral while legacy aggregate damage stays authoritative',()=>{
+  const detailed=freshCar();
+  detailed.incident.componentDamage={aero:.5,powertrain:.5,steering:.5,brakes:.5};
+  expect(performanceFactors(detailed)).toMatchObject({aero:1,drive:1,steering:1,brake:1,top:1,drag:1,damage:0});
 
-  const af=performanceFactors(aero);
-  expect(af.aero).toBeLessThan(1);expect(af.drag).toBeGreaterThan(1);
-  expect(af.drive).toBe(1);expect(af.steering).toBe(1);expect(af.brake).toBe(1);
-
-  const pf=performanceFactors(powertrain);
-  expect(pf.drive).toBeLessThan(1);expect(pf.top).toBeLessThan(1);
-  expect(pf.aero).toBe(1);expect(pf.steering).toBe(1);expect(pf.brake).toBe(1);
-
-  const sf=performanceFactors(steering);
-  expect(sf.steering).toBeLessThan(1);
-  expect(sf.aero).toBe(1);expect(sf.drive).toBe(1);expect(sf.brake).toBe(1);
-
-  const bf=performanceFactors(brakes);
-  expect(bf.brake).toBeLessThan(1);
-  expect(bf.aero).toBe(1);expect(bf.drive).toBe(1);expect(bf.steering).toBe(1);
-
-  // The pure mapping remains equivalent to the vehicle authority before
-  // mechanical derate/hybrid modifiers are applied.
-  expect(componentPerformanceFactors(aero.incident).aero).toBe(af.aero);
+  const legacy=freshCar();
+  legacy.incident.damage=.5;
+  const factors=performanceFactors(legacy);
+  expect(factors.aero).toBeLessThan(1);
+  expect(factors.drive).toBeLessThan(1);
+  expect(factors.steering).toBeLessThan(1);
+  expect(factors.top).toBeLessThan(1);
+  expect(factors.drag).toBeGreaterThan(1);
+  expect(factors.brake).toBe(1);
 });
