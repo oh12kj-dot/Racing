@@ -293,13 +293,16 @@ fn run_solo_model_laps(seed: u64, model: DriverModel, laps: u32) -> Result<(), S
 /// `level ∈ {0.3,0.5,0.7,0.9}` × `consistency ∈ {0.5,1.0}` × `error_rate ∈ {0.0,0.5}` ×
 /// seed 3 本の全組み合わせ + `DriverModel::balanced()`（3 seed）で、全周 3 周・コリドー逸脱 0 m。
 #[test]
-#[ignore = "TASK-2-4 Phase 2（未解決・Opus 監査ラウンド 2026-09-26 時点で 19/51 が逸脱）: \
-            スレッショルドブレーキング上限（controller.rs `brake_lock_cap`）で 51/51 → 19/51。\
-            consistency=1.0 かつ error_rate=0 の 12 組は全て 3 周・逸脱 0。残る 19 組は全て \
-            consistency=0.5 または error_rate=0.5（操舵ノイズ / ミス注入あり）で、逸脱は \
-            ヘアピン進入 s≈3301〜3319・ヘアピン脱出 s≈3377〜3424・s≈3504〜3507・lap≥1 の \
-            s≈1176〜1223 に分布（いずれも 0.3〜12 cm）。ミス（mistake_*_bias）起因の逸脱を \
-            『逸脱 0』の対象に含めるかは Architect の仕様判断待ち（TODO.md Opus 監査 NEXT 参照）。"]
+#[ignore = "TASK-2-4 Phase 2（未解決・Sonnet 5 分類ラウンド 2026-09-26 時点で 16/51 が逸脱）: \
+            Opus 監査ラウンドで 51/51 → 19/51（brake_lock_cap）。本ラウンドで残り 19 組を \
+            `mistake_steer_bias`/`mistake_brake_bias` の有無で分類し（診断は破棄済み・TODO.md \
+            に数表を記録）、error_rate=0（ミス不可能・ノイズのみ）の 3 組はヘアピン脱出 \
+            （s≈3377、3 seed とも決定論的）を controller.rs の `LOW_PRECISION_STEER_RATE_FLOOR` \
+            で解消 → 19/51 → 16/51。残る 16 組は全て（error_rate=0.5 または balanced()）逸脱 \
+            直前 3 s 以内に mistake_*_bias が有意（consistency=1 の 1 組も含め、この 16 組は \
+            **すべて** ミス発生中の逸脱で、ノイズのみで割れたケースは残っていない）。ミス \
+            （mistake_*_bias）起因の数 cm 逸脱を『逸脱 0』の対象に含めるかは PROPOSED DESIGN \
+            CHANGE として Architect の仕様判断待ち（TODO.md 本タスクの節を参照）。"]
 fn t_core_ai_11_model_sweep_robustness() {
     let levels = [0.3, 0.5, 0.7, 0.9];
     let consistencies = [0.5, 1.0];

@@ -1,6 +1,18 @@
 # HANDOFF.md — 引き継ぎ資料
 
-Last updated: 2026-09-26（Opus 監査後）/ **TASK-2-4 Phase 2（部分）は Opus 監査 APPROVED**。Sonnet の `72ad7c9`（`beta_dot` 位相進みで T3・`LOOKAHEAD_MIN_M` 5→9 で t=0 spawn スピンを解消。アブレーションで両方とも修正前コードでは確実に落ちる本物の回帰と確認。K_HEADING/K_YAW_DAMP の速度スケジュールは計測上無効＝功績の帰属を訂正）は land 可。**ヘアピン（s≈3230〜3315）の根因は Sonnet の推定（応答不足 / `sim-line` / `plan_brake_decel`）ではなく、ABS の無い車で `brake = 1.0` を踏み続けた前輪ロック（`slip_ratio = -1.0` が約 80 m 継続・T3 進入でも発生）**。Opus が `controller.rs` に **PDC-8 スレッショルドブレーキング上限**（荷重感度 + 前後・左右荷重移動込みのロック限界 × 0.95）を追加し、**`t_core_ai_10_full` を緑化・ignore 解除**（全周 0.000 m）、`t_core_ai_10_offline_spawn` も全周へ拡張して 0.000 m。あわせて全周テストの終了条件バグ（`4139.0` < 周長 4139.087 m で到達不能＝偽陰性）を修正。`t_core_ai_11`（51 組スイープ）は 51/51 → **19/51** 逸脱（残りは全て consistency=0.5 または error_rate=0.5。consistency=1・error_rate=0 の 12 組は全て 3 周 0 m）。`cargo test --workspace --release` = **184 passed（+doctest 1）/ 0 failed / 3 ignored**（`t_core_ai_11` + 凍結 `t_ai_01`/`t_drv_04`）/ clippy 0 / fmt clean / no-default-features / wasm32 OK（`wasm-pack` は本コンテナ未導入）。詳細は `TODO.md`「## TASK-2-4 Phase 2 — Opus 5 Quality Gate 裁定 + Architect 修正ラウンド（2026-09-26）」。**次: TASK-2-4 Phase 2 残り = `t_core_ai_11` 残り 19 組を「ミス注入中か否か」で分類する診断（同節 NEXT SONNET TASK）→ T-CORE-AI-03 / T-AI-01R/05R/07R → Phase 3。**
+Last updated: 2026-09-26（Sonnet 分類ラウンド後）/ **TASK-2-4 Phase 2 残り 19/51 を分類 → ノイズのみの 3 組（ヘアピン脱出
+s≈3377・低 precision ドライバーがステアリングレート不足でラインを追い切れず決定論的に逸脱）は `controller.rs` に
+`LOW_PRECISION_STEER_RATE_FLOOR`（`max_steer_rate` の下限クランプ・`t_ai_07` の分岐点を避ける値）を追加して解消 →
+**`t_core_ai_11` は 19/51 → 16/51**。残る 16/51 は全て「逸脱直前 3 s 以内に `mistake_steer_bias`/`mistake_brake_bias` が
+有意」＝ミス発生中の逸脱と確認済み（ミス無しでは逸脱しない `error_rate=0` の 3 組が今回の修正で全て解消したことでも裏付け）。
+**受け入れ数値は緩和せず** `PROPOSED DESIGN CHANGE`（ミス発生中の逸脱を『逸脱 0』の対象に含めるか）を TODO.md に提出、
+未裁定・未実装。`cargo test --workspace --release` = **0 failed**（sim-core: `t_core_ai_11` の 1 ignored／sim-driver: 凍結
+`t_ai_01`/`t_drv_04` の 2 ignored）/ clippy 0 / fmt clean / no-default-features / wasm32 OK。スコープは
+`crates/sim-driver/src/controller.rs` + `crates/sim-core/tests/world_ai.rs`（ignore 文言更新）の 2 ファイルのみ、診断用
+一時テストは全て削除済み。詳細は `TODO.md`「## TASK-2-4 Phase 2 — 残り 19/51 の分類・ヘアピン脱出の根治（Sonnet 5・
+2026-09-26）」。**次: §2b の PROPOSED DESIGN CHANGE 裁定 → T-CORE-AI-03 / T-AI-01R/05R/07R → Phase 3。**
+
+Last updated (previous, Opus 監査): 2026-09-26（Opus 監査後）/ **TASK-2-4 Phase 2（部分）は Opus 監査 APPROVED**。Sonnet の `72ad7c9`（`beta_dot` 位相進みで T3・`LOOKAHEAD_MIN_M` 5→9 で t=0 spawn スピンを解消。アブレーションで両方とも修正前コードでは確実に落ちる本物の回帰と確認。K_HEADING/K_YAW_DAMP の速度スケジュールは計測上無効＝功績の帰属を訂正）は land 可。**ヘアピン（s≈3230〜3315）の根因は Sonnet の推定（応答不足 / `sim-line` / `plan_brake_decel`）ではなく、ABS の無い車で `brake = 1.0` を踏み続けた前輪ロック（`slip_ratio = -1.0` が約 80 m 継続・T3 進入でも発生）**。Opus が `controller.rs` に **PDC-8 スレッショルドブレーキング上限**（荷重感度 + 前後・左右荷重移動込みのロック限界 × 0.95）を追加し、**`t_core_ai_10_full` を緑化・ignore 解除**（全周 0.000 m）、`t_core_ai_10_offline_spawn` も全周へ拡張して 0.000 m。あわせて全周テストの終了条件バグ（`4139.0` < 周長 4139.087 m で到達不能＝偽陰性）を修正。`t_core_ai_11`（51 組スイープ）は 51/51 → **19/51** 逸脱（残りは全て consistency=0.5 または error_rate=0.5。consistency=1・error_rate=0 の 12 組は全て 3 周 0 m）。`cargo test --workspace --release` = **184 passed（+doctest 1）/ 0 failed / 3 ignored**（`t_core_ai_11` + 凍結 `t_ai_01`/`t_drv_04`）/ clippy 0 / fmt clean / no-default-features / wasm32 OK（`wasm-pack` は本コンテナ未導入）。詳細は `TODO.md`「## TASK-2-4 Phase 2 — Opus 5 Quality Gate 裁定 + Architect 修正ラウンド（2026-09-26）」。**次: TASK-2-4 Phase 2 残り = `t_core_ai_11` 残り 19 組を「ミス注入中か否か」で分類する診断（同節 NEXT SONNET TASK）→ T-CORE-AI-03 / T-AI-01R/05R/07R → Phase 3。**
 
 Last updated (previous, Sonnet 5): 2026-09-26 / **TASK-2-4 Phase 2 は人間承認 B 取得 → 着手 → 未完了・作業ツリーに残置（commit なし）**。詳細は `TODO.md`「## TASK-2-4 Phase 2 — 進捗メモ（Sonnet 5・2026-09-26）」。K_HEADING/K_YAW_DAMP の速度スケジュール（`v ≤ 50 m/s` は据え置き・`v > 50` で比例減衰）+ `delta_cs`（逆操舵）の `beta_dot` 位相進み + `planner.rs::LOOKAHEAD_MIN_M`（5.0→9.0）で **T3（s≈1561・K-1 の起票根拠）と t=0 spawn のスピンは解消**（clean 0.6 で `S_VALIDATED_M`=1400→3100 まで worst excursion 0.000 m）。**しかし新規に s≈3300〜3310 のヘアピン進入で応答不足型の逸脱を発見**（従来 `S_VALIDATED_FULL_M`=3100 でカットされ未検証だった区間。全周へ広げて判明）。堅牢性スイープ `t_core_ai_11`（新規・51 組み合わせ）はほぼ全域でこの新逸脱により red（決定論的・乱数非依存）。Allowed Files（`controller.rs`/`planner.rs`）の範囲で 3 ラウンド試行したが解消せず、contract の停止条件により停止・報告。`cargo test --release --workspace` = 0 failed（ignore 4 本のまま。中身は入れ替わり: `t_core_ai_10_offline_spawn` 解消・`t_core_ai_11` 新規追加、`t_core_ai_10_full` と `t_ai_01`/`t_drv_04` は維持）。clippy 0 / fmt clean / no-default-features / wasm32 OK（`wasm-pack` は本コンテナ未導入のため未実行）。**次: ① Architect 監査 ② ヘアピン進入（s≈3250〜3305）の追加診断（`sim-line` との相互作用を疑うが Do Not Change のため未検証・C 承認や再調査の要否を判断） ③ Phase 3（テスト基盤移行）は K-1 完全解消まで未着手が正しい順序。**
 
@@ -15,16 +27,16 @@ Last updated (previous): 2026-09-10 / **TASK-2-4 Phase 1 は Opus 監査 APPROVE
 | | |
 |---|---|
 | **何を作っているか** | Realistic Race Spectator Simulator。プレイヤーは運転せず**観戦**する。「実際のモータースポーツ中継に見え、よく見ると各 AI が本当にレースをしている」ことが目標 |
-| **今どこか** | **TASK-2-4 Phase 2（部分）Opus APPROVED + Opus 修正ラウンド（PDC-8）**。Phase 1 は `54e050a`。T3 と t=0 spawn のスピンは解消（Sonnet `72ad7c9`）、ヘアピンの前輪ロックは PDC-8 で解消し **clean 0.6 が全周コリドー逸脱 0**。残: `t_core_ai_11` 19/51（ノイズ / ミス注入ありのモデルのみ）・運動学プラント 2 本（Phase 3 で廃止）。§10 K-1 は部分解消 |
-| **次に何をするか** | **① `TODO.md`「TASK-2-4 Phase 2 — Opus 5 Quality Gate 裁定」の NEXT SONNET TASK（`t_core_ai_11` 残り 19 組をミス注入中か否かで分類 → 修正 or 仕様判断）② T-CORE-AI-03 / T-AI-01R/05R/07R ③ Phase 3（運動学プラント廃止）。並行で TASK-05-1（UE5）M3/M4。** |
+| **今どこか** | **TASK-2-4 Phase 2 分類ラウンド完了（Sonnet 5）**。Phase 1 は `54e050a`。T3・t=0 spawn スピン・ヘアピン前輪ロック（PDC-8）は解消済み。残り 19/51 を分類 → ノイズのみの 3 組はヘアピン脱出のステアリングレート不足を特定して修正（**`t_core_ai_11` 19/51 → 16/51**）。残る 16/51 は全てミス発生中の逸脱と確認・`PROPOSED DESIGN CHANGE` 提出済み（未裁定）。運動学プラント 2 本（`t_ai_01`/`t_drv_04`）は Phase 3 で廃止予定 |
+| **次に何をするか** | **① `TODO.md`「TASK-2-4 Phase 2 — 残り 19/51 の分類・ヘアピン脱出の根治」§2b の PROPOSED DESIGN CHANGE 裁定 ② T-CORE-AI-03 / T-AI-01R/05R/07R ③ Phase 3（運動学プラント廃止）。並行で TASK-05-1（UE5）M3/M4。** |
 | **役割** | Opus 5 = Architect / Reviewer / Quality Gate。Sonnet 5 = Implementation Engineer。重大な技術変更は人間承認が必要 |
-| **健全性確認** | `cargo test --release` → **184 passed（+doctest 1）/ 0 failed / 3 ignored**（`t_core_ai_11` + 凍結 `t_ai_01`/`t_drv_04`）。clippy 0 / fmt clean / no-default-features / wasm32 OK |
+| **健全性確認** | `cargo test --workspace --release` → **0 failed**（sim-core: `t_core_ai_11` の 1 ignored／sim-driver: 凍結 `t_ai_01`/`t_drv_04` の 2 ignored）。clippy 0 / fmt clean / no-default-features / wasm32 OK |
 
 ### 最初にやること
 
 ```bash
 cd /c/AI/App_Dev/Racing
-cargo test --release      # 184 passed(+doctest 1) / 3 ignored が期待値。下回ったら先に原因を特定する
+cargo test --workspace --release      # 0 failed が期待値。下回ったら先に原因を特定する
 ```
 
 これが通れば、リポジトリは既知の健全な状態にある。

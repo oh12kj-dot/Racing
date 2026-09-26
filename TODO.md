@@ -5,8 +5,10 @@
 
 Last updated: 2026-09-26
 Current Phase: **Phase 2 進行中**。TASK-2-1 `4710d63` / 2-2 `ac80e03` / 2-3 `1fd08ca` / **2-4 Phase 1 `54e050a`（Opus APPROVED）** /
-**2-4 Phase 2 部分: `72ad7c9`（Sonnet・Opus APPROVED）+ Opus 修正ラウンド（PDC-8 スレッショルドブレーキング・全周緑化）**。
-次: TASK-2-4 Phase 2 残り（`t_core_ai_11` 19/51 の分類診断 → 「## TASK-2-4 Phase 2 — Opus 5 Quality Gate 裁定」の NEXT SONNET TASK）／ 並行で TASK-05-1 UE5 M3/M4。
+**2-4 Phase 2 部分: `72ad7c9`（Sonnet・Opus APPROVED）+ Opus 修正ラウンド（PDC-8・19/51）+ Sonnet 分類ラウンド
+（ヘアピン脱出の低 precision ステアリングレート根治・19/51→16/51、残り 16/51 は PROPOSED DESIGN CHANGE 未裁定）**。
+次: TASK-2-4 Phase 2 §2b の PROPOSED DESIGN CHANGE 裁定待ち（「## TASK-2-4 Phase 2 — 残り 19/51 の分類・ヘアピン脱出の根治」）→
+裁定後 T-CORE-AI-03 / T-AI-01R/05R/07R / Phase 3 ／ 並行で TASK-05-1 UE5 M3/M4。
 
 ---
 
@@ -1456,6 +1458,217 @@ T-CORE-AI-07                                             → 4157 → 4129 ticks
 3. その後に T-CORE-AI-03（静止発進 3 周）・T-AI-01R/05R/07R・Phase 3（運動学プラント廃止、`t_ai_01`/`t_drv_04` の実物理版を
    `world_ai.rs` 側で先に緑にしてから旧版を消す）。Phase 3 で PDC-8 の margin とゲインスケジュールの要否を再評価。
 4. Allowed / Do Not Change は Phase 2 契約のまま。3 ラウンドで解けなければ停止・報告。
+
+---
+
+## TASK-2-4 Phase 2 — 残り 19/51 の分類・ヘアピン脱出の根治（Sonnet 5・2026-09-26）
+
+**要約**: Architect 起票の NEXT SONNET TASK を実施。残り 19/51 を「逸脱直前 3 s 以内にミス
+（`mistake_steer_bias`/`mistake_brake_bias`）が有意か」で分類 → **3/19 がノイズのみ（ミス不可能）・
+16/19 がミス発生中**。ノイズのみの 3 組（ヘアピン脱出 s≈3377、3 seed とも決定論的）は
+`controller.rs` 内の原因を特定して修正し **19/51 → 16/51** に改善。残る 16/19 は全てミス発生中の
+逸脱で、**受け入れ数値（コリドー逸脱 0 m）を緩和せず** `PROPOSED DESIGN CHANGE` として Architect の
+判断を仰ぐ（実装はしていない）。T-CORE-AI-03 / T-AI-01R 等の Architect タスクリストの次項目には
+着手していない（下記「次の担当者へ」参照）。
+
+### 1. 診断（コード変更前に実施）
+
+`world_ai.rs` に一時的な診断テスト（`diagtmp_*`。最終コミット前に削除済み・`git diff` で
+スコープ外ゼロを確認）を追加し、Opus 監査ラウンドの `controller.rs`（`brake_lock_cap` 適用後・
+修正前のベースライン）で 19 組それぞれを再現。逸脱直前 3 s（180 tick）の
+`Driver::driver_state().mistake_steer_bias` / `mistake_brake_bias`（`World::driver(id)` 経由・
+読み出しのみ）、4 輪 `slip_ratio` / `slip_angle`（`VehicleEntry::vehicle.state().wheels`）、
+`throttle` / `brake`（`Driver::last_input()`）を採取した。
+
+**`steer_noise` / `long_mode`（Controller 内部・非公開）について**: `Driver`（凍結）は
+`Controller` の内部状態を公開しないため直接採取していない。ただし `steer_noise` の大きさは
+`consistency` から決定的に導出できる（`STEER_NOISE_MAX * (1 - consistency)` を低域通過した値・
+`consistency = 1.0` の 1 組は定義上ゼロ）ので、分類には影響しない。`long_mode` は
+`last_input().throttle` / `.brake` の非ゼロ側から代替した（縦方向の状態機械はヒステリシス付き
+デッドバンドなので、この 2 値だけで Throttle/Brake/Coast を一意に判別できる）。
+
+**分類基準**: 3 s ウィンドウ内の `|mistake_steer_bias|` 最大値が STEER_NOISE の理論上限
+（`consistency=0.5` で ≈5×10⁻⁴ rad 程度）を明確に超える、または `|mistake_brake_bias|` 最大値が
+同程度のノイズ床を明確に超える場合を「ミス発生中」と判定した。`error_rate = 0` の 3 組は
+`maybe_make_mistake`（`driver.rs`・凍結）が `p_tick = error_rate × MISTAKE_RATE_HZ × SIM_DT` で
+決まるため **構造的に `mistake_*_bias` が恒等的に 0**（乱数を引く余地が無い）で、計測するまでもなく
+「ミス不可能」と確定する。
+
+### 分類結果（19/19）
+
+| # | combo | breach | window-max mistake_steer | window-max mistake_brake | 分類 |
+|---|---|---|---|---|---|
+| 1 | level=0.3 cons=0.5 err=0 seed=1 | s=3377.1（ヘアピン脱出） | 0.0000（構造的に 0） | 0.0000（構造的に 0） | **ノイズのみ** |
+| 2 | level=0.3 cons=0.5 err=0 seed=2 | s=3377.1 | 0.0000 | 0.0000 | **ノイズのみ** |
+| 3 | level=0.3 cons=0.5 err=0 seed=3 | s=3377.2 | 0.0000 | 0.0000 | **ノイズのみ** |
+| 4 | level=0.3 cons=0.5 err=0.5 seed=1 | s=3310.7 | 0.0026 | 0.0176 | ミス発生中 |
+| 5 | level=0.3 cons=0.5 err=0.5 seed=2 | s=3379.1 | 0.0106 | 0.0362 | ミス発生中 |
+| 6 | level=0.3 cons=0.5 err=0.5 seed=3 | s=3377.3 | 0.0008 | 0.0056 | ミス発生中 |
+| 7 | level=0.5 cons=0.5 err=0.5 seed=1 | s=3301.9 | 0.0139 | 0.0260 | ミス発生中（下記・前輪フルロック誘発） |
+| 8 | level=0.5 cons=0.5 err=0.5 seed=2 | s=1222.9 lap=1 | 0.0101 | 0.0344 | ミス発生中 |
+| 9 | level=0.5 cons=0.5 err=0.5 seed=3 | s=1176.7 lap=1 | 0.0176 | 0.0787 | ミス発生中 |
+| 10 | level=0.7 cons=0.5 err=0.5 seed=1 | s=1187.0 lap=1 | 0.0127 | 0.0494 | ミス発生中 |
+| 11 | level=0.7 cons=0.5 err=0.5 seed=2 | s=3423.7 | 0.0106 | 0.0362 | ミス発生中 |
+| 12 | level=0.7 cons=0.5 err=0.5 seed=3 | s=1183.8 lap=1 | 0.0176 | 0.0787 | ミス発生中 |
+| 13 | level=0.7 **cons=1.0** err=0.5 seed=2 | s=3507.4 lap=2 | 0.0043 | 0.0076 | ミス発生中（`consistency=1` で `steer_noise≡0` なのでミス以外にありえない） |
+| 14 | level=0.9 cons=0.5 err=0.5 seed=1 | s=3318.6 | 0.0139 | 0.0260 | ミス発生中 |
+| 15 | level=0.9 cons=0.5 err=0.5 seed=2 | s=3504.4 lap=1 | 0.0047 | 0.0511 | ミス発生中 |
+| 16 | level=0.9 cons=0.5 err=0.5 seed=3 | s=3384.6 lap=1 | 0.0175 | 0.0339 | ミス発生中 |
+| 17 | balanced() seed=1 | s=3303.2 | 0.0133 | 0.0260 | ミス発生中 |
+| 18 | balanced() seed=2 | s=1194.0 lap=1 | 0.0101 | 0.0344 | ミス発生中 |
+| 19 | balanced() seed=3 | s=1187.9 lap=1 | 0.0173 | 0.0776 | ミス発生中 |
+
+**#7 の詳細（ミスがロックアップを誘発する実例・テレメトリで確認）**: `mistake_brake_bias` は
+`brake_lock_cap` の**後**に加算される設計（PDC-8 の意図通り・原則 3「乱数は原因に作用」）だが、
+`BRAKE_LOCK_MARGIN = 0.95` は 5 % しか余裕が無いため、ヘアピン進入で `mistake_brake_bias` が
++0.02〜+0.03（ミスの生の大きさとしては小さい）に達した瞬間にロック限界を突破し、前輪
+`slip_ratio` が `-1.000` で約 30 tick（0.5 s）以上張り付いた（tick 4410〜4500 で実測）。
+ロック中は操舵が効かず、`t` が `-7.86` まで流れて `outside=0.003〜0.004 m` で逸脱する。
+**これは「ミスが原因で数 cm 逸脱する」の教科書的な実例**であり、下記 PROPOSED DESIGN CHANGE の
+根拠になっている。
+
+### 2a. ノイズのみ（#1〜#3）の根治
+
+**Architect の仮説（ヘアピン脱出＝トラクション/スロットル再投入問題）は方向として正しいが、
+機構は「駆動力がグリップを超える」ではなく「操舵レートがラインの横移動速度に追いつかない」
+だった。** `diagtmp_hairpin_exit_geometry`（走行させず `Trajectory`/`Corridor`/`SpeedProfile` を
+直接クエリ）で確認:
+
+- ヘアピン頂点（s≈3330・`kappa≈+0.055`）でレーシングラインは `t≈+4.5`（左）。そこから
+  `s=3400` の `t≈-4.5`（右）まで、**`t` がほぼ単調に `s` あたり約 0.2 m 移動する**（速度が
+  16→35 m/s へ伸びる区間なので、時間あたりでは 3〜7 m/s の横移動速度）。コリドー自体は
+  この区間ずっと `±7.0 m`（頂点付近だけ `±7.06〜7.5` で一時的に狭い）— **道幅が原因ではない**。
+- 逸脱直前の実測（`slip_ratio` は前後とも `|·|<0.13`・ロックなし）で、`t` が線形に
+  `t_line - 3.4 m` 付近で頭打ちにならず線に追いつけないまま `-7.0` を割る。`s=3376` 時点で
+  実測 `t=-6.6`、ライン目標 `t≈-3.6` — **既に 3 m の追従遅れ**。
+- `Controller::update` の横方向出力は Pure Pursuit（`trajectory.t_at(aim_s)` を直接エイム）
+  なので `Planner::t_target` の平滑化（`TAU_T_TARGET`）は経路にすら乗らない（未使用な訳では
+  ないが、この逸脱には無関係と確認）。原因はステアリング出力側の **レート制限**
+  （`max_steer_rate = lerp(2.5, 6.0, precision)`）にあった。`precision = 0.5·consistency +
+  0.5·cornering_skill`。3 組はいずれも `level=0.3, consistency=0.5` → `precision = 0.40` →
+  修正前レート `= 3.9 [1/s]`。`clean_reference_driver`（`level=0.6, consistency=1.0` →
+  `precision=0.8` → レート `5.3`）は同じ区間を `worst excursion 0.000 m` で通過する
+  （`t_core_ai_10_full` 参照）。**`precision` を介したステアリング応答速度の差が、この特定の
+  区間で「低スキルのドライバーはコリドーを割る／高スキルは割らない」という明確な閾値効果を
+  生んでいた。**
+
+**アブレーション（3 ラウンド）**: (1) `K_UNDERSTEER`（0.0018→0.0022/0.0030）を先に試した
+（ヘアピン頂点を過小評価している可能性を疑ったため）。0.0030 で s≈3377 は解消したが
+**s≈1035 の別コーナーで新規逸脱**（0.013〜0.027 m）が出た（当て推量の全域ゲイン変更は
+別コーナーへ問題を移すだけ、という前ラウンドの HIGH-1 と同じ罠）。0.0022 は部分的にしか効かず
+`level=0.5 cons=0.5 err=0.5 seed=1` に新規のわずかな悪化（0.018 m）が出たため **不採用・
+`0.0018` へ差し戻し済み**（`git diff` に残っていないことを確認）。(2) `LOOKAHEAD_TIME_S`
+（0.45→0.35/0.40）を試した — 短くすると Pure Pursuit がオーバーシュートして**逆側の縁石**
+（`t=+7` 側）を割るようになり、`mistake lap1` 系の逸脱量も悪化した。**不採用・`0.45` へ差し戻し
+済み**。(3) `max_steer_rate = lerp(2.5,6.0,precision)` の**下限（`2.5`）だけを引き上げる**方向で
+試したところ噛み合った。ただし `lerp` の**両端**を線形にシフトすると（例: `lerp(4.5,6.0,precision)`）
+`t_ai_07`（`sim-driver/tests/driver.rs`・凍結・`precision=0.75` で反応遅れによるラップタイム差
+`≥0.1 s` を要求。PDC-8 の margin 選定でも同テストが制約になっていた、と Opus 監査ラウンドが
+既に記録している）が `df=0.100 s` ちょうどで境界割れした。**採用した実装**は `lerp` 全体を
+動かさず、`.max(LOW_PRECISION_STEER_RATE_FLOOR)` で**下限だけを固定値クランプ**する形（詳細は
+`controller.rs` のコメント）。クランプの分岐点は `(FLOOR − 2.5) / 3.5`。`FLOOR = 5.1` →
+分岐点 `≈0.743`。`t_ai_07` の `precision = 0.75` はこの分岐点の**外側**（未クランプ域）なので
+元の `lerp` 値のまま無変更 — 実測でも `t_ai_07` は変更前と同じマージンで green（境界値ではない）。
+
+**結果**: `#1〜#3`（error_rate=0・ノイズのみ）は 3 周とも逸脱 0 m へ解消。`T-CORE-AI-11` は
+**19/51 → 16/51**。`t_core_ai_10_full` / `t_core_ai_10_offline_spawn`（全周 0.000 m）・
+`T-CORE-AI-09`（1.217 ms/tick、予算 3.5）とも無回帰。`#4〜#19`（ミス発生中の 16 組）は
+このクランプの影響で一部 breach 地点が移動した（同じ `precision` を共有するため）が、
+**全て引き続き「ミス発生中の逸脱」のまま**（下記 §2b・分類は変わらない）。
+
+### 2b. ミス発生中（#4〜#19、16 組）— PROPOSED DESIGN CHANGE（実装せず・判断待ち）
+
+```
+PROPOSED DESIGN CHANGE
+Current Design:
+  T-CORE-AI-11（world_ai.rs）は `error_rate` を含む全組み合わせで「3 周・コリドー逸脱 0 m」を
+  要求する。`mistake_steer_bias` / `mistake_brake_bias`（driver.rs::maybe_make_mistake、
+  error_rate に応じた確率で発火し TAU_MISTAKE=1.2 s で指数減衰）は Controller の出力に
+  そのまま加算される（原則 3「乱数は原因にのみ作用」に忠実な実装）。
+
+Observed Problem:
+  残り 16/51 の逸脱は全て、逸脱直前 3 s 以内に mistake_steer_bias/mistake_brake_bias が
+  有意（ノイズ床を明確に超える）な状態で発生している。逸脱量は 0.2〜8 cm と小さく、
+  「ミスの発生確率がゼロでない設計」と「逸脱 0 m の受け入れ基準」が数学的に両立しない
+  局面がある（PDC-8 の BRAKE_LOCK_MARGIN=0.95 のような、意図的に余裕を切り詰めた安全マージンに
+  数 % のミスバイアスが乗ると、そのマージン自体を食いつぶす）。
+
+Root Cause:
+  ミスは「原因」（操舵・ブレーキへの一時バイアス）であって「結果」の緩和ではないため、
+  マージンがタイトな区間（ヘアピン進入のロック限界・低速コーナーの縁石ぎりぎり）で発火すると、
+  設計上は正しい因果連鎖の末に必然的にコリドーを数 cm 割る。これを「逸脱 0 m」で潰すには、
+  ミス発生時にどこかの安全マージンを常に拡大するしかなく、それは (a) ミス非発生時の挙動を
+  一様に保守的にする（クリーン走行のタイム/迫力を犠牲にする）か、(b) ミスの影響を検知して
+  打ち消す補償ロジックを足す（「ミスなのに車が自動修正する」という矛盾したドライバー像になる）
+  かの二択で、どちらも controller.rs/planner.rs 内の局所的なゲイン調整では実現できない
+  （前ラウンドのアブレーションで、全域ゲインを動かすと必ず別区間で新規逸脱が出ることを確認済み）。
+
+Proposed Change（3 案・優先順なし・Architect 判断を仰ぐ）:
+  A. T-CORE-AI-11 の受け入れ基準を「クリーン（consistency=1.0 かつ error_rate=0）は逸脱 0 m・
+     ミス発生時は逸脱 ≤ 15 cm（実測レンジの上限に安全率を掛けた値）」のように分離する。
+  B. 受け入れ基準は変えず、ミスの影響が及ぶタイミングをずらす（例: ロックアップ限界に
+     余裕が少ない区間ではミス発火を抑制する）— ただし「乱数は原因にのみ作用する」原則
+     （CLAUDE.md #3）と整合するかは要検討（区間依存でミス確率を変えるのは「結果を見てから
+     原因を調整する」に近づく可能性がある）。
+  C. 現状維持（16/51 は許容された既知の逸脱として ignore 文に記録し続け、Phase 3 で
+     実タイヤベースの検証に移行してから再評価）。
+
+Reason:
+  「受け入れ数値の緩和は設計変更」（CLAUDE.md）に従い、数値を実装者判断で動かさない。
+
+Expected Benefit:
+  A: 観客視点では「ミスをした AI が数 cm ライン取りを乱す」のは望ましい創発（CLAUDE.md の
+     目標「よく見ると各 AI が本当にレースをしている」に合致）で、これを red 扱いし続けると
+     今後のチューニングが「ミスの影響を消す」方向に歪む。
+
+Risk:
+  A: 閾値を緩めることで将来の真の回帰（例: PDC-8 のマージンが壊れて本物のロックアップが
+     再発する）を隠す可能性がある → 閾値をミス発生時限定にし、クリーンな 12/51 は 0 m の
+     ままにすることで最小化。
+  B: 「乱数は原因にのみ作用」の原則に反する設計になるリスク。
+  C: 19/51→16/51 の改善が止まったまま Phase 3 まで持ち越す。
+
+Affected Modules: sim-core（テストのみ）。sim-driver は不変（A/C の場合）。
+Affected Files: crates/sim-core/tests/world_ai.rs（受け入れロジック）。
+Migration Impact: なし（テストの合否基準のみ）。
+Alternative: 何もしない（現状の ignore を維持）。
+```
+
+**この PROPOSED DESIGN CHANGE は未承認。実装はしていない。** `t_core_ai_11` は
+`#[ignore]` のまま、ignore 文言を 16/51 の実測に更新した。
+
+### 完了ゲート（本ラウンド）
+
+```
+cargo fmt --all -- --check                               → clean
+cargo clippy --workspace --all-targets -- -D warnings    → 0
+cargo test --workspace --release                         → 0 failed（sim-core: 1 ignored
+  = t_core_ai_11 16/51／sim-driver: 2 ignored = 凍結 t_ai_01・t_drv_04・K-1）
+cargo build -p sim-wasm --target wasm32-unknown-unknown --release → OK
+cargo build -p sim-line --no-default-features            → OK
+t_core_ai_10_full / t_core_ai_10_offline_spawn           → 無回帰・全周 worst excursion 0.000 m
+t_core_ai_11                                             → 19/51 → 16/51 逸脱
+T-CORE-AI-09                                              → 1.217 ms/tick（予算 3.5）
+```
+
+**スコープ確認**: `git diff --stat` は `crates/sim-core/tests/world_ai.rs`（ignore 文言更新のみ・
+純粋な差分は ±行程度）と `crates/sim-driver/src/controller.rs`（`LOW_PRECISION_STEER_RATE_FLOOR`
+定数追加 + `max_steer_rate` の 1 行）の 2 ファイルのみ。診断用 `diagtmp_*` テストは最終コミット前に
+全て削除済み（`grep -rn "DIAGTMP\|diagtmp" crates/` はゼロ件）。`planner.rs` は最終的に無変更
+（アブレーションで `LOOKAHEAD_TIME_S` を触ったが効果なし・不採用で原状復帰）。
+
+### 次の担当者へ
+
+- Architect: 上記 PROPOSED DESIGN CHANGE（§2b）の裁定待ち。
+- 裁定後、TODO.md の Architect タスクリスト通り T-CORE-AI-03（静止発進 3 周完走）→
+  T-AI-01R/05R/07R → Phase 3（運動学プラント廃止・`t_ai_01`/`t_drv_04` の実物理版を
+  `world_ai.rs` 側に先に緑化してから旧版を消す）の順で継続する。**本ラウンドではこれらに
+  着手していない**（§1/2 の診断・分類・修正・検証だけで完結させた。「小さく確実な増分」を
+  優先し、未検証のまま手を広げないという Architect の指示に従った）。
+- `LOW_PRECISION_STEER_RATE_FLOOR`（controller.rs）は `t_ai_07` の `precision=0.75` との分岐点
+  `≈0.743` にちょうど収まる値として選んだ。Phase 3 で運動学プラント（`t_ai_07` を含む
+  `sim-driver/tests/driver.rs` の T-AI-01〜08）を廃止し実物理版へ移行したら、この分岐点の
+  拘束が外れるので、`FLOOR` を再評価してよい（上げても `t_ai_07` を気にする必要がなくなる）。
 
 ---
 

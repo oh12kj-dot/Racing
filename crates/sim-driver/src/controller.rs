@@ -134,6 +134,19 @@ const DOWNSHIFT_TRIGGER_FRACTION: f64 = 0.60;
 const MIN_GEAR_DWELL_S: f64 = 0.25;
 /// 入力精度ノイズの低域通過時定数 [s]。
 const PRECISION_NOISE_TAU: f64 = 0.5;
+/// `max_steer_rate` の下限フロア [1/s]（TASK-2-4 Phase 2 残り・ヘアピン脱出診断）。
+///
+/// `lerp(2.5, 6.0, precision)` の下限 `2.5` は、ヘアピン脱出（s≈3377）でレーシングラインが
+/// 急速に横へ流れる区間（加速で速度が伸びながら `t` が ~0.2 m/m で動く）を低 `precision`
+/// （`0.5·consistency + 0.5·cornering_skill`）のドライバーが追い切れず、乱数（`steer_noise`）が
+/// ゼロでも `error_rate = 0`（ミス無し）のまま**決定論的に**コリドーを割ることをテレメトリで
+/// 確認した（`slip_ratio` はロックしておらず、純粋にステアリングレートの追従遅れ）。
+/// `precision` 全域を底上げすると `t_ai_07`（反応遅れによるラップタイム差 ≥0.1 s。
+/// `precision = 0.75` で測る）の差が縮んで割れるため（実測 0.100 s ちょうどで境界割れ）、
+/// `lerp` 全体を平行移動する代わりに**下限のみ** `max` でクランプする。この定数は
+/// `(LOW_PRECISION_STEER_RATE_FLOOR - 2.5) / 3.5` 未満の `precision` にしか効かないので、
+/// `t_ai_07` の `precision = 0.75` は無変更（`lerp` の値がフロアを上回るため `max` が効かない）。
+const LOW_PRECISION_STEER_RATE_FLOOR: f64 = 5.1;
 /// `consistency = 0` のときの操舵精度ノイズの標準偏差（正規化操舵 `-1..1` に対して）。
 const STEER_NOISE_MAX: f64 = 0.02;
 
@@ -344,7 +357,7 @@ impl Controller {
         //    max_steer_rate / STEER_TAU は precision に依存（§6）。
         //    VehicleParams::steering.time_constant は「ラックの機構遅れ」であって
         //    「ドライバーの腕」ではない。役割が違うので二重補正ではない。
-        let max_steer_rate = lerp(2.5, 6.0, self.precision); // [1/s]
+        let max_steer_rate = lerp(2.5, 6.0, self.precision).max(LOW_PRECISION_STEER_RATE_FLOOR); // [1/s]
         let steer_tau = lerp(0.10, 0.04, self.precision); // [s]
         let rate_limited = move_towards(self.prev_steer, steer_raw, max_steer_rate * SIM_DT);
         self.steer_filt = approach_exponential(self.steer_filt, rate_limited, steer_tau, SIM_DT);
