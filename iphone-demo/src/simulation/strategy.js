@@ -16,7 +16,10 @@ export function evaluatePitStrategy(car,track,raceLaps,environment=null){
   const currentLapProgress=car.lap>=0&&track.total>0?Math.max(0,Math.min(1,track.wrapS(car.s)/track.total)):0;
   const remainingLaps=Math.max(0,raceLaps-completedLaps);
   const remainingDistanceLaps=Math.max(0,raceLaps-completedLaps-currentLapProgress);
-  const projectedFuel=s.burnPerKm*(track.total/1000)*remainingLaps*1.08;
+  // Fuel demand follows physical distance still to travel, not just the integer
+  // current-lap index. Using remainingLaps here overestimates demand by up to
+  // almost one full lap late in a lap and can trigger an unnecessary early stop.
+  const projectedFuel=s.burnPerKm*(track.total/1000)*remainingDistanceLaps*1.08;
   const damage=car.incident?.damage||0;
   const lastServicedDamage=car.pit.lastServiceDamage??0;
   const newDamage=Math.max(0,damage-lastServicedDamage);
