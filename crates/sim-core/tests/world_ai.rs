@@ -795,3 +795,282 @@ fn t_core_ai_03_standing_start_three_laps() {
     }
     eprintln!("T-CORE-AI-03 lap times [s]: {}", report.join(" / "));
 }
+
+// =============================================================================================
+// TASK-2-4 Phase 2 Part 1 — T-AI-01R / T-AI-05R / T-AI-07R（実物理・PDC-11 の前提）
+// =============================================================================================
+
+/// FNV-1a 風の決定的ハッシュ（`u64` 列。`sim-driver/tests/common::hash_f64` と同じ構成）。
+fn hash_u64_series(series: &[u64]) -> u64 {
+    let mut h: u64 = 0xCBF2_9CE4_8422_2325;
+    for &x in series {
+        for b in x.to_le_bytes() {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x0000_0100_0000_01B3);
+        }
+    }
+    h
+}
+
+/// T-AI-01R — `t_ai_01_stays_on_course_for_20_laps`（凍結・運動学プラント）の実物理版。
+///
+/// 運動学プラントは本物のレーシングライン（Phase 1）を追えない（K-1）ためテスト自体が
+/// 意味を持たず ignore 中。実物理・実タイヤでは `clean_reference_driver`（level 0.6・
+/// ミス無し）が 3 周、全 tick で (a) コリドー逸脱 0 m、(b) `recovered_steps` 増加なし
+/// （数値破綻からの保険が発動しない = 物理が安定に解けている）ことを検証する。
+#[test]
+fn t_ai_01r_stays_on_course_real_physics() {
+    let corridor_world = world_with_line();
+    let corridor = corridor_world.racing_line().unwrap().corridor();
+    let mut world = world_with_line();
+    let rng = sim_core::rng::driver_rng(&Rng::from_seed(11), VehicleId(0));
+    let gt = line_t(&world, GRID_S);
+    world
+        .spawn_with_driver(params(), GRID_S, gt, clean_reference_driver(), rng)
+        .unwrap();
+
+    const LAPS_TARGET: u32 = 3;
+    let mut worst_outside = 0.0_f64;
+    let mut worst_s = 0.0_f64;
+    let max_ticks = 20_000u64;
+    for _ in 0..max_ticks {
+        world.step_sim_tick();
+        let tick = world.sim_tick();
+        let e = &world.vehicles()[0];
+        if tick > WARMUP_TICKS {
+            let (t_right, t_left) = corridor.limit_bounds(e.coord.s);
+            let outside = (t_right - e.coord.t).max(e.coord.t - t_left).max(0.0);
+            if outside > worst_outside {
+                worst_outside = outside;
+                worst_s = e.coord.s;
+            }
+            assert!(
+                outside <= CONTAIN_TOL_M,
+                "T-AI-01R: corridor breach at s={:.1} lap={}: t={:+.3} not in [{:+.3}, {:+.3}] \
+                 (outside by {:.3} m)",
+                e.coord.s,
+                e.laps_completed,
+                e.coord.t,
+                t_right,
+                t_left,
+                outside,
+            );
+            let recovered = e.vehicle.state().recovered_steps;
+            assert_eq!(
+                recovered, 0,
+                "T-AI-01R: recovered_steps = {recovered} != 0 at s={:.1} lap={}",
+                e.coord.s, e.laps_completed
+            );
+        }
+        if e.laps_completed >= LAPS_TARGET {
+            eprintln!(
+                "T-AI-01R: {LAPS_TARGET} laps clean, worst excursion {worst_outside:.3} m at \
+                 s={worst_s:.1}, recovered_steps=0 throughout"
+            );
+            return;
+        }
+    }
+    let e = &world.vehicles()[0];
+    panic!(
+        "T-AI-01R: did not complete {LAPS_TARGET} laps within {max_ticks} sim ticks \
+         (laps_completed={}, s={:.1})",
+        e.laps_completed, e.coord.s
+    );
+}
+
+/// T-AI-05R — `t_ai_05_ability_ordering_emerges_in_lap_time`（凍結・運動学プラント）の実物理版。
+///
+/// `level ∈ {0.2, 0.5, 0.9}`・`consistency = 1.0`・`error_rate = 0.0`
+/// （能力値以外は完全に決定論的 = 操舵ノイズもミスも無い）。1 周目はグリッドからの部分周なので
+/// 2 周目（最初の全周）のラップタイムを比較する。中央値ではなく単一周だが、決定論的ドライバー
+/// なので周ごとの変動が無いことは `t_core_ai_03` で確認済み（0.1 s 単位で不変）。
+#[test]
+fn t_ai_05r_ability_ordering_emerges_in_lap_time() {
+    let mut lap2 = Vec::new();
+    let mut report = Vec::new();
+    for level in [0.2, 0.5, 0.9] {
+        let mut model = driver_model(level);
+        model.consistency = 1.0;
+        model.error_rate = 0.0;
+        let mut world = world_with_line();
+        let rng = sim_core::rng::driver_rng(&Rng::from_seed(15), VehicleId(0));
+        let gt = line_t(&world, GRID_S);
+        world
+            .spawn_with_driver(params(), GRID_S, gt, model, rng)
+            .unwrap();
+
+        let mut lap_start_tick = 0u64;
+        let mut laps_seen = 0u32;
+        let mut lap_times = Vec::new();
+        let max_ticks = 20_000u64;
+        for _ in 0..max_ticks {
+            world.step_sim_tick();
+            let tick = world.sim_tick();
+            let e = &world.vehicles()[0];
+            if e.laps_completed > laps_seen {
+                laps_seen = e.laps_completed;
+                lap_times.push((tick - lap_start_tick) as f64 * SIM_DT);
+                lap_start_tick = tick;
+            }
+            if laps_seen >= 2 {
+                break;
+            }
+        }
+        assert!(
+            lap_times.len() >= 2,
+            "T-AI-05R: level {level}: only {} lap(s) completed",
+            lap_times.len()
+        );
+        report.push(format!(
+            "level {level}: lap2={:.3} s ({lap_times:.3?})",
+            lap_times[1]
+        ));
+        lap2.push(lap_times[1]);
+    }
+    eprintln!("T-AI-05R lap times [s]: {}", report.join(" / "));
+    assert!(
+        lap2[0] > lap2[1] && lap2[1] > lap2[2],
+        "T-AI-05R: lap times not monotone: {lap2:?}"
+    );
+    assert!(
+        lap2[0] - lap2[2] >= 0.5,
+        "T-AI-05R: fastest/slowest spread {:.3} s/lap < 0.5",
+        lap2[0] - lap2[2]
+    );
+}
+
+/// T-AI-07R — `t_ai_07_perception_delay_changes_behaviour`（凍結・運動学プラント）の実物理版。
+/// PDC-11 の (1)〜(4) を全て検証する（運動学版 `t_ai_07` の退役条件・本ファイル TODO.md 参照）。
+#[test]
+fn t_ai_07r_perception_delay_changes_behaviour() {
+    let corridor_world = world_with_line();
+    let corridor = corridor_world.racing_line().unwrap().corridor();
+
+    /// `reaction_time` を変えて走らせ、(lap_times, ControlInput 6 成分の bits 列,
+    /// 60 s 時点の走行距離, 最大 recovered_steps, worst コリドー逸脱) を返す。
+    fn run(
+        corridor: &sim_line::Corridor,
+        reaction_time: f64,
+    ) -> (Vec<f64>, Vec<u64>, f64, u64, f64) {
+        let mut world = world_with_line();
+        let rng = sim_core::rng::driver_rng(&Rng::from_seed(107), VehicleId(0));
+        let gt = line_t(&world, GRID_S);
+        let mut model = driver_model(0.5);
+        model.consistency = 1.0;
+        model.error_rate = 0.0;
+        model.reaction_time = reaction_time;
+        world
+            .spawn_with_driver(params(), GRID_S, gt, model, rng)
+            .unwrap();
+
+        let len = world.track().length();
+        let ticks_60s = (60.0 / SIM_DT).round() as u64;
+        let mut lap_start_tick = 0u64;
+        let mut laps_seen = 0u32;
+        let mut lap_times = Vec::new();
+        let mut bits = Vec::new();
+        let mut recovered_max = 0u64;
+        let mut worst_outside = 0.0_f64;
+        let mut dist_at_60s = None;
+        let max_ticks = 60_000u64;
+        for _ in 0..max_ticks {
+            world.step_sim_tick();
+            let tick = world.sim_tick();
+            let e = &world.vehicles()[0];
+            let vs = e.vehicle.state();
+            recovered_max = recovered_max.max(vs.recovered_steps);
+            let inp = world.driver(VehicleId(0)).unwrap().last_input();
+            for f in [
+                inp.steer,
+                inp.throttle,
+                inp.brake,
+                inp.clutch,
+                inp.gear as f64,
+            ] {
+                bits.push(f.to_bits());
+            }
+            bits.push(inp.drs as u64);
+            if tick > WARMUP_TICKS {
+                let (t_right, t_left) = corridor.limit_bounds(e.coord.s);
+                let outside = (t_right - e.coord.t).max(e.coord.t - t_left).max(0.0);
+                worst_outside = worst_outside.max(outside);
+            }
+            if dist_at_60s.is_none() && tick >= ticks_60s {
+                dist_at_60s = Some(e.laps_completed as f64 * len + e.coord.s);
+            }
+            if e.laps_completed > laps_seen {
+                laps_seen = e.laps_completed;
+                lap_times.push((tick - lap_start_tick) as f64 * SIM_DT);
+                lap_start_tick = tick;
+            }
+            if laps_seen >= 4 {
+                break;
+            }
+        }
+        (
+            lap_times,
+            bits,
+            dist_at_60s.unwrap_or(0.0),
+            recovered_max,
+            worst_outside,
+        )
+    }
+
+    let (fast_laps, fast_bits, fast_dist60, fast_recovered, fast_worst) = run(corridor, 0.0);
+    let (slow_laps, slow_bits, slow_dist60, _slow_recovered, _slow_worst) = run(corridor, 0.30);
+
+    assert!(
+        fast_laps.len() >= 4,
+        "T-AI-07R: reaction_time=0.0 completed only {} laps",
+        fast_laps.len()
+    );
+    assert!(
+        slow_laps.len() >= 4,
+        "T-AI-07R: reaction_time=0.30 completed only {} laps",
+        slow_laps.len()
+    );
+
+    // (1) ControlInput 6 成分の bits 列ハッシュが不一致。
+    let h_fast = hash_u64_series(&fast_bits);
+    let h_slow = hash_u64_series(&slow_bits);
+    assert_ne!(
+        h_fast, h_slow,
+        "T-AI-07R: ControlInput series identical despite different reaction_time"
+    );
+
+    // (2) 60 s 走行の距離差 >= 1 m。
+    let dist_diff = (fast_dist60 - slow_dist60).abs();
+    assert!(
+        dist_diff >= 1.0,
+        "T-AI-07R: 60 s distance difference {dist_diff:.3} m < 1 m \
+         (fast={fast_dist60:.3} slow={slow_dist60:.3})"
+    );
+
+    // (3) ラップタイム差 >= 0.1 s（運動学版 t_ai_07 の基準そのもの）。
+    let lap_diff = (fast_laps[3] - slow_laps[3]).abs();
+    assert!(
+        lap_diff >= 0.1,
+        "T-AI-07R: lap-time difference {lap_diff:.3} s < 0.1 s \
+         (fast={:.3} slow={:.3})",
+        fast_laps[3],
+        slow_laps[3]
+    );
+
+    // (4) reaction_time = 0.0 でも recovered_steps == 0・T-AI-01R の帯（コリドー逸脱 0 m）を満たす。
+    assert_eq!(
+        fast_recovered, 0,
+        "T-AI-07R: reaction_time=0.0 triggered recovered_steps = {fast_recovered}"
+    );
+    assert!(
+        fast_worst <= CONTAIN_TOL_M,
+        "T-AI-07R: reaction_time=0.0 breached corridor by {fast_worst:.3} m (T-AI-01R band)"
+    );
+
+    eprintln!(
+        "T-AI-07R: hash fast={h_fast:#x} slow={h_slow:#x} (differ) | 60s distance fast={fast_dist60:.3} \
+         slow={slow_dist60:.3} (diff {dist_diff:.3} m) | lap[3] fast={:.3} slow={:.3} (diff {lap_diff:.3} s) | \
+         recovered_steps(fast)=0 worst_outside(fast)={fast_worst:.3} m",
+        fast_laps[3],
+        slow_laps[3],
+    );
+}
