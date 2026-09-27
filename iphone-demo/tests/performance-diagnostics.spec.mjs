@@ -1,6 +1,6 @@
 import {test,expect} from '@playwright/test';
 
-test('PERF: presentation records timing, renderer load and stays inside smoke budgets without changing simulation state',async({page})=>{
+test('PERF: presentation records timing, renderer load and stays inside owned-work smoke budgets without changing simulation state',async({page})=>{
   await page.goto('/iphone-demo/index.html?runtimeTest=1',{waitUntil:'domcontentloaded'});
   await page.waitForFunction(()=>!!window.__RACING_PERFORMANCE__&&!!window.__RACING_RACE__);
   await page.waitForTimeout(350);
@@ -18,6 +18,7 @@ test('PERF: presentation records timing, renderer load and stays inside smoke bu
   expect(d.sampleCount).toBeGreaterThan(5);
   for(const k of ['frameIntervalMs','frameP95Ms','mainThreadMs','simFrameMs','simTickMs','renderFrameMs','drawCalls','triangles','longFrameRate','devicePixelRatio'])expect(Number.isFinite(d[k]),k).toBeTruthy();
   expect(d.frameIntervalMs).toBeGreaterThanOrEqual(0);
+  expect(d.frameP95Ms).toBeGreaterThanOrEqual(0);
   expect(d.simTickMs).toBeGreaterThanOrEqual(0);
   expect(d.renderFrameMs).toBeGreaterThanOrEqual(0);
   expect(d.drawCalls).toBeGreaterThan(0);
@@ -25,7 +26,8 @@ test('PERF: presentation records timing, renderer load and stays inside smoke bu
   expect(d.longFrameRate).toBeGreaterThanOrEqual(0);expect(d.longFrameRate).toBeLessThanOrEqual(1);
   expect(d.qualityTier).toBe('FULL');
   expect(d.gpuTimerAvailable).toBeFalsy();expect(d.gpuFrameMs).toBeNull();
-  expect(d.budget).toMatchObject({frameP95Ms:120,mainThreadMs:80,renderFrameMs:70,drawCalls:300,triangles:400000});
+  expect(d.budget).toMatchObject({mainThreadMs:80,renderFrameMs:70,drawCalls:300,triangles:400000});
+  expect(d.budget).not.toHaveProperty('frameP95Ms');
   expect(d.budgetExceeded,`performance budget exceeded: ${d.budgetExceeded.join(', ')}`).toEqual([]);
   expect(d.withinBudget).toBeTruthy();
   if(d.memoryMB!=null)expect(d.memoryMB).toBeGreaterThan(0);
