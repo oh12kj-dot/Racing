@@ -1,4 +1,5 @@
 import {TYRE_COMPOUND,tyreIdealTemperature,tyreWeatherGrip} from './environment.js';
+import {powertrainDamageExcess} from './component-damage.js';
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 
@@ -225,8 +226,9 @@ export function stepSystems(car,dt,environment=null,surface=null){
 
   const heatStress=Math.max(0,s.engineTemp-108)/20;
   const damageStress=Math.max(0,damage-.40)*(.25+.75*car.throttle);
-  const stressGain=heatStress*.0045+damageStress*.0015;
-  const stressRecovery=heatStress<.08&&damageStress<.03?.0012:0;
+  const powertrainStress=powertrainDamageExcess(car.incident)*(.25+.75*car.throttle);
+  const stressGain=heatStress*.0045+damageStress*.0015+powertrainStress*.0012;
+  const stressRecovery=heatStress<.08&&damageStress<.03&&powertrainStress<.03?.0012:0;
   s.mechanicalStress=clamp(s.mechanicalStress+(stressGain-stressRecovery)*dt,0,1.2);
   s.powerDerate=clamp(Math.max(0,s.mechanicalStress-.25)*.55+Math.max(0,s.engineTemp-110)*.012,0,.48);
   if(!s.failed&&(s.engineTemp>132||s.mechanicalStress>=.98)){
