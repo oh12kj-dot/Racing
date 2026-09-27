@@ -3058,3 +3058,115 @@ cargo fmt --all -- --check                             → clean
 cargo clippy --workspace --all-targets -- -D warnings  → 0
 cargo test --workspace --release                       → 195 passed / 0 failed / 1 ignored（不変）
 ```
+
+---
+
+## TASK-2-4 Phase 4b — `brake_lock_cap` の実装再挑戦 → 2 案とも 11a 全面赤化・BLOCKED BY ARCHITECTURE（Sonnet 5・2026-09-26）
+
+**人間承認**: 「`brake_lock_cap` の負荷推定を再設計する」方針の実装着手を明示的に承認済み
+（実装 → 11a/11b/T-CORE-AI-12 で再検証 → land 前に報告、の条件付き）。
+
+**要約**: 前節「F-7 分解」の結論（`load_curvature`／`r/v` を制動側に使えば直る）は**訂正**する。
+より丁寧に検証したところ、ロックの起点 `s≈3301` では実は `r/v ≈ kappa_traj`（超過なし）であり、
+前節の「同じ欠陥クラス」という結論は誤りだった。真の原因を突き止めるため物理値を直接比較する
+方式で 2 回実装・検証したが、**いずれも `t_core_ai_11a` を大きく壊し（21/27 相当 → 12/27・15/27）、
+land しなかった**。得られた知見は重要なので以下に記録し、F-6/F-7 は Architect 裁定へ差し戻す。
+
+### 訂正: 前節「F-7 分解」の推定 Fz 過大は split（内外輪配分）の問題であって、負荷の全体量ではない
+
+`brake_lock_cap` 内で計測点ごとに前輪合計 Fz（推定 vs 実測）を突き合わせたところ、**前軸合計の
+推定値は実測とおおむね一致する**（例: s=3301.09 で推定 8290.2 N vs 実測 8245.4 N、誤差 0.5%）。
+乖離があるのは**内外輪への配分**（`d_lat_f` 項）で、s=3301.09 で実測に必要な `d_lat` は推定の
+約 1.7 倍、s=3304.83（ロック最深部）では約 2.1 倍。つまり `brake_lock_cap` の欠陥は「前軸全体の
+荷重をどれだけ見誤るか」ではなく「左右にどう配分するかを見誤る」ことに限定される。
+
+### 試行 1: `load_curvature`（`r/v`）を制動側にも使う → 却下（`r/v` はロック起点で超過していない）
+
+`s=3301.09` の実測: `kappa_traj=+0.0115`・`kappa_yaw(=r/v)=+0.0108`（**比 0.94 — kappa_traj の方が
+大きい**）。`s=3304.83`（ロック最深部）でも `kappa_yaw=+0.0074` に対し `kappa_traj=+0.0110`
+（比 0.67）。**この区間の実ロックは実ヨーレートの遅れでは説明できない** — PDC-14 の
+`traction_throttle_cap`（ヘアピン**出口**のスピン連鎖・ヨーレートが計画を大幅に超える）とは
+別の機序であり、前節の「同じ欠陥クラス」という速断は誤りだった。
+
+`beta_dot`（車体スリップ角の変化率。`K_CS_LEAD_S` の逆操舵リードで既に使っている量）を足した
+`kappa_ay = (r + beta_dot)/v` も試したが、`s=3304.83` 付近で `beta_dot` が大きく負に振れて
+`kappa_ay ≈ 0`（むしろ `kappa_traj` を大幅に下回る）になり、ちょうど乖離が最大の地点で無力化される。
+両方とも不採用。
+
+### 試行 2: 実横加速度の直接計測（ワールド速度の tick 間差分）→ 実装・11a で 15/27 赤・revert
+
+**設計**: `driver.rs::assemble_truth` に `prev_velocity: Option<Vec3>` を追加し、
+`lateral_g = -(v_now - v_prev)·right() / SIM_DT` を [`PerceivedSelf::lateral_g`] として安定化経路
+（`stabilise`）にだけ渡す（予見経路には渡さない・PDC-12 と同じ制約）。`controller.rs` に
+`load_curvature_for_brake(speed, lateral_g, kappa_traj)` を新設し `brake_lock_cap` の呼び出しに
+`max(|kappa_traj|, |lateral_g/v²|)` を渡した（符号は `kappa_traj` に揃える）。近似を一切使わない
+「真の」横 G。
+
+**s=3283〜3320 の狭い窓では有望に見えた**: `s=3283.25` で `kappa_traj=0.0079` に対し
+`kappa_ay_true=0.0082〜0.0155`（1.0〜2.0 倍、ロック**発生前**の turn-in 直後）。この超過を
+ロック前に検知して先に絞れば、そもそもロックしない可能性を示唆していた。
+
+**しかし全周でのゲートは 15/27 赤（11a）**。失敗は `level=0.7` と `level=0.9` の両方、
+**この節で診断したのとは別の s（3363〜3367）**に集中し、うち 1 本は `s=3366.9` で
+`t=-22.236 m`（PDC-12 revert 時の最悪 -10 m を大きく超える）。原因は「本ラウンド開始時」節の
+`DIAGTMP_YAWLOAD` フルラップ調査で既に兆候が出ていた: `brake_raw > 0.05` の間だけに絞っても、
+**トレイルブレーキングが効く区間ならどこでも実横 G は `kappa_traj` を系統的に超える**
+（s=1407・1439・1798・3206〜3254・3274 などで ratio 1.2〜3+ を確認済み）。トレイルブレーキング
+とは「まだヨーが追いつく前に先に横 G が立ち上がる」操作そのものであり、**この現象はヘアピンに
+限らずクリーンな進入全般で起きる正常な過渡**。瞬時値ベースの反応的キャップに実横 G を使う限り、
+信号の質（`r/v` か `r+beta_dot` か 有限差分の真値か）を変えても同じ形で壊れる。
+
+**結論: 瞬時の実横加速度は `brake_lock_cap` の入力として使えない**（2 種類の信号で 2 回とも
+広範囲の 11a 破壊を確認。恣意的な打ち切りではなく、物理的に同じ壁に 2 回当たった）。
+
+### 実装・検証・完全 revert の記録
+
+```
+crates/sim-driver/src/perception.rs   PerceivedSelf::lateral_g 追加 + zeroed() 更新
+crates/sim-driver/src/driver.rs       Driver::prev_velocity 追加、assemble_truth を &mut self 化、
+                                       lateral_g を tick 間有限差分で計算
+crates/sim-driver/src/controller.rs   load_curvature_for_brake() 新設、brake_lock_cap 呼び出しに適用
+crates/sim-core/tests/world_ai.rs     一時計装（diagtmp_yawload_survey 等）。全て revert 済み
+```
+
+```
+cargo fmt --all -- --check                             → clean
+cargo clippy --workspace --all-targets -- -D warnings  → 0
+cargo test --workspace --release（試行 2 適用時）        → 19 passed / 7 failed / 1 ignored
+  失敗: t_core_ai_11a（15/27）・t_core_ai_11b（アサーション変更なしのため 11a 依存で連鎖）・
+  t_ai_05r・t_ai_06r・t_core_ai_03・t_drv_02r・t_drv_04r（すべて brake_lock_cap 変更の波及）
+revert 後（本節の最終状態）:
+  git status --porcelain                               → 空
+  grep -rni diagtmp crates/                             → 0 件
+  cargo test --workspace --release                      → 194 passed / 0 failed / 0 ignored（baseline）
+```
+
+### 次の判断: F-6/F-7 は「瞬時反応キャップの改良」では解けない。Architect 裁定へ差し戻す
+
+2 ラウンド・2 種類の信号（近似 `r/v`・真値の有限差分横 G）で同じ壁（トレイルブレーキング中は
+実横 G が計画曲率を系統的に超えるのが正常）に当たった。次に検討する価値があるのは**瞬時値の
+反応的キャップではない**設計、例えば:
+
+- (a) `brake_lock_cap` の推定を「その場の瞬時値」ではなく「**このコーナーの計画された進入プロファイル**
+  （`SpeedProfile`/`Trajectory` が既に知っている、そのコーナーの設計曲率・設計進入速度）」に基づかせる
+  ことで、trail-braking の正常な過渡を「異常な超過」と誤検知しない。
+- (b) 前節で判明した「split（内外輪配分）だけが実測とズレる」という所見を活かし、**Fz の全体量は
+  現行のまま・配分（`d_lat_f`）だけを別の根拠**（例えばロール角速度・ロール加算の動特性）で
+  補正する、より狭いスコープの修正。
+- (c) F-6（ヘアピン頂点 7 m 遅れ）を先に解消する（F-7 の起点である「ライン遅れによる大きな
+  初期逸脱」自体を減らせば、ロックに頼らずとも収まる可能性がある）。
+- (d) 現状（F-7 は自力復帰 12.6 s、F-8 は 3/32、いずれも `t_core_ai_11b`/`t_core_ai_12` の
+  受け入れ条件外）を受容し、この設計変更は見送る。
+
+いずれも Architect 決裁事項（(a)(b) は物理アーキテクチャ変更・(c) は別スコープの作業・(d) は
+受容判断）。次の実装ラウンドの前に、上記のどれを選ぶか、または新しい方向性を示す仕様が要る。
+
+### ゲート（最終状態・変更なし）
+
+```
+git status --porcelain                                 → 空
+grep -rni diagtmp crates/                               → 0 件
+cargo fmt --all -- --check                              → clean
+cargo clippy --workspace --all-targets -- -D warnings   → 0
+cargo test --workspace --release                        → 194 passed / 0 failed / 0 ignored（baseline）
+```
