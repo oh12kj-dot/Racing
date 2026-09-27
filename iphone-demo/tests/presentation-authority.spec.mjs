@@ -1,4 +1,12 @@
 import {test,expect} from '@playwright/test';
+import {autoCameraMode} from '../src/presentation/camera.js';
+
+test('VIS/AUTO: presentation camera choice is deterministic and never touches race authority',()=>{
+  const first=Array.from({length:48},(_,slot)=>autoCameraMode(slot,slot%24));
+  const second=Array.from({length:48},(_,slot)=>autoCameraMode(slot,slot%24));
+  expect(second).toEqual(first);
+  for(const mode of first)expect(['TV','FOLLOW']).toContain(mode);
+});
 
 test('VIS/AUTH: rendered car orientation follows authoritative physical yaw only',async({page})=>{
   await page.goto('/iphone-demo/index.html?runtimeTest=1',{waitUntil:'domcontentloaded'});
