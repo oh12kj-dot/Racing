@@ -2,6 +2,7 @@ const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const AERO_DAMAGE_EFFECT_THRESHOLD=.15;
 export const POWERTRAIN_DAMAGE_EFFECT_THRESHOLD=.15;
 export const STEERING_DAMAGE_EFFECT_THRESHOLD=.15;
+export const BRAKE_DAMAGE_EFFECT_THRESHOLD=.15;
 
 export const COMPONENT_DAMAGE_KEYS=Object.freeze(['aero','powertrain','steering','brakes']);
 
@@ -55,6 +56,11 @@ export function steeringDamageExcess(incident={}){
   return Math.max(0,damage-STEERING_DAMAGE_EFFECT_THRESHOLD);
 }
 
+export function brakeDamageExcess(incident={}){
+  const damage=clamp(Number(incident.componentDamage?.brakes)||0,0,1);
+  return Math.max(0,damage-BRAKE_DAMAGE_EFFECT_THRESHOLD);
+}
+
 export function componentPerformanceFactors(incident={}){
   const legacy=clamp(Number(incident.damage)||0,0,1);
   const aeroDamage=clamp(Number(incident.componentDamage?.aero)||0,0,1);
@@ -81,13 +87,16 @@ export function componentPerformanceFactors(incident={}){
   const legacySteering=clamp(1-legacy*.28,.65,1);
   const steering=clamp(legacySteering-steeringDamageExcess(incident)*.22,.50,1);
 
-  // Brakes remain on the proven aggregate envelope until introduced with their
-  // own dedicated braking-distance and long-run regression coverage.
+  // Legacy aggregate damage never reduced brake authority. Preserve that proven
+  // envelope for routine contact, then let material brake damage reduce the one
+  // factor shared by actual braking and the race braking-distance predictor.
+  const brake=clamp(1-brakeDamageExcess(incident)*.28,.65,1);
+
   return{
     aero,
     drive,
     steering,
-    brake:1,
+    brake,
     top:clamp(1-legacy*.10,.78,1),
     drag
   };

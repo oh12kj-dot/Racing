@@ -186,3 +186,38 @@ test('DMG-17: steering component penalty is monotonic above the material-damage 
   const severe=incident();severe.damage=.30;severe.componentDamage.steering=.75;
   expect(factorsFor(severe).steering).toBeLessThan(factorsFor(moderate).steering);
 });
+
+test('DMG-18: routine brake damage preserves the legacy full brake authority',()=>{
+  const detailed=incident();detailed.damage=.25;detailed.componentDamage.brakes=.14;
+  const legacy=incident();legacy.damage=.25;
+  expect(factorsFor(detailed).brake).toBeCloseTo(factorsFor(legacy).brake,12);
+  expect(factorsFor(detailed).brake).toBe(1);
+});
+
+test('DMG-19: material brake damage reduces shared brake authority without changing unrelated channels',()=>{
+  const detailed=incident();detailed.damage=.30;detailed.componentDamage.brakes=.50;
+  const legacy=incident();legacy.damage=.30;
+  const detailedFactors=factorsFor(detailed),legacyFactors=factorsFor(legacy);
+  expect(detailedFactors.brake).toBeLessThan(legacyFactors.brake);
+  expect(detailedFactors.aero).toBeCloseTo(legacyFactors.aero,12);
+  expect(detailedFactors.drag).toBeCloseTo(legacyFactors.drag,12);
+  expect(detailedFactors.drive).toBeCloseTo(legacyFactors.drive,12);
+  expect(detailedFactors.steering).toBeCloseTo(legacyFactors.steering,12);
+  expect(detailedFactors.top).toBeCloseTo(legacyFactors.top,12);
+});
+
+test('DMG-20: severe lateral impact adds more brake penalty than equal-severity longitudinal impact',()=>{
+  const longitudinal=incident(),longHit=collision({longitudinal:1,impactSpeed:80});
+  const lateral=incident(),latHit=collision({lateral:1,impactSpeed:80});
+  applyImpactComponentDamage(longitudinal,80,longHit.contact,longHit.response);
+  applyImpactComponentDamage(lateral,80,latHit.contact,latHit.response);
+
+  expect(longitudinal.damage).toBeCloseTo(lateral.damage,12);
+  expect(factorsFor(lateral).brake).toBeLessThan(factorsFor(longitudinal).brake);
+});
+
+test('DMG-21: brake component penalty is monotonic above the material-damage threshold',()=>{
+  const moderate=incident();moderate.damage=.30;moderate.componentDamage.brakes=.35;
+  const severe=incident();severe.damage=.30;severe.componentDamage.brakes=.75;
+  expect(factorsFor(severe).brake).toBeLessThan(factorsFor(moderate).brake);
+});
