@@ -117,7 +117,7 @@ export function createUI(root,callbacks={}){
     setText(tele.state,`L${displayLap} · ${row?.status??car.pit.phase} · ${car.racecraft.state} · PITS ${row?.pitStops??0}`);
     setText(tele.tyre,`TYRE ${fmtCompound(sys.tyreCompound)} · WEAR ${Math.round(sys.tyreWear*100)}% · ${Math.round(sys.tyreTemp)}°C · WET ${Math.round((weather?.wetness??0)*100)}%`);
     setText(tele.fuel,`FUEL ${sys.fuel.toFixed(1)}L · ${reliability}`);
-    tele.energy.hidden=!energy;if(energy)setText(tele.energy,energy);
+    tele.energy.hidden=!energy;setText(tele.energy,energy);
     setText(tele.laps,`CUR ${fmtTime(row?.currentLapTime)} · LAST ${fmtTime(row?.lastLap)} · BEST ${fmtTime(row?.bestLap)}`);
   }
 
