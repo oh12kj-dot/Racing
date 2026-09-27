@@ -1,4 +1,5 @@
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const AERO_DAMAGE_EFFECT_THRESHOLD=.15;
 
 export const COMPONENT_DAMAGE_KEYS=Object.freeze(['aero','powertrain','steering','brakes']);
 
@@ -44,17 +45,27 @@ export function applyImpactComponentDamage(incident,deltaV,contact,response){
 
 export function componentPerformanceFactors(incident={}){
   const legacy=clamp(Number(incident.damage)||0,0,1);
-  // Detailed component state is authoritative for damage identity and hashing,
-  // but remains performance-neutral in this foundation step. Keep the proven
-  // aggregate envelope unchanged while component channels are introduced and
-  // validated individually in later work.
+  const aeroDamage=clamp(Number(incident.componentDamage?.aero)||0,0,1);
+
+  // Keep the proven aggregate aero envelope for routine contact. Component-
+  // specific aero becomes an additional degradation only after material aero
+  // damage has accumulated, preventing small direction changes from reshaping
+  // the whole race while still making severe front/body damage distinct.
+  const aeroExcess=Math.max(0,aeroDamage-AERO_DAMAGE_EFFECT_THRESHOLD);
+  const legacyAero=clamp(1-legacy*.32,.68,1);
+  const legacyDrag=1+legacy*.22;
+  const aero=clamp(legacyAero-aeroExcess*.30,.55,1);
+  const drag=legacyDrag+aeroExcess*.18;
+
+  // Remaining channels stay on the proven aggregate envelope until introduced
+  // one at a time with dedicated long-run regression coverage.
   return{
-    aero:clamp(1-legacy*.32,.68,1),
+    aero,
     drive:clamp(1-legacy*.22,.35,1),
     steering:clamp(1-legacy*.28,.65,1),
     brake:1,
     top:clamp(1-legacy*.10,.78,1),
-    drag:1+legacy*.22
+    drag
   };
 }
 
