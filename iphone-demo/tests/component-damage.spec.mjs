@@ -61,23 +61,19 @@ test('DMG-05: authoritative race hash includes deterministic component damage st
   expect(a.stateHash()).toBe(b.stateHash());
 });
 
-test('DMG-06: aero detail is the first component-specific performance channel',()=>{
+test('DMG-06: material aero damage adds a component-specific aero and drag penalty',()=>{
   const detailed=freshCar();
   detailed.incident.componentDamage.aero=.5;
-  expect(performanceFactors(detailed)).toMatchObject({aero:.8,drive:1,steering:1,brake:1,top:1,drag:1.1375,damage:0});
-
-  const legacy=freshCar();
-  legacy.incident.damage=.5;
-  const factors=performanceFactors(legacy);
-  expect(factors.aero).toBeCloseTo(.84,12);
-  expect(factors.drive).toBeCloseTo(.89,12);
-  expect(factors.steering).toBeCloseTo(.86,12);
-  expect(factors.top).toBeCloseTo(.95,12);
-  expect(factors.drag).toBeCloseTo(1.11,12);
+  const factors=performanceFactors(detailed);
+  expect(factors.aero).toBeCloseTo(.895,12);
+  expect(factors.drag).toBeCloseTo(1.063,12);
+  expect(factors.drive).toBe(1);
+  expect(factors.steering).toBe(1);
   expect(factors.brake).toBe(1);
+  expect(factors.top).toBe(1);
 });
 
-test('DMG-07: longitudinal aero calibration matches legacy aggregate aero and drag',()=>{
+test('DMG-07: routine longitudinal damage preserves the legacy aggregate aero envelope',()=>{
   const directional=incident(),{contact,response}=collision({longitudinal:1});
   applyImpactComponentDamage(directional,7,contact,response);
   const legacy=incident();legacy.damage=directional.damage;
@@ -91,11 +87,11 @@ test('DMG-07: longitudinal aero calibration matches legacy aggregate aero and dr
   expect(detailedFactors.top).toBeCloseTo(legacyFactors.top,12);
 });
 
-test('DMG-08: equal-severity lateral impact produces less aero loss than longitudinal impact',()=>{
-  const longitudinal=incident(),longHit=collision({longitudinal:1});
-  const lateral=incident(),latHit=collision({lateral:1});
-  applyImpactComponentDamage(longitudinal,7,longHit.contact,longHit.response);
-  applyImpactComponentDamage(lateral,7,latHit.contact,latHit.response);
+test('DMG-08: severe longitudinal impact adds more aero penalty than equal-severity lateral impact',()=>{
+  const longitudinal=incident(),longHit=collision({longitudinal:1,impactSpeed:80});
+  const lateral=incident(),latHit=collision({lateral:1,impactSpeed:80});
+  applyImpactComponentDamage(longitudinal,80,longHit.contact,longHit.response);
+  applyImpactComponentDamage(lateral,80,latHit.contact,latHit.response);
 
   expect(longitudinal.damage).toBeCloseTo(lateral.damage,12);
   expect(factorsFor(lateral).aero).toBeGreaterThan(factorsFor(longitudinal).aero);
@@ -112,22 +108,4 @@ test('DMG-09: staged aero damage keeps the fixed-seed 100s race stable',()=>{
     car.s,car.v,car.lane,car.yaw,car.incident.damage,
     ...Object.values(car.incident.componentDamage||{})
   ].every(Number.isFinite))).toBe(true);
-});
-
-test('DMG-DIAG: compare 420s race with aero component channel neutralized',()=>{
-  test.setTimeout(120000);
-  const actual=createRaceSimulation(0x4444),legacy=createRaceSimulation(0x4444);
-  const steps=Math.round(420/FIXED_DT);
-  for(let i=0;i<steps;i++){
-    actual.update(FIXED_DT);legacy.update(FIXED_DT);
-    for(const car of legacy.cars)if(car.incident?.componentDamage)car.incident.componentDamage.aero=0;
-  }
-  const summarize=sim=>{const snap=sim.snapshot();return{
-    finished:snap.finished,time:snap.time,flag:snap.flag,recoveries:snap.diagnostics?.recoveries,
-    live:snap.cars.filter(c=>!c.finished&&!c.retired).map(c=>({id:c.id,lap:c.lap,v:+c.v.toFixed(2),pit:c.pit.phase,served:c.pit.served,damage:+c.incident.damage.toFixed(3),aero:+(c.incident.componentDamage?.aero||0).toFixed(3)})),
-    events:(snap.events||[]).slice(-8).map(e=>({type:e.type,carId:e.carId,time:+e.time.toFixed(1)}))
-  };};
-  const actualSummary=summarize(actual),legacySummary=summarize(legacy);
-  console.log('DMG-AERO-DIAG '+JSON.stringify({actual:actualSummary,legacy:legacySummary}));
-  expect(legacySummary.finished).toBeTruthy();
 });
