@@ -62,6 +62,56 @@ test('iPhone WebKit lifecycle recovers after WebGL context interruption boundary
   expect(x.lost.paused).toBeTruthy();expect(x.lost.contextLosses).toBeGreaterThanOrEqual(1);expect(x.restored.paused).toBeFalsy();expect(x.restored.contextRestores).toBeGreaterThanOrEqual(1);
 });
 
+test('iPhone WebKit keeps independent pause reasons isolated',async({page})=>{
+  await boot(page);
+  const x=await page.evaluate(()=>{
+    const L=window.__RACING_LIFECYCLE__;
+    L.pauseForTest();L.contextLostForTest();
+    const both=L.diagnostics();
+    L.contextRestoredForTest();
+    const testOnly=L.diagnostics();
+    L.resumeForTest();
+    const clear=L.diagnostics();
+    return{both,testOnly,clear};
+  });
+  expect(x.both.pauseReasons).toEqual(['test','webgl-context-lost']);
+  expect(x.testOnly.paused).toBeTruthy();
+  expect(x.testOnly.pauseReasons).toEqual(['test']);
+  expect(x.clear.paused).toBeFalsy();
+});
+
+test('iPhone WebKit restarts the animation-loop owner after pagehide/pageshow restoration',async({page})=>{
+  await boot(page);
+  const x=await page.evaluate(async()=>{
+    const L=window.__RACING_LIFECYCLE__;
+    window.dispatchEvent(new PageTransitionEvent('pagehide',{persisted:true}));
+    const hidden=L.diagnostics();
+    window.dispatchEvent(new PageTransitionEvent('pageshow',{persisted:true}));
+    await new Promise(resolve=>requestAnimationFrame(()=>resolve()));
+    const shown=L.diagnostics();
+    return{hidden,shown};
+  });
+  expect(x.hidden.paused).toBeTruthy();
+  expect(x.hidden.pauseReasons).toContain('pagehide');
+  expect(x.hidden.rafActive).toBeFalsy();
+  expect(x.shown.paused).toBeFalsy();
+  expect(x.shown.pauseReasons).not.toContain('pagehide');
+  expect(x.shown.rafActive).toBeTruthy();
+});
+
+test('runtime zero-duration test step is observational and does not advance simulation',async({page})=>{
+  await boot(page);
+  const x=await page.evaluate(()=>{
+    const tick=window.__RACING_TEST_TICK__;
+    const before=tick(0);
+    const after=tick(0);
+    return{before,after};
+  });
+  expect(x.after.idx).toBe(x.before.idx);
+  expect(x.after.time).toBe(x.before.time);
+  expect(x.after.stateHash).toBe(x.before.stateHash);
+});
+
 test('iPhone hybrid telemetry stays inside the safe HUD area in portrait and landscape',async({page})=>{
   await boot(page);
   await page.evaluate(()=>window.__RACING_LIFECYCLE__.pauseForTest());
@@ -84,6 +134,16 @@ test('iPhone hybrid telemetry stays inside the safe HUD area in portrait and lan
   await page.waitForTimeout(100);
   await expectTelemetryInViewport(page);
   await expectEnergyTelemetryReadable(page);
+});
+
+test('small iPhone-sized portrait and landscape keep telemetry clear of controls',async({page})=>{
+  await boot(page);
+  await page.setViewportSize({width:320,height:568});
+  await page.waitForTimeout(80);
+  await expectTelemetryInViewport(page);
+  await page.setViewportSize({width:568,height:320});
+  await page.waitForTimeout(80);
+  await expectTelemetryInViewport(page);
 });
 
 test('iPhone landscape resize updates camera aspect and keeps 24 car meshes',async({page})=>{
