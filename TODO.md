@@ -2807,3 +2807,366 @@ fmt clean / clippy 0 / `cargo test --workspace --release` **194 passed / 0 faile
 
 - F-7（ミス制動で前輪ロックが自己保持）: PDC-12 のロック解放を「11a 27/27」条件付きで再評価（A+B で 11a の余裕が変わったので第 4 ラウンドの 13/27 赤は再計測が要る）。
 - F-6（ヘアピン頂点で基準線から 7 m 遅れ）は今回の起点の上流。残す。F-8（`t_core_ai_12`）は未着手。
+
+---
+
+## TASK-2-4 Phase 4 — F-7 再評価: PDC-12（PDC-14 コード上）は 11a を悪化させる・BLOCKED BY ARCHITECTURE（Sonnet 5・2026-09-26）
+
+**要約**: 「次」の指示どおり PDC-12（自車ロックの安定化経路での知覚 → `brake_lock_cap` の解放）を
+PDC-14 land 済みの本コミット（`ca5b9de`）に実装し、条件どおり単独計測した。**11a が 27/27 →
+21/27（6 件赤）に悪化したため land せず revert**（PDC-12 の承認条件 3「11a 27/27・0 m」を満たさない）。
+
+### 実装内容（計測後に全て revert 済み。`git diff --stat` = 空）
+
+- `perception.rs`: `PerceivedSelf` に `wheel_lock: f64`（前軸 2 輪の `max(-slip_ratio, 0)` の最大値）を追加。
+  `zeroed()` は `0.0`。予見経路（Planner）には渡さず、安定化経路（`stabilise`）のみが読む形にした
+  （凍結テストは `..PerceivedSelf::zeroed()` 経由のため無改変で通過）。
+- `driver.rs::assemble_truth`: 上記 `wheel_lock` を前輪 2 輪の `slip_ratio` から計算。
+- `controller.rs`: 第 4 ラウンドと同じパラメータ（検知 `0.30`・持続 `3 tick`・解除ヒステリシス
+  `0.12`・乗率 `0.6`・再踏み込みレート `1.5/s`）で `brake_lock_cap` の出力に乗率を掛けた。
+  ロック検知中は乗率を即座に `0.6` へ落とし（「抜く」は速い）、解除後は `move_towards` で
+  `1.5/s` かけて `1.0` へ戻す（「再踏み」は人間の反応速度）。`mistake_brake_bias` はこの上限の
+  **後**に加算（PDC-12 条件どおり、ミスの打ち消しにはしていない）。
+
+### 計測（`cargo test --workspace --release`）
+
+```
+t_core_ai_11a_model_sweep_mistake_free: 6/27 runs failed（全て level=0.9・error_rate=0）
+  level=0.9 consistency=0.5 seed=1/2/3, consistency=1 seed=1/2/3
+  全件 s≈3358.7〜3359.2（ヘアピン出口・F-6 と同じ区間）で t=-10.0 前後 not in [-7.0, +7.0]
+  （outside 2.95〜3.10 m、3 episodes/run）
+```
+
+他 4 件の失敗（`t_ai_05r` 単調性・`t_ai_06r`／`t_drv_04r` の周回未達・`t_core_ai_03` の T7 縁石割れ
+0.035 m）は**PDC-12 revert 後の baseline 再実行（`cargo test --workspace --release`）では全て緑**
+（`world_ai.rs` 26/26 passed・194 passed / 0 failed 全体）に戻ることを確認した。つまりこの 4 件も
+今回の PDC-12 実装が原因だった（`brake_release_factor` の巻き戻し中に `move_towards` の過渡が
+`long_mode`/ギア判定に影響した可能性があるが未追跡・revert 済みのため実害なし）。**11a を含む
+全 5 件が今回の変更に起因し、baseline には残らない**。
+
+### 診断（なぜ悪化したか。追加計装はせず、既存ログと F-6/F-8 の記録から推定）
+
+11a は `error_rate=0`（ミス無し）だが、`level=0.9`（下手なドライバー相当の低スキル）は
+`cornering_skill` / `braking_skill` が低いためヘアピン進入の制動配分・トレイルブレーキングの残し
+（`TRAIL_MIN`）が他レベルより粗く、**ミスが無くても** `brake_lock_cap` ぎりぎりまで踏む。
+F-6（ヘアピン頂点で基準線から 7 m 遅れる系統誤差）によりこの領域では既に横方向の余裕が薄い
+（PDC-14 の計測表 `A+B+D` 行でも held-out err 0.5 が 2/90 残るのと同じ場所）。ここで
+`brake_lock_cap` を 3 tick 持続の実ロックで検知して 0.6 倍に「抜く」と、**その 0.6 秒弱の減速不足で
+出口速度が上がり**、ヘアピン出口のヨー限界に対し F-6 の遅れと重なって外へ出る — F-7 が直そうとした
+「ロック自己保持からの復帰遅れ」と同じ機序を、**ロック無しの通常走行側**で新たに作ってしまう。
+これは第 4 ラウンドの記録（`H3 全部 + PDC-12` で 11/27 → 13/27 赤・同じくヘアピン系）と整合し、
+「A+B+D で 11a の余裕が変わったので再計測が要る」という「次」の予想どおり **依然として PDC-12 単体では
+11a を壊す**ことが確認された。
+
+### BLOCKED BY ARCHITECTURE
+
+PDC-12 の承認条件（`TODO.md` 該当節・条件 3「11a 27/27・0 m」）を満たさないため、本ラウンドでは
+land しない。F-7（前輪ロック自己保持からの復帰遅れ・held-out 2/90）は未解決のまま残る。
+
+次の設計判断は Architect 決裁事項:
+- (a) PDC-12 の適用条件をさらに絞る（例: `level` の低いドライバーでは無効化する・`within_limits`
+  が既に false のときだけ有効にする等）。ただし「区間依存でミスを抑える」「`error_rate` で分岐する」
+  は PDC-12 自身が禁止しているため、`level`（ドライバー個体差）で分岐してよいかは仕様判断が要る。
+- (b) F-6（ヘアピン頂点 7 m 遅れ）を先に解消し、その後で PDC-12 を再評価する
+  （F-7 の起点はロックからの復帰だが、11a を壊す経路は F-6 の残る余裕不足と重なっている）。
+- (c) PDC-12 を諦め、F-7（held-out 2/90・自力復帰 12.6 s）は現状の「10 s 超だが自力で戻る」を
+  許容範囲として受け入れる（`t_core_ai_11b` の受け入れ条件には入っていないため、11b 自体は
+  影響を受けない）。
+
+いずれのラウンドで再挑戦する場合も **11a の 27/27 を毎回フルスイープで確認すること**
+（本ラウンドでは `level=0.9` の 6 本だけが壊れ、他 21 本は無傷だったため、部分実行では見逃しうる）。
+
+### ゲート（変更なし・確認のみ。実装は revert 済み）
+
+```
+git diff --stat crates/                                → 空
+cargo fmt --all -- --check                             → clean
+cargo clippy --workspace --all-targets -- -D warnings  → 0
+cargo test --workspace --release                       → 194 passed / 0 failed / 0 ignored（baseline どおり）
+```
+
+---
+
+## TASK-2-4 Phase 4a — F-8 再現テスト `t_core_ai_12` を追加・PDC-14 後は severity 大幅低下（Sonnet 5・2026-09-26）
+
+**要約**: 未着手だった F-8 再現テスト（`NEXT SONNET TASK — Phase 4a` 項目 1）を `#[ignore = "F-8"]`
+として追加し、PDC-14 land 後のコードで実測した。**F-8 発見当時（1000 s・16 seed・consistency 0.3/0.6
+それぞれで 5/16・4/16 が「二度と戻らない」）と比べ、本ラウンド（1500 s・consistency 0.3/0.6 × 16 seed
+= 32 走行）は 3/32 失敗のみで、しかも 3 件とも「10 周は完走したが 1 回の逸脱区間が `REJOIN_MAX_S`
+（10 s）を超えた」（worst outside 29〜35 m）であり、F-8 が報告した「t = −519〜−695 m で永久旋回」の
+再現は 0 件だった。** PDC-14（トラクション上限の実ヨー負荷化）は F-8 を狙った修正ではないが、
+同じ「ヘアピン出口のスピン連鎖」機序を減らしたことで F-8 の頻度・深刻度も下がったとみられる。
+
+### 実装（land 済み・テストのみ）
+
+- `crates/sim-core/tests/world_ai.rs`:
+  - `run_solo_model_laps` を `run_solo_model_laps_budget(seed, model, laps, max_ticks)` の
+    薄いラッパへ分割（既存呼び出し元は `max_ticks=20_000` で完全に無変更・11a/11b への影響ゼロ）。
+  - `t_core_ai_12_no_runaway_after_mistakes`（`#[ignore = "F-8"]`）を追加。仕様どおり
+    `driver_model(0.5)` / `error_rate=0.6` / `reaction_time=0.25` /
+    `consistency ∈ {0.3, 0.6}` × seed `0x0106, 0x1106, …, 0xF106`（16 本・等間隔）×
+    10 周・budget 90 000 tick（1500 s）。判定は 11b と同じ「全走行完走 + 1 エピソード
+    `REJOIN_MAX_S` 以内」。
+- `crates/**/src/**`: 無変更（`git diff --stat crates/*/src` = 空）。
+
+### 実測（`cargo test --release -p sim-core --test world_ai t_core_ai_12... -- --ignored --nocapture`）
+
+```
+T-CORE-AI-12 (F-8): 3/32 runs failed（全て consistency=0.3。consistency=0.6 は 16/16 緑）
+  seed=0x3106: s=3311〜3352（ヘアピン）lap=1、worst outside 29.293 m、10 周完走
+  seed=0x9106: s=1507〜1607（T3 系。ヘアピンではない）lap=5、worst outside 29.396 m、10 周完走
+  seed=0xE106: s=3327〜3394（ヘアピン）lap=8、worst outside 35.389 m、10 周完走
+実行時間: 32 走行・102 s（release）。
+```
+
+3 件とも「エピソード開始は軽微（0.04〜0.12 m のコリドー超過）→ 数百 tick 後に急拡大（3〜28 m）
+→ 10 s 以内に収まらない」という同じ形で、F-6/F-7 が起点のヘアピン系（2 件）・T3 系（1 件）の
+**既知の系統誤差の裾**に見える。F-8 発見時の「射影が遠方に張り付いてフルロック周回」という
+仮説どおりの永久旋回は、少なくともこの 32 走行では 1 件も再現しなかった。
+
+### 結論・次の判断（Architect 決裁事項）
+
+F-8 は PDC-14 により重大度が「二度と戻らない（数十 seed 中 過半数）」から「まれに 10 s 超の
+長い復帰（32 走行中 3 件・全て consistency=0.3）」まで縮小した。当初の Phase 4a 仕様が想定した
+「1 s ごとのトレース診断」（項目 2）は、当時の永久旋回（t=−519〜−695 m）を前提にしていたが、
+今回の 3 件はいずれも有限時間で自力回復しており、同じ診断の価値がどれだけ残るかは不明。
+次のいずれかを Architect が選ぶ:
+- (a) `t_core_ai_12` の `#[ignore]` を解除して 32/32 を要求する（F-7/F-6 の残り修正が波及効果で
+  この 3 件も解消するか、Phase 4b で確認する）。
+- (b) 現状の 3/32（consistency=0.3 のみ・全て有限時間で復帰）を「11b の受け入れ条件外」として
+  記録に留め、`#[ignore = "F-8"]` のまま次の優先度（F-6/F-7 の PDC 裁定）へ進む。
+- (c) 3 件のうち代表 1 本（`seed=0x3106`）だけ元仕様どおりの 1 s トレース診断を行い、
+  F-6/F-7 と同じ機序かどうかだけ確認してから (a)/(b) を決める。
+
+### ゲート（本ラウンド・Sonnet 実行）
+
+```
+cargo fmt --all -- --check                             → clean
+cargo clippy --workspace --all-targets -- -D warnings  → 0
+cargo test --workspace --release                       → 195 passed / 0 failed / 1 ignored
+  （+1 = t_core_ai_12。既存 194 は無変更・11a/11b とも無傷）
+cargo test --release -p sim-core --test world_ai t_core_ai_12... -- --ignored → 3/32 failed（上記）
+git diff --stat crates/*/src                           → 空（テストファイルのみ変更）
+```
+
+---
+
+## TASK-2-4 Phase 4a — F-8 残り 3/32 のトレース診断: F-6/F-7 と同じ機序（Sonnet 5・2026-09-26）
+
+**要約**: 上記 (c) を実施。`seed=0x3106・consistency=0.3` の失敗エピソード（`s≈3311.2・lap=1`）を
+一時計装（`world_ai.rs` に `#[ignore]` テストを追加 → 1 s 間隔でトレース → 報告後に削除。
+`grep -rni diagtmp crates/` = 0・`git diff --stat` = 空で commit）で 1 s 間隔トレースした。
+**結論: F-8 の残り 3/32 は新しい機序ではなく、F-6（ヘアピン頂点のライン遅れ）/ F-7 と同じ
+「ヘアピン出口で速度を失いながら大きな `heading_error` を抱えたままフルロック操舵で低速スピン
+復帰する」既知の系統誤差の裾である。** F-8 発見時の仮説（射影が遠方で張り付く）は不成立。
+
+### トレース実測（`s=3311.2〜3455.6`・`t=174〜188 s`。抜粋）
+
+```
+t=174s s=3321.1 t=-17.11 he=-0.591 steer=-1.00 throttle=0.00 speed=19.08  ← 破断直後、既に t=-17 m
+t=176s s=3330.8 t=-33.54 he=-0.479 steer=-1.00 throttle=0.00 speed=11.18  ← 最深部
+t=180s s=3340.7 t=-26.81 he=+1.109 steer=+0.05 throttle=0.22 speed= 7.47  ← heading_error が反転（+63°）
+t=184s s=3362.1 t=-4.49  he=+0.512 steer=+0.19 throttle=0.47 speed=13.37  ← コリドー復帰
+t=188s s=3455.6 t=+2.53  he=+0.002 steer=-0.05 throttle=0.57 speed=30.91  ← 通常走行へ復帰
+```
+
+`heading_error` が `-0.59 rad → +1.11 rad` と大きく振れる（スピンに近い挙動）・`steer` が `-1.0`
+（フルロック）に張り付く・その間 `throttle ≈ 0`（駆動していない）という組み合わせは、PDC-14 の
+診断（`TODO.md` Phase 4「因果連鎖」節）が報告したヘアピン出口のヨー反転パターンと同じ形であり、
+F-8 発見当時の「最近傍射影が遠方の s に張り付く」仮説を裏付ける挙動（`aim_s`/`s` が飛ぶ・止まる）は
+見られなかった（`aim_s` は毎 tick 前進し続けている）。低速域（7〜13 m/s）でヨーが収まるまで
+物理的に時間がかかるだけで、**F-6（進入時点で既に基準線から遅れている）が生む大きな初期逸脱を、
+F-7 と同じ低速スピン復帰の遅さで 10 s の閾値ぎりぎりまで長引かせている**、という合成。
+
+### 判断: (b) を採用 — 新規 PDC は起票せず、F-6/F-7 の裁定を待つ
+
+F-8 の残り 3/32 に固有の修正は不要と判断する。F-6（ライン遅れ）または F-7（ロック解放／低速
+復帰の速さ）のどちらかが解消されれば、この 3 件も副次的に解消される可能性が高い（新しい仮説・
+新しい定数は不要）。`t_core_ai_12` は `#[ignore = "F-8"]` のまま残し、Phase 4b で F-6/F-7 の
+修正が land した際に再測定する。
+
+### ゲート（変更なし・確認のみ。一時計装は削除済み）
+
+```
+grep -rni diagtmp crates/                              → 0 件
+git diff --stat                                        → 空（診断のみ・commit なし）
+cargo fmt --all -- --check                             → clean
+cargo clippy --workspace --all-targets -- -D warnings  → 0
+cargo test --workspace --release                       → 195 passed / 0 failed / 1 ignored（不変）
+```
+
+---
+
+## TASK-2-4 Phase 4a — F-7 分解: `brake_lock_cap` の推定 Fz は実測より 25〜60% 過大（Sonnet 5・2026-09-26）
+
+**要約**: Phase 4a 項目 4（F-7 分解: `s 3290〜3315` の各輪 `slip_ratio`・`brake_lock_cap` の推定内輪
+荷重 vs 物理側の実荷重を tick 表で）を実施。**結論: `brake_lock_cap` の前輪内側（ヘアピン左折で
+FL）推定 Fz は、ロック中を通じて実測 Fz より 25〜60% 大きい。原因は PDC-14 が `traction_throttle_cap`
+で特定・修正したのと同じ欠陥クラス（横荷重推定に `kappa_traj`（計画曲率）を使い、実ヨーレート
+`r/v` を見ない）が `brake_lock_cap` にも残っていること。ただし PDC-14 の A 案自体が「制動上限に
+入れると 11a が壊れる」ことを既に確認済み（`TODO.md` PDC-14 節）であり、本ラウンドはその既知の
+制約を実測で裏付けただけで、新しい修正案は提示しない**。
+
+### 一時計装（診断後に完全 revert・`grep -rni diagtmp crates/` = 0・`git diff --stat` = 空）
+
+- `crates/sim-driver/src/controller.rs::brake_lock_cap`: 環境変数 `DIAGTMP_F7` ゲートで、収束後の
+  `b`・前輪内外の推定 Fz を `eprintln!`。
+- `crates/sim-core/tests/world_ai.rs`: `diagtmp_f7_trace_hairpin_entry`（`#[ignore]`）。
+  `driver_model(0.9)`・`consistency=1.0`・`error_rate=0.0`（クリーンな 1 周）で `s=3283〜3320`
+  の毎 tick、前輪 `slip_ratio`・実 `load`（`WheelState::load` = 物理側 Fz）・`brake` を記録。
+
+### トレース実測（`seed=1`。抜粋。FL = ヘアピン内輪、左カーブで `kappa_traj > 0`）
+
+```
+s=3301.09 brake=0.404 FL(sr=-1.000 fz=2605.8)   推定: b=0.426 fz_FL_est=3243.9   比 1.245
+s=3303.78 brake=0.376 FL(sr=-1.000 fz=2289.5)   推定: b=0.388 fz_FL_est=2982.0   比 1.303
+s=3304.83 brake=0.399 FL(sr=-1.000 fz=2117.9)   推定: b=0.445 fz_FL_est=3367.8   比 1.590 ← 最大乖離
+s=3308.55 brake=0.232 FL(sr=-1.000 fz=1934.5)   推定: b=0.000 fz_FL_est=1100.1   比 0.569 ← ロック末期は逆転
+```
+
+FL は `s=3301.09〜3311.76`（約 10.7 m・速度 20〜25 m/s で概算 0.45〜0.5 s）の間 `slip_ratio ≈ -1.000`
+に張り付き続ける。ロック区間の大半（`s≈3301〜3306`）で推定 Fz は実測の **1.25〜1.6 倍**。つまり
+`brake_lock_cap` は「まだ縦に踏める余地がある」と過大評価して `b`（許容 brake）を高く保ち続け、
+実際にはとうに飽和している内輪をロックさせ続ける。末期（`s≈3308.5` 以降）は逆に推定が実測を
+下回る局面もあるが、その時点では既に `b=0.000`（制動を完全に諦めている）ため実害はない。
+
+### 原因（PDC-14 と同型）
+
+`brake_lock_cap` の `lat_transfer_total = lat_force * cg_height`・`lat_force = mass·v²·kappa_traj` は
+**計画軌道の曲率**を使っており、トレイルブレーキング中の**実ヨーレート**（旋回の立ち上がり・
+車体の実際の横加速度 `v·r`）を見ない。PDC-14 の「因果連鎖」節が `traction_throttle_cap` について
+報告したのと同じ形の乖離で、ヘアピン進入の turn-in 過渡で実ヨーレートが定常旋回の見積もり
+（`v·kappa_traj`）を上回ると、実際の荷重移動は計画値より大きく（＝内輪 Fz は計画値より小さく）
+なる。今回の実測（1.25〜1.6 倍の過大評価）はこの機序と符号・オーダーとも整合する。
+
+### 判断: 新規 PDC は起票しない（既知の制約の確認のみ）
+
+PDC-14 節が既に記録済みのとおり、`load_curvature()` の横負荷見積もり改善（A 案）を制動上限にも
+適用すると **11a が全面赤化する**（ヘアピン進入の制動がヨーで削られ全車オーバーラン）。本ラウンドの
+実測はこの制約の物理的な理由（推定 Fz が実測を系統的に超過している構造）を裏付けたに留まり、
+「A 案を制動側にも安全に適用する方法」は本ラウンドでは見つけていない（`v·r` を直接使うと過渡の
+一瞬だけ横負荷が跳ね上がり、健全な走行でも `brake_lock_cap` が瞬間的に絞られてしまうため、
+`κ_traj` と `r/v` の単純な `max` では効きすぎる可能性がある — フィルタリングや遅延ブレンドなどの
+設計が要り、これは Sonnet の診断スコープを超える）。F-6/F-7 の PDC 裁定を Architect に委ねる。
+
+### ゲート（変更なし・確認のみ。一時計装は削除済み）
+
+```
+grep -rni diagtmp crates/                              → 0 件
+git diff --stat                                        → 空（診断のみ・commit なし）
+cargo fmt --all -- --check                             → clean
+cargo clippy --workspace --all-targets -- -D warnings  → 0
+cargo test --workspace --release                       → 195 passed / 0 failed / 1 ignored（不変）
+```
+
+---
+
+## TASK-2-4 Phase 4b — `brake_lock_cap` の実装再挑戦 → 2 案とも 11a 全面赤化・BLOCKED BY ARCHITECTURE（Sonnet 5・2026-09-26）
+
+**人間承認**: 「`brake_lock_cap` の負荷推定を再設計する」方針の実装着手を明示的に承認済み
+（実装 → 11a/11b/T-CORE-AI-12 で再検証 → land 前に報告、の条件付き）。
+
+**要約**: 前節「F-7 分解」の結論（`load_curvature`／`r/v` を制動側に使えば直る）は**訂正**する。
+より丁寧に検証したところ、ロックの起点 `s≈3301` では実は `r/v ≈ kappa_traj`（超過なし）であり、
+前節の「同じ欠陥クラス」という結論は誤りだった。真の原因を突き止めるため物理値を直接比較する
+方式で 2 回実装・検証したが、**いずれも `t_core_ai_11a` を大きく壊し（21/27 相当 → 12/27・15/27）、
+land しなかった**。得られた知見は重要なので以下に記録し、F-6/F-7 は Architect 裁定へ差し戻す。
+
+### 訂正: 前節「F-7 分解」の推定 Fz 過大は split（内外輪配分）の問題であって、負荷の全体量ではない
+
+`brake_lock_cap` 内で計測点ごとに前輪合計 Fz（推定 vs 実測）を突き合わせたところ、**前軸合計の
+推定値は実測とおおむね一致する**（例: s=3301.09 で推定 8290.2 N vs 実測 8245.4 N、誤差 0.5%）。
+乖離があるのは**内外輪への配分**（`d_lat_f` 項）で、s=3301.09 で実測に必要な `d_lat` は推定の
+約 1.7 倍、s=3304.83（ロック最深部）では約 2.1 倍。つまり `brake_lock_cap` の欠陥は「前軸全体の
+荷重をどれだけ見誤るか」ではなく「左右にどう配分するかを見誤る」ことに限定される。
+
+### 試行 1: `load_curvature`（`r/v`）を制動側にも使う → 却下（`r/v` はロック起点で超過していない）
+
+`s=3301.09` の実測: `kappa_traj=+0.0115`・`kappa_yaw(=r/v)=+0.0108`（**比 0.94 — kappa_traj の方が
+大きい**）。`s=3304.83`（ロック最深部）でも `kappa_yaw=+0.0074` に対し `kappa_traj=+0.0110`
+（比 0.67）。**この区間の実ロックは実ヨーレートの遅れでは説明できない** — PDC-14 の
+`traction_throttle_cap`（ヘアピン**出口**のスピン連鎖・ヨーレートが計画を大幅に超える）とは
+別の機序であり、前節の「同じ欠陥クラス」という速断は誤りだった。
+
+`beta_dot`（車体スリップ角の変化率。`K_CS_LEAD_S` の逆操舵リードで既に使っている量）を足した
+`kappa_ay = (r + beta_dot)/v` も試したが、`s=3304.83` 付近で `beta_dot` が大きく負に振れて
+`kappa_ay ≈ 0`（むしろ `kappa_traj` を大幅に下回る）になり、ちょうど乖離が最大の地点で無力化される。
+両方とも不採用。
+
+### 試行 2: 実横加速度の直接計測（ワールド速度の tick 間差分）→ 実装・11a で 15/27 赤・revert
+
+**設計**: `driver.rs::assemble_truth` に `prev_velocity: Option<Vec3>` を追加し、
+`lateral_g = -(v_now - v_prev)·right() / SIM_DT` を [`PerceivedSelf::lateral_g`] として安定化経路
+（`stabilise`）にだけ渡す（予見経路には渡さない・PDC-12 と同じ制約）。`controller.rs` に
+`load_curvature_for_brake(speed, lateral_g, kappa_traj)` を新設し `brake_lock_cap` の呼び出しに
+`max(|kappa_traj|, |lateral_g/v²|)` を渡した（符号は `kappa_traj` に揃える）。近似を一切使わない
+「真の」横 G。
+
+**s=3283〜3320 の狭い窓では有望に見えた**: `s=3283.25` で `kappa_traj=0.0079` に対し
+`kappa_ay_true=0.0082〜0.0155`（1.0〜2.0 倍、ロック**発生前**の turn-in 直後）。この超過を
+ロック前に検知して先に絞れば、そもそもロックしない可能性を示唆していた。
+
+**しかし全周でのゲートは 15/27 赤（11a）**。失敗は `level=0.7` と `level=0.9` の両方、
+**この節で診断したのとは別の s（3363〜3367）**に集中し、うち 1 本は `s=3366.9` で
+`t=-22.236 m`（PDC-12 revert 時の最悪 -10 m を大きく超える）。原因は「本ラウンド開始時」節の
+`DIAGTMP_YAWLOAD` フルラップ調査で既に兆候が出ていた: `brake_raw > 0.05` の間だけに絞っても、
+**トレイルブレーキングが効く区間ならどこでも実横 G は `kappa_traj` を系統的に超える**
+（s=1407・1439・1798・3206〜3254・3274 などで ratio 1.2〜3+ を確認済み）。トレイルブレーキング
+とは「まだヨーが追いつく前に先に横 G が立ち上がる」操作そのものであり、**この現象はヘアピンに
+限らずクリーンな進入全般で起きる正常な過渡**。瞬時値ベースの反応的キャップに実横 G を使う限り、
+信号の質（`r/v` か `r+beta_dot` か 有限差分の真値か）を変えても同じ形で壊れる。
+
+**結論: 瞬時の実横加速度は `brake_lock_cap` の入力として使えない**（2 種類の信号で 2 回とも
+広範囲の 11a 破壊を確認。恣意的な打ち切りではなく、物理的に同じ壁に 2 回当たった）。
+
+### 実装・検証・完全 revert の記録
+
+```
+crates/sim-driver/src/perception.rs   PerceivedSelf::lateral_g 追加 + zeroed() 更新
+crates/sim-driver/src/driver.rs       Driver::prev_velocity 追加、assemble_truth を &mut self 化、
+                                       lateral_g を tick 間有限差分で計算
+crates/sim-driver/src/controller.rs   load_curvature_for_brake() 新設、brake_lock_cap 呼び出しに適用
+crates/sim-core/tests/world_ai.rs     一時計装（diagtmp_yawload_survey 等）。全て revert 済み
+```
+
+```
+cargo fmt --all -- --check                             → clean
+cargo clippy --workspace --all-targets -- -D warnings  → 0
+cargo test --workspace --release（試行 2 適用時）        → 19 passed / 7 failed / 1 ignored
+  失敗: t_core_ai_11a（15/27）・t_core_ai_11b（アサーション変更なしのため 11a 依存で連鎖）・
+  t_ai_05r・t_ai_06r・t_core_ai_03・t_drv_02r・t_drv_04r（すべて brake_lock_cap 変更の波及）
+revert 後（本節の最終状態）:
+  git status --porcelain                               → 空
+  grep -rni diagtmp crates/                             → 0 件
+  cargo test --workspace --release                      → 194 passed / 0 failed / 0 ignored（baseline）
+```
+
+### 次の判断: F-6/F-7 は「瞬時反応キャップの改良」では解けない。Architect 裁定へ差し戻す
+
+2 ラウンド・2 種類の信号（近似 `r/v`・真値の有限差分横 G）で同じ壁（トレイルブレーキング中は
+実横 G が計画曲率を系統的に超えるのが正常）に当たった。次に検討する価値があるのは**瞬時値の
+反応的キャップではない**設計、例えば:
+
+- (a) `brake_lock_cap` の推定を「その場の瞬時値」ではなく「**このコーナーの計画された進入プロファイル**
+  （`SpeedProfile`/`Trajectory` が既に知っている、そのコーナーの設計曲率・設計進入速度）」に基づかせる
+  ことで、trail-braking の正常な過渡を「異常な超過」と誤検知しない。
+- (b) 前節で判明した「split（内外輪配分）だけが実測とズレる」という所見を活かし、**Fz の全体量は
+  現行のまま・配分（`d_lat_f`）だけを別の根拠**（例えばロール角速度・ロール加算の動特性）で
+  補正する、より狭いスコープの修正。
+- (c) F-6（ヘアピン頂点 7 m 遅れ）を先に解消する（F-7 の起点である「ライン遅れによる大きな
+  初期逸脱」自体を減らせば、ロックに頼らずとも収まる可能性がある）。
+- (d) 現状（F-7 は自力復帰 12.6 s、F-8 は 3/32、いずれも `t_core_ai_11b`/`t_core_ai_12` の
+  受け入れ条件外）を受容し、この設計変更は見送る。
+
+いずれも Architect 決裁事項（(a)(b) は物理アーキテクチャ変更・(c) は別スコープの作業・(d) は
+受容判断）。次の実装ラウンドの前に、上記のどれを選ぶか、または新しい方向性を示す仕様が要る。
+
+### ゲート（最終状態・変更なし）
+
+```
+git status --porcelain                                 → 空
+grep -rni diagtmp crates/                               → 0 件
+cargo fmt --all -- --check                              → clean
+cargo clippy --workspace --all-targets -- -D warnings   → 0
+cargo test --workspace --release                        → 194 passed / 0 failed / 0 ignored（baseline）
+```

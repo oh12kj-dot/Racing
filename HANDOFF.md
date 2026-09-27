@@ -1,13 +1,39 @@
 # HANDOFF.md — 引き継ぎ資料
 
-Last updated: 2026-09-26（Opus 5・TASK-2-4 Phase 4 直接診断）/ **PDC-14 land・`t_core_ai_11b` 7 → 0/27、`#[ignore]` 解除。**
-Opus が自ら計装して因果を追跡: 残り 7 本の主因はミスそのものではなく、ヘアピン出口の切り返しで**実ヨー負荷 `v·r`（16〜25 m/s²）を見ず
-計画曲率（≈6 m/s²）でリア摩擦円の残りを見積もる `traction_throttle_cap`** が 1 速で 0.45〜0.58 を許し、横で飽和した後輪が空転（sr 0.1 → 9）
-→ スピン → 滑り絞りは 0.5 までしか切らず空転が続く、という連鎖（ミスバイアスはこの時点で < 0.003 rad）。修正は `controller.rs` のみ:
-A = トラクション上限の横負荷を `max(|κ_traj|, |r/v|)`、B = ダウンフォースを圧力中心から軸配分（`sim-vehicle::aero` と一致）、
-D = H3 トラクション側（駆動輪の路面 grip・LSD 考慮）。held-out 90 走行でも 13 → 2/90（ミス無し 2 → 0/90）。残り 2 本は別機序
-（ミス制動の前輪ロック自己保持 = F-7）。詳細・アブレーション表は `TODO.md` 最新節。
-**次: F-7（PDC-12 ロック解放を新しい余裕で再計測）→ F-8（`t_core_ai_12`）。並行で TASK-05-1（UE5）M3/M4。**
+Last updated: 2026-09-26（Sonnet 5・F-6/F-7/F-8 診断シリーズ + `brake_lock_cap` 再設計の実装試行）/
+**PDC-14 は land 済みで有効（`t_core_ai_11b` 0/27）。F-6/F-7/F-8 を直す 3 つの実装試行
+（PDC-12 のロック解放／`brake_lock_cap` への `r/v`・`r+beta_dot`／`brake_lock_cap` への実横加速度の
+tick 間有限差分）を全て人間承認のうえ試したが、**いずれも `t_core_ai_11a` を大きく壊し
+（21/27・15/27 など）、すべて完全 revert した**（`git diff --stat` = 空・194 passed / 0 failed で
+baseline 復帰）。得られた最重要の知見: **トレイルブレーキング中は実横 G が計画曲率 `kappa_traj` を
+系統的に上回るのが正常な挙動**であり、`brake_lock_cap` の負荷推定を「瞬時の実測・推定横方向量」
+ベースの反応的キャップに置き換える設計は、信号の精度（近似 `r/v` か真の有限差分横 G か）に関わらず
+同じ形で 11a を広範囲に壊す。次に検討する価値があるのは瞬時反応キャップではない設計
+（計画済み進入プロファイルベース／split 項だけの補正／F-6 を先に解消／現状受容）で、
+これは Architect 決裁事項。**
+
+診断の経緯（詳細は `TODO.md` 該当節）:
+1. PDC-14 で `t_core_ai_11a` 27/27・`t_core_ai_11b` 0/27（既存）。
+2. PDC-12（ロック解放）を PDC-14 コード上に実装 → 11a が 6/27 赤 → revert・BLOCKED。
+3. F-8 再現テスト `t_core_ai_12`（`#[ignore = "F-8"]`）を追加 → PDC-14 後は severity 大幅低下
+   （1000 s・16 seed 中 9/16 永久旋回 → 1500 s・32 走行中 3/32・全て有限時間で自力復帰）。
+4. F-8 残り 3/32 の代表 1 本をトレース診断 → 新しい機序ではなく F-6/F-7 と同じ裾と判明。
+5. F-7 分解: `brake_lock_cap` の推定前輪内輪 Fz は実測より 25〜60% 過大と判明
+   （当初「PDC-14 と同じ `r/v` 欠陥」と速断したが、後に訂正 — 下記 6）。
+6. **人間承認を得て実装再挑戦（Phase 4b）**: (a) `r/v` を制動側に適用 → ロック起点では
+   `r/v ≈ kappa_traj`（超過なし）と判明し前節の速断を訂正、`r+beta_dot` も乖離最大点で無力化
+   → 却下。(b) 実横加速度の tick 間有限差分（近似なし）を `PerceivedSelf::lateral_g` として実装
+   → 11a が 15/27 赤（PDC-12 の 6/27 より悪化・失敗地点も別の s=3363〜3367）→ revert。
+   前軸合計 Fz の推定は実測とほぼ一致（誤差 <1%）で、乖離は内外輪配分（`d_lat_f`）だけに
+   限定されることも判明。
+詳細は `TODO.md` 最新 5 節（「Phase 4 — F-7 再評価」〜「Phase 4b — 実装再挑戦」）。
+**次（Architect 判断待ち・F-6/F-7/F-8 は 1 本化）**:
+- (a) `brake_lock_cap` を瞬時値ではなく `SpeedProfile`/`Trajectory` の計画進入プロファイル
+  ベースへ再設計する（trail-braking の正常な過渡を誤検知しない）。
+- (b) Fz 全体量ではなく split（`d_lat_f`）だけを別の根拠（ロール動特性等）で補正する狭いスコープの修正。
+- (c) F-6（ヘアピン頂点 7 m 遅れ）を先に解消する。
+- (d) 現状（F-7 は自力復帰 12.6 s・F-8 は 3/32、いずれも 11b/12 の受け入れ条件外）を受容し見送る。
+並行で TASK-05-1（UE5）M3/M4。
 
 過去の "Last updated (previous, ...)" 履歴行（2026-09-10〜09-26 の全ラウンド）は `docs/archive-TODO.md` および
 `TODO.md` の各日付付きセクションに残っている。本体は最新 1 本のみを保持する（2026-09-26・軽量化）。
@@ -22,10 +48,10 @@ D = H3 トラクション側（駆動輪の路面 grip・LSD 考慮）。held-ou
 | | |
 |---|---|
 | **何を作っているか** | Realistic Race Spectator Simulator。プレイヤーは運転せず**観戦**する。「実際のモータースポーツ中継に見え、よく見ると各 AI が本当にレースをしている」ことが目標 |
-| **今どこか** | **TASK-2-4 Phase 4（Opus 直接）完了**: PDC-14（`controller.rs` のトラクション上限を実ヨー負荷・圧力中心ダウンフォース配分・駆動輪路面で見積もる）で **`t_core_ai_11a` 27/27・0 m、`t_core_ai_11b` 27/27（ignore 解除）**。残課題 F-6（ヘアピン頂点のライン遅れ）/ F-7（ミス制動の前輪ロック自己保持・held-out 2/90）/ F-8（高ミス率の逸走） |
-| **次に何をするか** | **F-7（PDC-12 ロック解放の再計測）→ F-8（`t_core_ai_12` 追加）。並行で TASK-05-1（UE5）M3/M4。** |
+| **今どこか** | **TASK-2-4 Phase 4b 完了**: PDC-14（11a 27/27・11b 0/27）は有効。F-6/F-7/F-8 を直す 3 つの実装試行（PDC-12・`brake_lock_cap` への `r/v`/`r+beta_dot`・実横加速度の有限差分）は**全て 11a を大きく壊し revert**。核心の学び: **トレイルブレーキング中は実横 G が計画曲率を上回るのが正常** — 瞬時反応キャップ設計では F-6/F-7 を解けない |
+| **次に何をするか** | **Architect が F-6/F-7 の次の一手を裁定（TODO.md 最新節の (a)〜(d): 計画進入プロファイルベースの再設計／split 項だけの補正／F-6 を先に解消／現状受容）。並行で TASK-05-1（UE5）M3/M4。** |
 | **役割** | Opus 5 = Architect / Reviewer / Quality Gate。Sonnet 5 = Implementation Engineer。重大な技術変更は人間承認が必要 |
-| **健全性確認** | `cargo test --workspace --release` → **194 passed / 0 failed / 0 ignored**。clippy 0 / fmt clean / no-default-features / wasm32 OK |
+| **健全性確認** | `cargo test --workspace --release` → **195 passed / 0 failed / 1 ignored**（`t_core_ai_12`・F-8。baseline 復帰済み）。clippy 0 / fmt clean / no-default-features / wasm32 OK |
 
 ### 最初にやること
 

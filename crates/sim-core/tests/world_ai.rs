@@ -276,6 +276,16 @@ struct SweepRun {
 /// 戻れず 100 m 以上離れて周回不能になる — を観測できていなかった）。
 /// `Err` は (1) `laps` 周を完走できない、(2) 1 回の limits 外エピソードが [`REJOIN_MAX_S`] を超える。
 fn run_solo_model_laps(seed: u64, model: DriverModel, laps: u32) -> Result<SweepRun, String> {
+    run_solo_model_laps_budget(seed, model, laps, 20_000)
+}
+
+/// [`run_solo_model_laps`] の `max_ticks` を指定できる版（T-CORE-AI-12・高ミス率・長時間走行用）。
+fn run_solo_model_laps_budget(
+    seed: u64,
+    model: DriverModel,
+    laps: u32,
+    max_ticks: u64,
+) -> Result<SweepRun, String> {
     let line_corridor = world_with_line();
     let corridor = line_corridor.racing_line().unwrap().corridor();
     let mut world = world_with_line();
@@ -294,7 +304,6 @@ fn run_solo_model_laps(seed: u64, model: DriverModel, laps: u32) -> Result<Sweep
     };
     // 現在の limits 外エピソード: (開始 tick, 開始時の説明)。
     let mut episode: Option<(u64, String)> = None;
-    let max_ticks = 20_000u64;
     for _ in 0..max_ticks {
         world.step_sim_tick();
         let tick = world.sim_tick();
@@ -484,6 +493,66 @@ fn t_core_ai_11b_model_sweep_mistake_recovery() {
         "T-CORE-AI-11b (mistake regime, must recover): {}/{} runs failed:\n{}",
         failures.len(),
         results.len(),
+        failures.join("\n")
+    );
+}
+
+/// T-CORE-AI-12 — F-8 再現テスト（`#[ignore = "F-8"]`。TASK-2-4 Phase 4a・Architect 起票）。
+///
+/// **高ミス率・長時間走行での逸走**: `driver_model(0.5)` / `error_rate = 0.6` /
+/// `reaction_time = 0.25` / `consistency ∈ {0.3, 0.6}` × seed `0x0106..=0xF106`（16 本）の
+/// 計 32 走行を各 10 周・budget 90 000 tick（1500 s）で走らせる。11a/11b と異なり
+/// **`t_core_ai_11a_model_sweep_mistake_free` の系列とは無関係の高ミス率シナリオ**
+/// （`TODO.md` F-8: 1000 s・16 seed 中 consistency 0.3 で 5、0.6 で 4 本がヘアピン付近
+/// `t = −519〜−695 m` へ逸走して二度と戻らない）。
+///
+/// 受け入れ基準はまだ 11b と同じ「10 周完走 + `REJOIN_MAX_S` 以内の復帰」だが、Phase 4a の
+/// 時点では**通らないことが分かっている**（診断先行）。`#[ignore = "F-8"]` で残し、実測の
+/// 失敗数をここに記録する: Phase 4a 診断時点（PDC-14 land 後・本ラウンド再測）は下記参照。
+#[test]
+#[ignore = "F-8"]
+fn t_core_ai_12_no_runaway_after_mistakes() {
+    let seeds: Vec<u64> = (0..16u64).map(|i| 0x0106 + i * 0x1000).collect();
+    let consistencies = [0.3, 0.6];
+    let laps = 10;
+    let max_ticks = 90_000u64;
+
+    let mut failures = Vec::new();
+    let mut total = 0u32;
+    for &consistency in &consistencies {
+        for &seed in &seeds {
+            total += 1;
+            let mut model = driver_model(0.5);
+            model.error_rate = 0.6;
+            model.reaction_time = 0.25;
+            model.consistency = consistency;
+            match run_solo_model_laps_budget(seed, model, laps, max_ticks) {
+                Err(e) => {
+                    failures.push(format!("consistency={consistency} seed=0x{seed:04X}: {e}"))
+                }
+                Ok(run) if run.longest_episode_ticks as f64 * SIM_DT > REJOIN_MAX_S => {
+                    failures.push(format!(
+                        "consistency={consistency} seed=0x{seed:04X}: longest excursion {:.1} s \
+                         (> {REJOIN_MAX_S} s), worst at {}",
+                        run.longest_episode_ticks as f64 * SIM_DT,
+                        run.worst_at
+                    ));
+                }
+                Ok(_) => {}
+            }
+        }
+    }
+    eprintln!(
+        "T-CORE-AI-12 (F-8): {}/{} runs failed:\n{}",
+        failures.len(),
+        total,
+        failures.join("\n")
+    );
+    assert!(
+        failures.is_empty(),
+        "T-CORE-AI-12 (F-8, no runaway after mistakes): {}/{} runs failed:\n{}",
+        failures.len(),
+        total,
         failures.join("\n")
     );
 }
