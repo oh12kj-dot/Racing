@@ -1,7 +1,6 @@
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 
 export const DEFAULT_PERFORMANCE_BUDGET=Object.freeze({
-  frameP95Ms:120,
   mainThreadMs:80,
   renderFrameMs:70,
   drawCalls:300,
@@ -36,18 +35,20 @@ export function createPerformanceMonitor(renderer,{qualityTier='FULL',budget=DEF
     const memory=typeof performance!=='undefined'&&performance.memory?performance.memory:null;
     const avg=arr=>arr.length?arr.reduce((a,b)=>a+b,0)/arr.length:0;
     const metrics={
-      frameP95Ms:percentile(frameIntervals,.95),
       mainThreadMs:avg(mainThread),
       renderFrameMs:avg(renderFrames),
       drawCalls:Number(render.calls??0),
       triangles:Number(render.triangles??0)
     };
+    // Wall-clock frame intervals include host scheduling, browser startup and CI
+    // contention, so they remain observable diagnostics rather than a CI gate.
+    // Budgets intentionally cover only work this presentation layer owns.
     const exceeded=Object.entries(budget).filter(([key,limit])=>Number.isFinite(limit)&&Number.isFinite(metrics[key])&&metrics[key]>limit).map(([key])=>key);
     return{
       owner:'presentation-performance-v2',
       sampleCount,
       frameIntervalMs:avg(frameIntervals),
-      frameP95Ms:metrics.frameP95Ms,
+      frameP95Ms:percentile(frameIntervals,.95),
       mainThreadMs:metrics.mainThreadMs,
       simFrameMs:avg(simFrames),
       simTickMs:avg(simTicks),
