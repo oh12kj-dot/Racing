@@ -39,13 +39,13 @@ const lifecycle={
 };
 
 function environmentFromQuery(){
-  const mode=(query.get('weather')||'').toLowerCase();
-  if(mode==='wet')return{initialWetness:.72,rainRate:0,dryingRate:0,ambientTemp:18};
-  if(mode==='rain')return{initialWetness:.10,rainRate:.68,dryingRate:.25,ambientTemp:17};
-  if(mode==='changeable')return{
-    initialWetness:.16,rainRate:.05,dryingRate:.45,ambientTemp:18,forecastHorizonSeconds:120,
+  if(query.get('weather')==='rain')return{initialWetness:.18,rainRate:.72,dryingRate:.45,ambientTemp:19};
+  if(query.get('weather')==='wet')return{initialWetness:.64,rainRate:.18,dryingRate:.35,ambientTemp:18};
+  if(query.get('weather')==='transition')return{
+    initialWetness:.03,rainRate:0,dryingRate:.60,ambientTemp:20,forecastHorizonSeconds:90,
     rainTimeline:[
-      {time:45,rainRate:.72},
+      {time:0,rainRate:0},
+      {time:90,rainRate:.40},
       {time:180,rainRate:.72},
       {time:300,rainRate:.08},
       {time:420,rainRate:0}
@@ -67,6 +67,7 @@ function scheduleFrame(){
   raf=requestAnimationFrame(frame);
 }
 function reconcileLoop(){
+  audio?.setRuntimeActive(initialized&&!loopBlocked());
   if(shouldOwnAnimationLoop()){last=performance.now();scheduleFrame();return;}
   if(raf){cancelAnimationFrame(raf);raf=0;}
   acc=0;
@@ -97,7 +98,7 @@ function init(){
   world.renderer.domElement.addEventListener('webglcontextlost',e=>{e.preventDefault();lifecycle.contextLosses++;lifecycle.pause('webgl-context-lost');});
   world.renderer.domElement.addEventListener('webglcontextrestored',()=>{lifecycle.contextRestores++;lifecycle.resume('webgl-context-lost');});
 
-  window.__RACING__={sim,world,director,lifecycle,performance:perf};
+  window.__RACING__={sim,world,director,lifecycle,audio,performance:perf};
   window.__RACING_RACE__=sim;
   window.__RACING_WORLD__=world;
   window.__RACING_LIFECYCLE__=lifecycle;
@@ -129,8 +130,8 @@ function frame(now){
   const snap=sim.snapshot();
   world.update(snap);
   const cam=director.update(snap);
-  audio.update(cam?.tracked);
   ui.update(snap,cam);
+  audio.update(cam?.tracked);
   const renderStart=performance.now();
   world.renderer.render(world.scene,director.camera);
   const end=performance.now();
@@ -139,7 +140,8 @@ function frame(now){
 }
 function resize(){
   if(!world||!director)return;
-  world.resize();director.resize(viewport.clientWidth,viewport.clientHeight);
+  const w=Math.max(1,viewport.clientWidth),h=Math.max(1,viewport.clientHeight);
+  world.resize(w,h);director.resize(w,h);
 }
 watchButton.addEventListener('click',()=>{
   audio.start();
