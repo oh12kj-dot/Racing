@@ -12,6 +12,7 @@ import {evaluatePitStrategy} from './strategy.js';
 import {createEnvironment,stepEnvironment,environmentSnapshot,surfaceConditionAt} from './environment.js';
 import {contactManifold,resolveContactImpulse} from './contact.js';
 import {applyImpactComponentDamage,componentDamageHashValues} from './component-damage.js';
+import {hashRaceAuthority} from './state-hash.js';
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 
@@ -81,14 +82,6 @@ function yawImpactSeverity(car,preExcessYawRate,deltaYawRate){
   // counted as crash energy; repeated impacts can still accumulate naturally.
   const restoringWork=Math.max(1,restoringTorque*.14);
   return injectedEnergy/restoringWork;
-}
-function fnv1a(values){
-  let h=2166136261>>>0;
-  for(const v of values){
-    const s=String(v);
-    for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)>>>0;}
-  }
-  return h.toString(16).padStart(8,'0');
 }
 
 export function createRaceSimulation(seed=0x5eed2026,options={}){
@@ -325,29 +318,7 @@ export function createRaceSimulation(seed=0x5eed2026,options={}){
   }
 
   function stateHash(){
-    const values=[
-      Math.round(time*60),raceControl.flag,Math.round(raceControl.cautionUntil*60),raceControl.incidentId??-1,
-      raceControl.restartPhase,Math.round((raceControl.restartStartedAt||0)*60),[...raceControl.incidentIds].sort((a,b)=>a-b).join(','),
-      Math.round(environment.wetness*1e6),Math.round(environment.rainRate*1e6),Math.round(environment.visibility*1e6),Math.round(environment.ambientTemp*100),
-      environment.rainTimelineKey??'',Math.round((environment.forecastHorizonSeconds||0)*1000),Math.round((environment.forecastRainRate||0)*1e6),
-      Math.round((environment.forecastRacingLineWetness||0)*1e6),environment.forecastTrend??'STEADY'
-    ];
-    for(let i=0;i<environment.surfaceLine.length;i++){
-      values.push(Math.round(environment.surfaceLine[i]*1e6),Math.round(environment.surfaceOffLine[i]*1e6));
-    }
-    for(const c of [...cars].sort((a,b)=>a.id-b.id)){
-      values.push(
-        c.id,c.lap,Math.round(c.s*1000),Math.round(c.v*1000),Math.round(c.lane*1000),Math.round(c.yaw*1e5),Math.round(c.yawRate*1e5),Math.round(c.steer*1e5),c.gear,
-        Math.round(c.systems.fuel*1000),Math.round(c.systems.tyreWear*1e6),Math.round(c.systems.tyreTemp*1000),Math.round(c.systems.grip*1e6),c.systems.tyreCompound,
-        Math.round(c.systems.mechanicalStress*1e6),Math.round(c.systems.powerDerate*1e6),c.systems.failed?1:0,c.systems.failureReason??'NONE',
-        Math.round((c.systems.energyMJ||0)*1e6),Math.round((c.systems.energyDeploy||0)*1e6),Math.round((c.systems.energyHarvest||0)*1e6),
-        Math.round((c.systems.energyReserveTarget||0)*1e6),Math.round((c.systems.energyStrategyHold||0)*1e6),c.systems.energyControllerActive?1:0,c.systems.energyStrategy??'NONE',c.systems.energyMode??'NONE',
-        Math.round((c.tyre?.slipRatio??0)*1e6),Math.round((c.tyre?.slipAngle??0)*1e6),Math.round((c.tyre?.loadTransfer??0)*1e6),
-        Math.round((c.incident.damage||0)*1e6),...componentDamageHashValues(c.incident),
-        Math.round((c.incident.spinTimer||0)*1000),c.incident.yawTransient?1:0,Math.round((c.incident.redRecoveryTimer||0)*1000),c.strategy?.reason??'NONE',c.strategy?.forecastHold?1:0,c.pit.phase,c.finished?1:0,c.retired?1:0
-      );
-    }
-    return fnv1a(values);
+    return hashRaceAuthority({time,greenAt,raceLaps,running,finished,winnerId,rngState:rng.state,raceControl,environment,cars});
   }
 
   function snapshot(){
