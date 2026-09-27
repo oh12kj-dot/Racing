@@ -2,11 +2,12 @@ import {test,expect} from '@playwright/test';
 import {buildEntrants,FIXED_DT} from '../src/config.js';
 import {createVehicleState,performanceFactors} from '../src/simulation/vehicle.js';
 import {createRaceSimulation} from '../src/simulation/race.js';
-import {stepSystems} from '../src/simulation/systems.js';
+import {serviceSystems,stepSystems} from '../src/simulation/systems.js';
 import {
   createComponentDamage,
   applyImpactComponentDamage,
-  componentDamageHashValues
+  componentDamageHashValues,
+  repairIncidentDamage
 } from '../src/simulation/component-damage.js';
 
 function incident(){return{damage:0,componentDamage:createComponentDamage()};}
@@ -220,4 +221,35 @@ test('DMG-21: brake component penalty is monotonic above the material-damage thr
   const moderate=incident();moderate.damage=.30;moderate.componentDamage.brakes=.35;
   const severe=incident();severe.damage=.30;severe.componentDamage.brakes=.75;
   expect(factorsFor(severe).brake).toBeLessThan(factorsFor(moderate).brake);
+});
+
+test('DMG-22: repair applies one coherent remaining-damage ratio to aggregate and components',()=>{
+  const state=incident();
+  state.damage=.80;
+  state.componentDamage={aero:.40,powertrain:.32,steering:.24,brakes:.16};
+  const result=repairIncidentDamage(state,.32);
+  expect(result.before).toBeCloseTo(.80,12);
+  expect(result.after).toBeCloseTo(.48,12);
+  expect(result.ratio).toBeCloseTo(.60,12);
+  expect(state.componentDamage).toEqual({aero:.24,powertrain:.192,steering:.144,brakes:.096});
+});
+
+test('DMG-23: pit repair service cannot leave component-specific performance damage behind',()=>{
+  const car=freshCar();
+  car.incident.damage=.28;
+  car.incident.componentDamage={aero:.24,powertrain:.22,steering:.20,brakes:.18};
+  serviceSystems(car,{tyres:false,fuel:false,repair:true,cooling:false});
+  expect(car.incident.damage).toBe(0);
+  expect(car.incident.componentDamage).toEqual(createComponentDamage());
+  expect(performanceFactors(car)).toMatchObject({aero:1,drive:1,steering:1,brake:1,top:1,drag:1});
+});
+
+test('DMG-24: non-repair pit work preserves both aggregate and component damage',()=>{
+  const car=freshCar();
+  car.incident.damage=.50;
+  car.incident.componentDamage={aero:.30,powertrain:.26,steering:.22,brakes:.18};
+  const before=structuredClone(car.incident);
+  serviceSystems(car,{tyres:true,fuel:true,repair:false,cooling:true,tyreCompound:'SLICK'});
+  expect(car.incident.damage).toBe(before.damage);
+  expect(car.incident.componentDamage).toEqual(before.componentDamage);
 });

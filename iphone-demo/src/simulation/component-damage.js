@@ -3,6 +3,7 @@ const AERO_DAMAGE_EFFECT_THRESHOLD=.15;
 export const POWERTRAIN_DAMAGE_EFFECT_THRESHOLD=.15;
 export const STEERING_DAMAGE_EFFECT_THRESHOLD=.15;
 export const BRAKE_DAMAGE_EFFECT_THRESHOLD=.15;
+export const DEFAULT_REPAIR_AMOUNT=.32;
 
 export const COMPONENT_DAMAGE_KEYS=Object.freeze(['aero','powertrain','steering','brakes']);
 
@@ -16,6 +17,24 @@ export function ensureComponentDamage(incident){
     incident.componentDamage[key]=clamp(Number(incident.componentDamage[key])||0,0,1);
   }
   return incident.componentDamage;
+}
+
+export function repairIncidentDamage(incident,amount=DEFAULT_REPAIR_AMOUNT){
+  if(!incident)return{before:0,after:0,ratio:0};
+  const components=ensureComponentDamage(incident);
+  const before=clamp(Number(incident.damage)||0,0,1);
+  const repair=clamp(Number(amount)||0,0,1);
+  const after=Math.max(0,before-repair);
+
+  // Aggregate damage is the authoritative repair budget. Component damage is a
+  // directional decomposition of that same incident history, not a second pool
+  // of damage. Applying the same remaining-damage ratio keeps every performance
+  // channel consistent with the pit repair that the strategy/service model paid
+  // for, while preserving the existing aggregate .32 repair contract exactly.
+  const ratio=before>0?after/before:0;
+  incident.damage=after;
+  for(const key of COMPONENT_DAMAGE_KEYS)components[key]=clamp(components[key]*ratio,0,1);
+  return{before,after,ratio};
 }
 
 export function applyImpactComponentDamage(incident,deltaV,contact,response){

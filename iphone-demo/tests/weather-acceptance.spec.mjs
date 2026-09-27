@@ -155,10 +155,15 @@ test('WET-09: wet launch profile renders the same authoritative weather state in
     roughness:window.__RACING_WORLD__.weatherMaterials.road.roughness,
     metalness:window.__RACING_WORLD__.weatherMaterials.road.metalness
   }));
+  const wetness=state.environment.wetness;
+  const wetPercent=Math.round(wetness*100);
   expect(state.environment.condition).toBe('WET');
-  expect(state.environment.wetness).toBeGreaterThan(.70);
-  expect(state.roughness).toBeLessThan(.60);
-  expect(state.metalness).toBeGreaterThan(.10);
-  await expect(page.locator('#weather')).toContainText('WET');
-  await expect(page.locator('#telemetry')).toContainText('WET 72%');
+  // The wet URL profile starts at .64 and continues evolving under authoritative
+  // simulation time. The presentation contract is correspondence to that exact
+  // current snapshot, not a runner-speed-dependent wall-clock target.
+  expect(wetness).toBeGreaterThanOrEqual(.64);
+  expect(state.roughness).toBeCloseTo(.93-.55*wetness,5);
+  expect(state.metalness).toBeCloseTo(.02+.16*wetness,5);
+  await expect(page.locator('#weather')).toContainText(`WET ${wetPercent}%`);
+  await expect(page.locator('#telemetry')).toContainText(`WET ${wetPercent}%`);
 });

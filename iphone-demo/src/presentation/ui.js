@@ -25,6 +25,9 @@ function fmtEnergy(sys){
   else if(sys.energyMode==='RESERVE')activity='RESERVE';
   return `ERS ${Math.round(soc*100)}% · ${sys.energyStrategy||'BALANCED'} · ${activity} · RSV ${Math.round(reserve*100)}%`;
 }
+function setText(node,value){const next=String(value);if(node.textContent!==next)node.textContent=next;}
+function makeDiv(className=''){const node=document.createElement('div');if(className)node.className=className;return node;}
+
 export function createUI(root,callbacks={}){
   root.innerHTML=`
   <div class="hud">
@@ -85,14 +88,57 @@ export function createUI(root,callbacks={}){
     els.board.replaceChildren(fragment);
   }
 
+  const tele={
+    identity:makeDiv('muted'),
+    speed:makeDiv('big'),
+    position:makeDiv('muted'),
+    state:makeDiv('muted'),
+    tyre:makeDiv('muted'),
+    fuel:makeDiv('muted'),
+    energy:makeDiv('muted'),
+    laps:makeDiv('muted')
+  };
+  const speedValue=document.createTextNode('0 '),speedUnit=document.createElement('span');
+  speedUnit.className='muted';speedUnit.textContent='km/h';tele.speed.append(speedValue,speedUnit);
+  els.tele.append(tele.identity,tele.speed,tele.position,tele.state,tele.tyre,tele.fuel,tele.energy,tele.laps);
+  tele.energy.hidden=true;
+  let radioKey='';
+
+  function updateTelemetry(car,row,snapshot,weather){
+    const sys=car.systems;
+    const displayLap=row?.currentLap??(car.lap<0?0:Math.min(snapshot.RACE_LAPS,car.lap+1));
+    const gap=fmtDelta(row,'gapToLeaderMeters','gapToLeaderSeconds',row?.overallPosition===1);
+    const interval=fmtDelta(row,'intervalMeters','intervalSeconds',row?.overallPosition===1);
+    const reliability=sys.failed?`FAIL ${sys.failureReason??'MECHANICAL'}`:`ENG ${Math.round(sys.engineTemp)}°C · STRESS ${Math.round((sys.mechanicalStress||0)*100)}% · DERATE ${Math.round((sys.powerDerate||0)*100)}%`;
+    const energy=fmtEnergy(sys);
+    setText(tele.identity,`${car.number} ${car.name} · ${car.spec.label}${car.blueFlag?' · BLUE FLAG':''}`);
+    const speed=`${Math.round(car.v*3.6)} `;if(speedValue.nodeValue!==speed)speedValue.nodeValue=speed;
+    setText(tele.position,`P${row?.overallPosition??'--'} · CLASS P${row?.classPosition??'--'} · GAP ${gap} · INT ${interval}`);
+    setText(tele.state,`L${displayLap} · ${row?.status??car.pit.phase} · ${car.racecraft.state} · PITS ${row?.pitStops??0}`);
+    setText(tele.tyre,`TYRE ${fmtCompound(sys.tyreCompound)} · WEAR ${Math.round(sys.tyreWear*100)}% · ${Math.round(sys.tyreTemp)}°C · WET ${Math.round((weather?.wetness??0)*100)}%`);
+    setText(tele.fuel,`FUEL ${sys.fuel.toFixed(1)}L · ${reliability}`);
+    tele.energy.hidden=!energy;setText(tele.energy,energy);
+    setText(tele.laps,`CUR ${fmtTime(row?.currentLapTime)} · LAST ${fmtTime(row?.lastLap)} · BEST ${fmtTime(row?.bestLap)}`);
+  }
+
+  function updateRadio(events){
+    const lines=events.slice(-4);
+    const nextKey=lines.map(e=>`${e.id}:${e.text}`).join('|');
+    if(nextKey===radioKey)return;
+    radioKey=nextKey;
+    const fragment=document.createDocumentFragment();
+    for(const event of lines){const node=makeDiv('radio-line');node.textContent=event.text;fragment.appendChild(node);}
+    els.radio.replaceChildren(fragment);
+  }
+
   function update(snapshot,cameraState){
-    els.flag.textContent=snapshot.flag;els.flag.dataset.flag=snapshot.flag;
+    setText(els.flag,snapshot.flag);els.flag.dataset.flag=snapshot.flag;
     const procedure=snapshot.restartPhase==='RED_STOP'?'STOP UNDER RED':snapshot.restartPhase==='SC_FORMATION'?'SC RESTART FORMATION':'';
-    els.procedure.textContent=procedure;els.procedure.hidden=!procedure;
-    els.lap.textContent=`LAP ${Math.min(snapshot.RACE_LAPS,Math.max(0,snapshot.lap))}/${snapshot.RACE_LAPS}`;
-    els.clock.textContent=fmtTime(snapshot.time);els.camera.textContent=cameraState?.mode||'AUTO';
+    setText(els.procedure,procedure);els.procedure.hidden=!procedure;
+    setText(els.lap,`LAP ${Math.min(snapshot.RACE_LAPS,Math.max(0,snapshot.lap))}/${snapshot.RACE_LAPS}`);
+    setText(els.clock,fmtTime(snapshot.time));setText(els.camera,cameraState?.mode||'AUTO');
     const weather=snapshot.environment;
-    els.weather.textContent=weather?`${weather.condition} ${Math.round(weather.wetness*100)}%`:'DRY';
+    setText(els.weather,weather?`${weather.condition} ${Math.round(weather.wetness*100)}%`:'DRY');
     const rows=new Map((snapshot.classification||[]).map(row=>[row.carId,row]));
     syncRowOrder(snapshot.order);
     for(let i=0;i<snapshot.order.length;i++){
@@ -105,32 +151,15 @@ export function createUI(root,callbacks={}){
       const classPosition=row?.classPosition??'--';
       const pitStops=row?.pitStops??0;
       item.node.classList.toggle('active',cameraState?.tracked?.id===c.id);
-      item.pos.textContent=String(overall);
-      item.name.textContent=`${c.number} ${c.name}`;
-      item.klass.textContent=`${c.spec.label} P${classPosition} · ${statusLabel} · ${fmtCompound(c.systems?.tyreCompound)} · INT ${interval} · PITS ${pitStops}`;
-      item.speed.textContent=String(Math.round(c.v*3.6));
-      item.gap.textContent=gap;
+      setText(item.pos,overall);
+      setText(item.name,`${c.number} ${c.name}`);
+      setText(item.klass,`${c.spec.label} P${classPosition} · ${statusLabel} · ${fmtCompound(c.systems?.tyreCompound)} · INT ${interval} · PITS ${pitStops}`);
+      setText(item.speed,Math.round(c.v*3.6));
+      setText(item.gap,gap);
     }
     const car=cameraState?.tracked;
-    if(car){
-      const sys=car.systems;
-      const row=rows.get(car.id);
-      const displayLap=row?.currentLap??(car.lap<0?0:Math.min(snapshot.RACE_LAPS,car.lap+1));
-      const gap=fmtDelta(row,'gapToLeaderMeters','gapToLeaderSeconds',row?.overallPosition===1);
-      const interval=fmtDelta(row,'intervalMeters','intervalSeconds',row?.overallPosition===1);
-      const reliability=sys.failed?`FAIL ${sys.failureReason??'MECHANICAL'}`:`ENG ${Math.round(sys.engineTemp)}°C · STRESS ${Math.round((sys.mechanicalStress||0)*100)}% · DERATE ${Math.round((sys.powerDerate||0)*100)}%`;
-      const energy=fmtEnergy(sys);
-      els.tele.innerHTML=`<div class="muted">${car.number} ${car.name} · ${car.spec.label}${car.blueFlag?' · BLUE FLAG':''}</div>
-        <div class="big">${Math.round(car.v*3.6)} <span class="muted">km/h</span></div>
-        <div class="muted">P${row?.overallPosition??'--'} · CLASS P${row?.classPosition??'--'} · GAP ${gap} · INT ${interval}</div>
-        <div class="muted">L${displayLap} · ${row?.status??car.pit.phase} · ${car.racecraft.state} · PITS ${row?.pitStops??0}</div>
-        <div class="muted">TYRE ${fmtCompound(sys.tyreCompound)} · WEAR ${Math.round(sys.tyreWear*100)}% · ${Math.round(sys.tyreTemp)}°C · WET ${Math.round((weather?.wetness??0)*100)}%</div>
-        <div class="muted">FUEL ${sys.fuel.toFixed(1)}L · ${reliability}</div>
-        ${energy?`<div class="muted">${energy}</div>`:''}
-        <div class="muted">CUR ${fmtTime(row?.currentLapTime)} · LAST ${fmtTime(row?.lastLap)} · BEST ${fmtTime(row?.bestLap)}</div>`;
-    }
-    const lines=snapshot.events.slice(-4);
-    els.radio.innerHTML=lines.map(e=>`<div class="radio-line">${e.text}</div>`).join('');
+    if(car)updateTelemetry(car,rows.get(car.id),snapshot,weather);
+    updateRadio(snapshot.events);
   }
   return{update};
 }
