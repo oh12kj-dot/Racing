@@ -113,3 +113,21 @@ test('DMG-09: staged aero damage keeps the fixed-seed 100s race stable',()=>{
     ...Object.values(car.incident.componentDamage||{})
   ].every(Number.isFinite))).toBe(true);
 });
+
+test('DMG-DIAG: compare 420s race with aero component channel neutralized',()=>{
+  test.setTimeout(120000);
+  const actual=createRaceSimulation(0x4444),legacy=createRaceSimulation(0x4444);
+  const steps=Math.round(420/FIXED_DT);
+  for(let i=0;i<steps;i++){
+    actual.update(FIXED_DT);legacy.update(FIXED_DT);
+    for(const car of legacy.cars)if(car.incident?.componentDamage)car.incident.componentDamage.aero=0;
+  }
+  const summarize=sim=>{const snap=sim.snapshot();return{
+    finished:snap.finished,time:snap.time,flag:snap.flag,recoveries:snap.diagnostics?.recoveries,
+    live:snap.cars.filter(c=>!c.finished&&!c.retired).map(c=>({id:c.id,lap:c.lap,v:+c.v.toFixed(2),pit:c.pit.phase,served:c.pit.served,damage:+c.incident.damage.toFixed(3),aero:+(c.incident.componentDamage?.aero||0).toFixed(3)})),
+    events:(snap.events||[]).slice(-8).map(e=>({type:e.type,carId:e.carId,time:+e.time.toFixed(1)}))
+  };};
+  const actualSummary=summarize(actual),legacySummary=summarize(legacy);
+  console.log('DMG-AERO-DIAG '+JSON.stringify({actual:actualSummary,legacy:legacySummary}));
+  expect(legacySummary.finished).toBeTruthy();
+});
