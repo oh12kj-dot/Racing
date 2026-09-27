@@ -1,5 +1,5 @@
 import {test,expect} from '@playwright/test';
-import {buildEntrants} from '../src/config.js';
+import {buildEntrants,FIXED_DT} from '../src/config.js';
 import {createVehicleState,performanceFactors} from '../src/simulation/vehicle.js';
 import {createRaceSimulation} from '../src/simulation/race.js';
 import {
@@ -16,6 +16,7 @@ function collision({longitudinal=0,lateral=0,impactSpeed=8,impactImpulse=5000}={
   };
 }
 function freshCar(){return createVehicleState(buildEntrants()[0],300,0);}
+function factorsFor(state){const car=freshCar();car.incident=state;return performanceFactors(car);}
 
 test('DMG-01: fresh vehicle state starts with zero component damage',()=>{
   const car=freshCar();
@@ -60,18 +61,55 @@ test('DMG-05: authoritative race hash includes deterministic component damage st
   expect(a.stateHash()).toBe(b.stateHash());
 });
 
-test('DMG-06: component detail remains performance-neutral while legacy aggregate damage stays authoritative',()=>{
+test('DMG-06: aero detail is the first component-specific performance channel',()=>{
   const detailed=freshCar();
-  detailed.incident.componentDamage={aero:.5,powertrain:.5,steering:.5,brakes:.5};
-  expect(performanceFactors(detailed)).toMatchObject({aero:1,drive:1,steering:1,brake:1,top:1,drag:1,damage:0});
+  detailed.incident.componentDamage.aero=.5;
+  expect(performanceFactors(detailed)).toMatchObject({aero:.8,drive:1,steering:1,brake:1,top:1,drag:1.1375,damage:0});
 
   const legacy=freshCar();
   legacy.incident.damage=.5;
   const factors=performanceFactors(legacy);
-  expect(factors.aero).toBeLessThan(1);
-  expect(factors.drive).toBeLessThan(1);
-  expect(factors.steering).toBeLessThan(1);
-  expect(factors.top).toBeLessThan(1);
-  expect(factors.drag).toBeGreaterThan(1);
+  expect(factors.aero).toBeCloseTo(.84,12);
+  expect(factors.drive).toBeCloseTo(.89,12);
+  expect(factors.steering).toBeCloseTo(.86,12);
+  expect(factors.top).toBeCloseTo(.95,12);
+  expect(factors.drag).toBeCloseTo(1.11,12);
   expect(factors.brake).toBe(1);
+});
+
+test('DMG-07: longitudinal aero calibration matches legacy aggregate aero and drag',()=>{
+  const directional=incident(),{contact,response}=collision({longitudinal:1});
+  applyImpactComponentDamage(directional,7,contact,response);
+  const legacy=incident();legacy.damage=directional.damage;
+
+  const detailedFactors=factorsFor(directional);
+  const legacyFactors=factorsFor(legacy);
+  expect(detailedFactors.aero).toBeCloseTo(legacyFactors.aero,12);
+  expect(detailedFactors.drag).toBeCloseTo(legacyFactors.drag,12);
+  expect(detailedFactors.drive).toBeCloseTo(legacyFactors.drive,12);
+  expect(detailedFactors.steering).toBeCloseTo(legacyFactors.steering,12);
+  expect(detailedFactors.top).toBeCloseTo(legacyFactors.top,12);
+});
+
+test('DMG-08: equal-severity lateral impact produces less aero loss than longitudinal impact',()=>{
+  const longitudinal=incident(),longHit=collision({longitudinal:1});
+  const lateral=incident(),latHit=collision({lateral:1});
+  applyImpactComponentDamage(longitudinal,7,longHit.contact,longHit.response);
+  applyImpactComponentDamage(lateral,7,latHit.contact,latHit.response);
+
+  expect(longitudinal.damage).toBeCloseTo(lateral.damage,12);
+  expect(factorsFor(lateral).aero).toBeGreaterThan(factorsFor(longitudinal).aero);
+  expect(factorsFor(lateral).drag).toBeLessThan(factorsFor(longitudinal).drag);
+});
+
+test('DMG-09: staged aero damage keeps the fixed-seed 100s race stable',()=>{
+  const sim=createRaceSimulation(0x1111,{raceLaps:40});
+  const steps=Math.round(100/FIXED_DT);
+  for(let i=0;i<steps;i++)sim.update(FIXED_DT);
+
+  expect(sim.cars.reduce((sum,car)=>sum+(car.diagnostics?.recoveries||0),0)).toBe(0);
+  expect(sim.cars.every(car=>[
+    car.s,car.v,car.lane,car.yaw,car.incident.damage,
+    ...Object.values(car.incident.componentDamage||{})
+  ].every(Number.isFinite))).toBe(true);
 });
