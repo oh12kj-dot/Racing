@@ -2,6 +2,7 @@ import {test,expect} from '@playwright/test';
 import {buildEntrants,FIXED_DT} from '../src/config.js';
 import {createVehicleState,performanceFactors} from '../src/simulation/vehicle.js';
 import {createRaceSimulation} from '../src/simulation/race.js';
+import {stepSystems} from '../src/simulation/systems.js';
 import {
   createComponentDamage,
   applyImpactComponentDamage,
@@ -108,4 +109,46 @@ test('DMG-09: staged aero damage keeps the fixed-seed 100s race stable',()=>{
     car.s,car.v,car.lane,car.yaw,car.incident.damage,
     ...Object.values(car.incident.componentDamage||{})
   ].every(Number.isFinite))).toBe(true);
+});
+
+test('DMG-10: routine powertrain damage preserves the legacy aggregate drive envelope',()=>{
+  const detailed=incident();detailed.damage=.25;detailed.componentDamage.powertrain=.14;
+  const legacy=incident();legacy.damage=.25;
+  expect(factorsFor(detailed).drive).toBeCloseTo(factorsFor(legacy).drive,12);
+});
+
+test('DMG-11: material powertrain damage adds drive loss without changing unrelated channels',()=>{
+  const detailed=incident();detailed.damage=.30;detailed.componentDamage.powertrain=.50;
+  const legacy=incident();legacy.damage=.30;
+  const detailedFactors=factorsFor(detailed),legacyFactors=factorsFor(legacy);
+  expect(detailedFactors.drive).toBeLessThan(legacyFactors.drive);
+  expect(detailedFactors.aero).toBeCloseTo(legacyFactors.aero,12);
+  expect(detailedFactors.drag).toBeCloseTo(legacyFactors.drag,12);
+  expect(detailedFactors.steering).toBeCloseTo(legacyFactors.steering,12);
+  expect(detailedFactors.brake).toBeCloseTo(legacyFactors.brake,12);
+  expect(detailedFactors.top).toBeCloseTo(legacyFactors.top,12);
+});
+
+test('DMG-12: material powertrain damage feeds the existing mechanical-stress authority',()=>{
+  const damaged=freshCar(),control=freshCar();
+  damaged.incident.componentDamage.powertrain=.50;
+  for(const car of [damaged,control]){car.throttle=.50;car.brake=0;car.v=0;}
+  for(let i=0;i<120;i++){stepSystems(damaged,1);stepSystems(control,1);}
+  expect(damaged.systems.mechanicalStress).toBeGreaterThan(control.systems.mechanicalStress+.01);
+  expect(damaged.systems.failed).toBeFalsy();
+  expect(control.systems.failed).toBeFalsy();
+});
+
+test('DMG-13: powertrain damage cannot bypass the existing mechanical failure gate',()=>{
+  const car=freshCar();
+  car.incident.componentDamage.powertrain=1;
+  car.throttle=1;car.brake=0;car.v=0;
+  expect(performanceFactors(car).drive).toBeLessThan(1);
+  expect(car.systems.failed).toBeFalsy();
+
+  car.systems.mechanicalStress=.9795;
+  stepSystems(car,1);
+  expect(car.systems.failed).toBeTruthy();
+  expect(car.systems.failureReason).toBe('MECHANICAL_STRESS');
+  expect(car.systems.powerDerate).toBe(1);
 });
