@@ -1,16 +1,31 @@
 import * as THREE from 'three';
 
 const modes=['AUTO','TV','FOLLOW','ONBOARD','PIT','HELI'];
+function mix32(value){
+  let x=value>>>0;
+  x=(x^(x>>>16))>>>0;x=Math.imul(x,0x7feb352d)>>>0;
+  x=(x^(x>>>15))>>>0;x=Math.imul(x,0x846ca68b)>>>0;
+  return (x^(x>>>16))>>>0;
+}
+export function autoCameraMode(slot,trackedId){
+  const key=(Math.imul((slot|0)+1,0x9e3779b1)^Math.imul((trackedId|0)+1,0x85ebca6b))>>>0;
+  return mix32(key)/4294967296<.62?'TV':'FOLLOW';
+}
 export function createCameraDirector(world,track){
   const camera=new THREE.PerspectiveCamera(48,1,.1,1600);
-  let mode='AUTO',trackedId=0,cutAt=0,autoMode='TV';
+  let mode='AUTO',trackedId=0,autoSlot=-1,autoMode='TV';
   function setMode(m){if(modes.includes(m))mode=m;}
   function cycleTracked(delta,cars){const alive=cars.filter(c=>!c.retired);const i=Math.max(0,alive.findIndex(c=>c.id===trackedId));trackedId=alive[(i+delta+alive.length)%alive.length]?.id??0;}
   function chooseAuto(snapshot){
-    if(snapshot.time<cutAt)return;cutAt=snapshot.time+5.5;
+    // AUTO camera choices are presentation-only, but still deterministic. Using
+    // a simulation-time slot instead of Math.random() makes screenshots and
+    // visual regressions reproducible without adding any camera state to the
+    // authoritative race hash.
+    const slot=Math.floor(Math.max(0,snapshot.time||0)/5.5);
+    if(slot===autoSlot)return;autoSlot=slot;
     const battles=[];
     for(let i=0;i<snapshot.order.length-1;i++){const a=snapshot.order[i],b=snapshot.order[i+1];let d=a.s-b.s;if(d<0)d+=track.total;if(d<35)battles.push({id:b.id,d});}
-    if(battles.length){trackedId=battles.sort((a,b)=>a.d-b.d)[0].id;autoMode=Math.random()<.62?'TV':'FOLLOW';}
+    if(battles.length){trackedId=battles.sort((a,b)=>a.d-b.d)[0].id;autoMode=autoCameraMode(slot,trackedId);}
     else{trackedId=snapshot.leader?.id??0;autoMode='TV';}
   }
   function update(snapshot){
