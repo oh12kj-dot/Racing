@@ -13,16 +13,29 @@ const bootStatus=document.querySelector('#bootStatus');
 const query=new URLSearchParams(location.search);
 
 let sim,world,director,ui,audio,perf;
-let started=false,last=performance.now(),acc=0,raf=0,tickIndex=0;
+let started=false,initialized=false,last=performance.now(),acc=0,raf=0,tickIndex=0;
 const lifecycle={
-  paused:false,reason:null,resumeCount:0,contextLosses:0,contextRestores:0,
-  pause(reason='manual'){this.paused=true;this.reason=reason;},
-  resume(){if(this.paused)this.resumeCount++;this.paused=false;this.reason=null;last=performance.now();acc=0;},
+  pauseReasons:new Set(),resumeCount:0,contextLosses:0,contextRestores:0,
+  get paused(){return this.pauseReasons.size>0;},
+  get reason(){return this.pauseReasons.values().next().value??null;},
+  pause(reason='manual'){
+    const before=this.paused;
+    this.pauseReasons.add(reason);
+    if(!before&&this.paused)acc=0;
+    reconcileLoop();
+  },
+  resume(reason='manual'){
+    const before=this.paused;
+    this.pauseReasons.delete(reason);
+    if(before&&!this.paused){this.resumeCount++;last=performance.now();acc=0;}
+    reconcileLoop();
+  },
+  set(reason,active){if(active)this.pause(reason);else this.resume(reason);},
   pauseForTest(){this.pause('test');},
-  resumeForTest(){this.resume();},
+  resumeForTest(){this.resume('test');},
   contextLostForTest(){this.contextLosses++;this.pause('webgl-context-lost');},
-  contextRestoredForTest(){this.contextRestores++;this.resume();},
-  diagnostics(){return{owner:'runtime-lifecycle-v1',paused:this.paused,reason:this.reason,resumeCount:this.resumeCount,contextLosses:this.contextLosses,contextRestores:this.contextRestores};}
+  contextRestoredForTest(){this.contextRestores++;this.resume('webgl-context-lost');},
+  diagnostics(){return{owner:'runtime-lifecycle-v2',paused:this.paused,reason:this.reason,pauseReasons:[...this.pauseReasons].sort(),resumeCount:this.resumeCount,contextLosses:this.contextLosses,contextRestores:this.contextRestores,rafActive:raf!==0};}
 };
 
 function environmentFromQuery(){
@@ -42,9 +55,21 @@ function environmentFromQuery(){
 }
 function stepSimulation(seconds){
   if(lifecycle.paused)return{...sim.snapshot(),paused:true,idx:tickIndex};
-  const steps=Math.max(1,Math.round(seconds/FIXED_DT));
+  const duration=Math.max(0,Number(seconds)||0);
+  const steps=Math.max(0,Math.round(duration/FIXED_DT));
   for(let i=0;i<steps;i++){sim.update(FIXED_DT);tickIndex++;}
   return{...sim.snapshot(),paused:false,idx:tickIndex};
+}
+function loopBlocked(){return lifecycle.paused||document.hidden;}
+function shouldOwnAnimationLoop(){return initialized&&!lifecycle.pauseReasons.has('pagehide')&&!lifecycle.pauseReasons.has('webgl-context-lost')&&!document.hidden;}
+function scheduleFrame(){
+  if(raf||!shouldOwnAnimationLoop())return;
+  raf=requestAnimationFrame(frame);
+}
+function reconcileLoop(){
+  if(shouldOwnAnimationLoop()){last=performance.now();scheduleFrame();return;}
+  if(raf){cancelAnimationFrame(raf);raf=0;}
+  acc=0;
 }
 function init(){
   const environment=environmentFromQuery();
@@ -70,7 +95,7 @@ function init(){
   bootStatus.textContent=`READY · 24 CARS · ${snap.environment.condition} · DETERMINISTIC CORE`;
 
   world.renderer.domElement.addEventListener('webglcontextlost',e=>{e.preventDefault();lifecycle.contextLosses++;lifecycle.pause('webgl-context-lost');});
-  world.renderer.domElement.addEventListener('webglcontextrestored',()=>{lifecycle.contextRestores++;lifecycle.resume();});
+  world.renderer.domElement.addEventListener('webglcontextrestored',()=>{lifecycle.contextRestores++;lifecycle.resume('webgl-context-lost');});
 
   window.__RACING__={sim,world,director,lifecycle,performance:perf};
   window.__RACING_RACE__=sim;
@@ -87,13 +112,15 @@ function init(){
     perf.record({frameIntervalMs:0,mainThreadMs:end-workStart,simFrameMs:simEnd-simStart,renderFrameMs:end-renderStart,simSteps:tickIndex-idxBefore});
     return s;
   };
+  initialized=true;
 }
 function frame(now){
-  raf=requestAnimationFrame(frame);
+  raf=0;
+  if(!shouldOwnAnimationLoop())return;
   const workStart=performance.now(),frameIntervalMs=Math.max(0,now-last);
   const elapsed=Math.min(.12,frameIntervalMs/1000);last=now;
   let steps=0,simFrameMs=0;
-  if(started&&!document.hidden&&!lifecycle.paused){
+  if(started&&!loopBlocked()){
     acc=Math.min(.25,acc+elapsed);
     const simStart=performance.now();
     while(acc>=FIXED_DT&&steps<8){sim.update(FIXED_DT);tickIndex++;acc-=FIXED_DT;steps++;}
@@ -108,6 +135,7 @@ function frame(now){
   world.renderer.render(world.scene,director.camera);
   const end=performance.now();
   perf.record({frameIntervalMs,mainThreadMs:end-workStart,simFrameMs,renderFrameMs:end-renderStart,simSteps:steps});
+  scheduleFrame();
 }
 function resize(){
   if(!world||!director)return;
@@ -116,23 +144,26 @@ function resize(){
 watchButton.addEventListener('click',()=>{
   audio.start();
   started=true;sim.setRunning(true);
-  lifecycle.resume();
   boot.classList.add('hidden');
+  reconcileLoop();
 });
-document.addEventListener('visibilitychange',()=>{
-  if(document.hidden)lifecycle.pause('visibility');
-  else if(started)lifecycle.resume();
-});
+document.addEventListener('visibilitychange',()=>lifecycle.set('visibility',document.hidden));
 window.addEventListener('resize',resize,{passive:true});
 window.addEventListener('orientationchange',()=>setTimeout(resize,80),{passive:true});
-window.addEventListener('pagehide',()=>cancelAnimationFrame(raf),{once:true});
+window.addEventListener('pagehide',()=>lifecycle.pause('pagehide'));
+window.addEventListener('pageshow',()=>{
+  lifecycle.resume('pagehide');
+  lifecycle.set('visibility',document.hidden);
+  resize();
+});
 
 try{
   init();
   if(query.has('runtimeTest')){
-    started=true;boot.classList.add('hidden');
+    started=true;sim.setRunning(true);boot.classList.add('hidden');
   }
-  raf=requestAnimationFrame(frame);
+  lifecycle.set('visibility',document.hidden);
+  reconcileLoop();
 }catch(err){
   console.error(err);
   bootStatus.textContent=`ERROR: ${err?.message||err}`;
