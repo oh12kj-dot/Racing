@@ -75,6 +75,20 @@ test('iPhone WebKit lifecycle recovers after WebGL context interruption boundary
   expect(x.lost.paused).toBeTruthy();expect(x.lost.contextLosses).toBeGreaterThanOrEqual(1);expect(x.restored.paused).toBeFalsy();expect(x.restored.contextRestores).toBeGreaterThanOrEqual(1);
 });
 
+test('iPhone WebKit runtime lifecycle also owns presentation audio activity',async({page})=>{
+  await boot(page);
+  const x=await page.evaluate(()=>{
+    const L=window.__RACING_LIFECYCLE__,audio=window.__RACING__.audio;
+    const before=audio.diagnostics();
+    L.pauseForTest();const paused=audio.diagnostics();
+    L.resumeForTest();const resumed=audio.diagnostics();
+    return{before,paused,resumed};
+  });
+  expect(x.before.runtimeActive).toBeTruthy();
+  expect(x.paused.runtimeActive).toBeFalsy();
+  expect(x.resumed.runtimeActive).toBeTruthy();
+});
+
 test('iPhone WebKit keeps independent pause reasons isolated',async({page})=>{
   await boot(page);
   const x=await page.evaluate(()=>{
