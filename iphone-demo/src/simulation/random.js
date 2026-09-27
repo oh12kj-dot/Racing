@@ -7,6 +7,7 @@ export function createRng(seed=0x6d2b79f5){
       return ((s^(s>>>14))>>>0)/4294967296;
     },
     range(a,b){return a+(b-a)*this.next();},
-    signed(){return this.next()*2-1;}
+    signed(){return this.next()*2-1;},
+    get state(){return s>>>0;}
   };
 }
