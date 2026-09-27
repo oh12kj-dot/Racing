@@ -152,3 +152,37 @@ test('DMG-13: powertrain damage cannot bypass the existing mechanical failure ga
   expect(car.systems.failureReason).toBe('MECHANICAL_STRESS');
   expect(car.systems.powerDerate).toBe(1);
 });
+
+test('DMG-14: routine steering damage preserves the legacy aggregate steering envelope',()=>{
+  const detailed=incident();detailed.damage=.25;detailed.componentDamage.steering=.14;
+  const legacy=incident();legacy.damage=.25;
+  expect(factorsFor(detailed).steering).toBeCloseTo(factorsFor(legacy).steering,12);
+});
+
+test('DMG-15: material steering damage adds steering-response loss without changing unrelated channels',()=>{
+  const detailed=incident();detailed.damage=.30;detailed.componentDamage.steering=.50;
+  const legacy=incident();legacy.damage=.30;
+  const detailedFactors=factorsFor(detailed),legacyFactors=factorsFor(legacy);
+  expect(detailedFactors.steering).toBeLessThan(legacyFactors.steering);
+  expect(detailedFactors.aero).toBeCloseTo(legacyFactors.aero,12);
+  expect(detailedFactors.drag).toBeCloseTo(legacyFactors.drag,12);
+  expect(detailedFactors.drive).toBeCloseTo(legacyFactors.drive,12);
+  expect(detailedFactors.brake).toBeCloseTo(legacyFactors.brake,12);
+  expect(detailedFactors.top).toBeCloseTo(legacyFactors.top,12);
+});
+
+test('DMG-16: severe lateral impact adds more steering penalty than equal-severity longitudinal impact',()=>{
+  const longitudinal=incident(),longHit=collision({longitudinal:1,impactSpeed:80});
+  const lateral=incident(),latHit=collision({lateral:1,impactSpeed:80});
+  applyImpactComponentDamage(longitudinal,80,longHit.contact,longHit.response);
+  applyImpactComponentDamage(lateral,80,latHit.contact,latHit.response);
+
+  expect(longitudinal.damage).toBeCloseTo(lateral.damage,12);
+  expect(factorsFor(lateral).steering).toBeLessThan(factorsFor(longitudinal).steering);
+});
+
+test('DMG-17: steering component penalty is monotonic above the material-damage threshold',()=>{
+  const moderate=incident();moderate.damage=.30;moderate.componentDamage.steering=.35;
+  const severe=incident();severe.damage=.30;severe.componentDamage.steering=.75;
+  expect(factorsFor(severe).steering).toBeLessThan(factorsFor(moderate).steering);
+});
