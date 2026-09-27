@@ -1,5 +1,5 @@
 import {TYRE_COMPOUND,tyreIdealTemperature,tyreWeatherGrip} from './environment.js';
-import {powertrainDamageExcess} from './component-damage.js';
+import {powertrainDamageExcess,repairIncidentDamage} from './component-damage.js';
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 
@@ -268,6 +268,6 @@ export function serviceSystems(car,servicePlan=null){
     s.mechanicalStress=Math.max(0,s.mechanicalStress-.35);
     s.powerDerate=s.failed?1:0;
   }
-  if(repairService&&car.incident)car.incident.damage=Math.max(0,car.incident.damage-.32);
+  if(repairService)repairIncidentDamage(car.incident);
   s.serviceCount++;
 }
