@@ -1,4 +1,5 @@
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const AERO_DAMAGE_EFFECT_THRESHOLD=.15;
 
 export const COMPONENT_DAMAGE_KEYS=Object.freeze(['aero','powertrain','steering','brakes']);
 
@@ -45,15 +46,16 @@ export function applyImpactComponentDamage(incident,deltaV,contact,response){
 export function componentPerformanceFactors(incident={}){
   const legacy=clamp(Number(incident.damage)||0,0,1);
   const aeroDamage=clamp(Number(incident.componentDamage?.aero)||0,0,1);
-  const detailedAero=aeroDamage>1e-9;
 
-  // Aero/drag are the first staged component-specific performance channels.
-  // A pure longitudinal impact allocates 0.80 * severity to aero, so 0.40 and
-  // 0.275 reproduce the legacy 0.32 aero-loss / 0.22 drag-rise calibration.
-  // Lateral impacts therefore preserve the same aggregate damage contract while
-  // naturally producing less aero-specific performance loss.
-  const aero=detailedAero?clamp(1-aeroDamage*.40,.68,1):clamp(1-legacy*.32,.68,1);
-  const drag=detailedAero?1+aeroDamage*.275:1+legacy*.22;
+  // Keep the proven aggregate aero envelope for routine contact. Component-
+  // specific aero becomes an additional degradation only after material aero
+  // damage has accumulated, preventing small direction changes from reshaping
+  // the whole race while still making severe front/body damage distinct.
+  const aeroExcess=Math.max(0,aeroDamage-AERO_DAMAGE_EFFECT_THRESHOLD);
+  const legacyAero=clamp(1-legacy*.32,.68,1);
+  const legacyDrag=1+legacy*.22;
+  const aero=clamp(legacyAero-aeroExcess*.30,.55,1);
+  const drag=legacyDrag+aeroExcess*.18;
 
   // Remaining channels stay on the proven aggregate envelope until introduced
   // one at a time with dedicated long-run regression coverage.
