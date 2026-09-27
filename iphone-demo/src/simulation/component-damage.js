@@ -1,6 +1,7 @@
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const AERO_DAMAGE_EFFECT_THRESHOLD=.15;
 export const POWERTRAIN_DAMAGE_EFFECT_THRESHOLD=.15;
+export const STEERING_DAMAGE_EFFECT_THRESHOLD=.15;
 
 export const COMPONENT_DAMAGE_KEYS=Object.freeze(['aero','powertrain','steering','brakes']);
 
@@ -49,6 +50,11 @@ export function powertrainDamageExcess(incident={}){
   return Math.max(0,damage-POWERTRAIN_DAMAGE_EFFECT_THRESHOLD);
 }
 
+export function steeringDamageExcess(incident={}){
+  const damage=clamp(Number(incident.componentDamage?.steering)||0,0,1);
+  return Math.max(0,damage-STEERING_DAMAGE_EFFECT_THRESHOLD);
+}
+
 export function componentPerformanceFactors(incident={}){
   const legacy=clamp(Number(incident.damage)||0,0,1);
   const aeroDamage=clamp(Number(incident.componentDamage?.aero)||0,0,1);
@@ -69,12 +75,18 @@ export function componentPerformanceFactors(incident={}){
   const legacyDrive=clamp(1-legacy*.22,.35,1);
   const drive=clamp(legacyDrive-powertrainDamageExcess(incident)*.22,.30,1);
 
-  // Remaining channels stay on the proven aggregate envelope until introduced
-  // one at a time with dedicated long-run regression coverage.
+  // Steering is staged the same way. The returned factor already owns steering
+  // response rate in vehicle.js, so material steering/suspension damage slows
+  // response without introducing another controller or changing maxSteer.
+  const legacySteering=clamp(1-legacy*.28,.65,1);
+  const steering=clamp(legacySteering-steeringDamageExcess(incident)*.22,.50,1);
+
+  // Brakes remain on the proven aggregate envelope until introduced with their
+  // own dedicated braking-distance and long-run regression coverage.
   return{
     aero,
     drive,
-    steering:clamp(1-legacy*.28,.65,1),
+    steering,
     brake:1,
     top:clamp(1-legacy*.10,.78,1),
     drag
