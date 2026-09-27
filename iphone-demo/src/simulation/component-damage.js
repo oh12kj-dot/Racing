@@ -1,5 +1,6 @@
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const AERO_DAMAGE_EFFECT_THRESHOLD=.15;
+export const POWERTRAIN_DAMAGE_EFFECT_THRESHOLD=.15;
 
 export const COMPONENT_DAMAGE_KEYS=Object.freeze(['aero','powertrain','steering','brakes']);
 
@@ -43,6 +44,11 @@ export function applyImpactComponentDamage(incident,deltaV,contact,response){
   return severity;
 }
 
+export function powertrainDamageExcess(incident={}){
+  const damage=clamp(Number(incident.componentDamage?.powertrain)||0,0,1);
+  return Math.max(0,damage-POWERTRAIN_DAMAGE_EFFECT_THRESHOLD);
+}
+
 export function componentPerformanceFactors(incident={}){
   const legacy=clamp(Number(incident.damage)||0,0,1);
   const aeroDamage=clamp(Number(incident.componentDamage?.aero)||0,0,1);
@@ -57,11 +63,17 @@ export function componentPerformanceFactors(incident={}){
   const aero=clamp(legacyAero-aeroExcess*.30,.55,1);
   const drag=legacyDrag+aeroExcess*.18;
 
+  // Powertrain follows the same staged compatibility rule. Routine contact keeps
+  // the calibrated aggregate drive envelope; material component damage adds a
+  // monotonic loss without directly changing failure state or top-speed authority.
+  const legacyDrive=clamp(1-legacy*.22,.35,1);
+  const drive=clamp(legacyDrive-powertrainDamageExcess(incident)*.22,.30,1);
+
   // Remaining channels stay on the proven aggregate envelope until introduced
   // one at a time with dedicated long-run regression coverage.
   return{
     aero,
-    drive:clamp(1-legacy*.22,.35,1),
+    drive,
     steering:clamp(1-legacy*.28,.65,1),
     brake:1,
     top:clamp(1-legacy*.10,.78,1),
