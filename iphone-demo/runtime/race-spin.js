@@ -1,4 +1,4 @@
-import {createRace as createV30Race} from './v30-race.js';
+import {createRace as createV30Race} from './race-pit-strategy.js';
 
 export function createRace(W,statusEl,settings={}){
   const R=createV30Race(W,statusEl,settings),baseUpdate=R.update;

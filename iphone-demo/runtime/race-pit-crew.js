@@ -1,8 +1,8 @@
-import {createRace as createV11Race} from './v11-race.js';
+import {createRace as createV11Race} from './race-pit-presentation.js';
+import {DEFAULT_SERVICE_TIME} from './pit-config.js';
 
 export function createRace(W,statusEl,settings={}){
   const base=createV11Race(W,statusEl,settings),originalUpdate=base.update;
-  const serviceTime={formula:2.6,proto:3.1,hyper:3.3,lmh:3.2,gt:4.1,supercar:4.3,touring:4.7};
   function update(dt){
     const before=base.cars.map(c=>({state:c.pitState,timer:c.pitTimer}));
     originalUpdate(dt);
@@ -10,7 +10,7 @@ export function createRace(W,statusEl,settings={}){
     for(let i=0;i<base.cars.length;i++){
       const c=base.cars[i],b=before[i];if(c.retired)continue;
       if(b.state!=='STOP'&&c.pitState==='STOP'){
-        const min=serviceTime[c.type]||3.5;
+        const min=DEFAULT_SERVICE_TIME[c.type]||3.5;
         if((c.pitTimer||0)<min)c.pitTimer=min;
         c._pitStopInitial=Math.max(min,c.pitTimer||min);
       }

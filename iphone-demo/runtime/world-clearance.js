@@ -1,4 +1,4 @@
-import {buildWorld as buildV7World} from './v7-world.js';
+import {buildWorld as buildV7World} from './world-geometry-correction.js';
 
 export function buildWorld(THREE,TRACK){
   const W=buildV7World(THREE,TRACK);

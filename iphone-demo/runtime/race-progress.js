@@ -1,4 +1,4 @@
-import {createRace as createV8Race} from './v8-race.js';
+import {createRace as createV8Race} from './race-championship-core.js';
 
 export function createRace(W,statusEl){
   const base=createV8Race(W,statusEl),total=W.total;

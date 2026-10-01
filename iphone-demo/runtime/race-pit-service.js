@@ -1,4 +1,4 @@
-import {createRace as createV12Race} from './v12-race.js';
+import {createRace as createV12Race} from './race-pit-crew.js';
 
 export function createRace(W,statusEl,settings={}){
   const R=createV12Race(W,statusEl,settings),baseUpdate=R.update,clamp=(v,a,b)=>Math.max(a,Math.min(b,v));

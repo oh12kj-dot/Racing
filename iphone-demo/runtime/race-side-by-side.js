@@ -1,4 +1,4 @@
-import {createRace as createV28Race} from './v28-race.js';
+import {createRace as createV28Race} from './race-launch-safety.js';
 
 export function createRace(W,statusEl,settings={}){
   const R=createV28Race(W,statusEl,settings),baseUpdate=R.update,total=Math.max(1,W.total||1),clamp=(v,a,b)=>Math.max(a,Math.min(b,v)),reservations=new Map(),rubs=[];

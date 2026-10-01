@@ -1,4 +1,4 @@
-import {buildWorld as buildV5World} from './v5-world.js';
+import {buildWorld as buildV5World} from './world-core.js';
 
 export function buildWorld(THREE, TRACK){
   const W=buildV5World(THREE,TRACK);

@@ -1,4 +1,4 @@
-import {createRace as createV24Race} from './v24-race.js';
+import {createRace as createV24Race} from './race-systems.js';
 
 export function createRace(W,statusEl,settings={}){
   const R=createV24Race(W,statusEl,settings),baseUpdate=R.update;

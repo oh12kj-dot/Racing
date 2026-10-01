@@ -1,4 +1,4 @@
-import {buildWorld as buildV21World} from './v21-world.js';
+import {buildWorld as buildV21World} from './world-depth.js';
 
 export function buildWorld(THREE,TRACK,settings={},circuitName='SUZUKA'){
   const W=buildV21World(THREE,TRACK,settings,circuitName);
